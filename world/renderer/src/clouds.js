@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { MOON_COLOR } from './sky.js'
 
 // Minecraft-style clouds: a flat pixel layer on the low tier, puffs of voxel cubes otherwise. One pattern tile
 // repeats in a 3 x 3 block that moves with the camera, so the camera never reaches the edge, and the clouds
@@ -158,8 +159,9 @@ export function createClouds(scene, tier) {
       const baseX = Math.floor((camera.position.x - drift) / TILE) * TILE + TILE / 2
       const baseZ = Math.floor(camera.position.z / TILE) * TILE + TILE / 2
       layer.place(baseX, baseZ, drift)
-      // White by day, the sunset's colour low in the sky, grey-blue at night.
-      tint.copy(white).lerp(sky.sunColor, 0.12 + 0.5 * (1 - sky.daylight)).multiplyScalar(0.3 + 0.7 * sky.daylight)
+      // White by day, the sunset's colour low in the sky, moonlit grey-blue at night.
+      tint.copy(white).lerp(sky.sunColor, 0.12 + 0.5 * (1 - sky.daylight)).lerp(MOON_COLOR, sky.night * 0.5)
+        .multiplyScalar(0.3 + 0.7 * sky.daylight)
       layer.material.color.copy(tint)
     },
     dispose() {
