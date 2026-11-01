@@ -228,12 +228,16 @@ function createPartKit(onMaterial) {
     wood: standard({ roughness: 0.85, metalness: 0.0 }),
     freshWood: standard({ color: 0xe0c08e, roughness: 0.8, metalness: 0.0 }),
     fishSkin: standard({ roughness: 0.4, metalness: 0.15 }),
+    // A sky event's warning (world/main.lua, PR #3): the shadow of a stone about to land. Unlit, see-through, casts
+    // nothing.
+    skyShadow: () => new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
   }
   const GEOMETRIES = {
     box: () => new THREE.BoxGeometry(1, 1, 1),
     cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
     sphere: () => new THREE.SphereGeometry(0.5, 16, 16),
     rock: () => new THREE.DodecahedronGeometry(1, 0),
+    disk: () => new THREE.CircleGeometry(0.5, 32).rotateX(-Math.PI / 2),
     // A groove: its floor darker than its rims, so a strip lying on the sand reads as drawn into it.
     groove: () => {
       const box = new THREE.BoxGeometry(1, 1, 1)
@@ -620,6 +624,8 @@ export function createRenderer(ctx) {
         const geometry = kit.geometry(key, () => new THREE.TorusGeometry(ringRadius, tubeRadius, 18, 40).rotateX(Math.PI / 2))
         return { kind: 'parts', parts: [part(key, geometry, kit.material('ring'), new THREE.Matrix4(), { colored: true })] }
       }
+      case 'SkyShadow':
+        return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
       case 'PickupObject':
         return { kind: 'parts', parts: [part('block', kit.geometry('box'), kit.material('rock'), scaled(...size), { colored: true })] }
       // The castaway's life (ADR-007). A ModelUrl, once the art pipeline makes one, is drawn instead (above).
@@ -718,7 +724,7 @@ export function createRenderer(ctx) {
     record.swims = Boolean(look.swims)
     if (look.kind === 'parts') {
       for (const p of look.parts) {
-        const group = instancer.group(p.key, p.geometry, p.material, { colored: Boolean(p.colored) })
+        const group = instancer.group(p.key, p.geometry, p.material, { colored: Boolean(p.colored), castShadow: p.castShadow !== false })
         record.slots.push({
           slot: instancer.add(group, entityMatrix), local: p.local, linear: Boolean(p.linear), colored: Boolean(p.colored), fixed: p.fixed ?? null,
         })
