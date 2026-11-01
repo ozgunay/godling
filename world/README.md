@@ -47,6 +47,17 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Reaches` (pick-ups, placements and fastenings) plays PickUp;
     - `Strikes` plays Strike;
     - `Climbing` loops Climb.
+- **Face.** `Face {position}` turns the body on the spot towards a point (`TURN_RATE` 6 rad/s), without stepping anywhere. The mind's glance reflex uses it. A `MoveTo` cancels a turn.
+- **Sky events and the guest panel** (research report "God games lessons for Godling", batch 1).
+  - Five powers, `SKY_POWERS`:
+    - `Stone` and `Log` drop a piece from 12 up.
+    - `Regrow` grows the stump nearest Godling back at once.
+    - `Lightning` fells the tree nearest Godling into two logs, through the axe's `fellTree`.
+    - `Meteor` lays a `SkyShadow_n` on the ground; `SKY_WARN_SECONDS` (40) later a dark `Meteor_n` stone falls into it. It waits while anyone stands within 3 of the shadow's centre.
+  - Viewers choose what; the world chooses where. Drops land 8–16 from Godling, on open ground, at least 4 from any building piece.
+  - Every piece a power leaves carries `SkyEvent` (its kind) and `SkyId`. The world log prints a `SKY <kind> #<id>` line for each.
+  - Powers come only from the bodiless player `Sky` (`SKY_PLAYER`), which `tools/guest_panel.py` joins as. It is parked under the island, and the mind leaves it out of what it sees. `max_players` is 2 for it.
+  - `SKY_TEST_EVERY` (seconds, 0 = off) drops a meteor near Godling on a timer, to measure reactions without the panel. `run_godling.py --sky-test-minutes` sets it.
 - **Renderer (ADR-006).** Godling's own, in `renderer/src/`; it no longer uses the runtime's model helpers.
   - **No CDN.**
     - three.js r187 is bundled in: `npm install`, then `npm run build` (`build.mjs`).
@@ -69,6 +80,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - The Ocean part only gives the sea level.
   - **Clouds** (`clouds.js`): Minecraft-style. A flat pixel layer on low, voxel puffs on medium and high.
   - **Drawing parts** (`instances.js`): all parts and static models are instanced, one draw call per kind of mesh.
+  - **Sky events:** a `SkyShadow` part is drawn as a dark, see-through disk that casts no shadow.
   - **The castaway island's looks** (set by the world script; read in `index.js`):
     - `Ground` is drawn in the part's colour. With `Surface` "Sand" it is matte sand, where the sea draws its foam.
     - `Mesa` with `Surface` "Rock" is grey volcanic stone in block-high strata, with a moss cap on every step. Other mesas keep the tan stripes.

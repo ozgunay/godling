@@ -1,6 +1,6 @@
 name = "Godling Mesa"
 description = "Mesa Island for Godling: human-paced hands and a steady supply of cubes."
-max_players = 1
+max_players = 2 # Godling, and the guest panel's bodiless "Sky" (tools/guest_panel.py)
 afk_timeout = 0
 
 [scripts]

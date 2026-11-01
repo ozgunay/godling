@@ -17,6 +17,7 @@ ANSWER_SHAPE = {
     "agenda": [{"intention": "one short line, what you are about to do (shown in chat)",
                 "goal": "what you want to exist or happen", "why": "short reason",
                 "steps": [{"skill": "a skill name", "args": {"...": "..."}}]}],
+    "needs": "what your agenda is still short of, with counts, e.g. '3 logs for the gate lintel' (empty if nothing)",
     "remember": [{"about": "an object name, a place or a topic (e.g. Rock_1, LargeMesa, stacking)",
                   "text": "a conclusion worth keeping", "importance": "1-5"}],
     "learn": [{"name": "new_skill_name", "params": ["object"], "does": "what it achieves",
@@ -122,7 +123,9 @@ Reply with ONE json object shaped like this (omit empty lists):
 {json.dumps(shape, indent=1)}
 Rules: only skills listed above (body moves or your own), numbers for coordinates. Remember conclusions,
 not play-by-play; attach each to what it is about. Prefer projects whose result others can see. If
-something failed, change your approach instead of repeating it."""
+something failed, change your approach instead of repeating it. When something you noticed (a shadow, a
+stone from the sky, damage, a visitor, the weather) changes what you do, name it in a few words in your
+thought and in that project's intention."""
 
     def situation(self, snap, events, chat, doing=None):
         held = snap.held()
@@ -233,7 +236,9 @@ something failed, change your approach instead of repeating it."""
                                           {c: snap.entities[c].pos for c in cubes})
         self.memory.save()
         self.memory.flush()
-        decision = {"thought": str(reply.get("thought", ""))[:400], "projects": projects, "learned": taught,
+        # What the agenda is short of: one line for the viewers' side panel, so they can tell what a gift would mean.
+        decision = {"thought": str(reply.get("thought", ""))[:400], "projects": projects,
+                    "needs": str(reply.get("needs") or "")[:160], "learned": taught,
                     "think_seconds": thought["seconds"], "assumed": thought["prepared"]["assumes"],
                     "plan": thought["prepared"].get("plan")}  # links to its reasoning in thinking.jsonl
         self.log(kind="decision", **decision)
