@@ -6,8 +6,8 @@ The mind thinks about the past and the future; the body handles walking and gras
 | Layer | File | What it does |
 |---|---|---|
 | L3 mind | `godling/mind.py` | An LLM decides projects, narrates its intention, writes lessons, teaches itself skills, and sleeps hourly to consolidate memory |
-| L2 attention | `godling/attention.py` | Notices new objects, damage to things it kept, and visitors; interrupts for salient events (the Jev slot is `decide`) |
-| L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy |
+| L2 attention | `godling/attention.py` | Notices new objects, damage to things it kept, visitors and sky events; interrupts for salient events (the Jev slot is `decide`); hands events that happen somewhere to the glance reflex |
+| L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy. Between steps, and while it waits, the body glances: it turns towards what attention just noticed, without changing the plan |
 | learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted |
 | memory | `godling/memory.py` | Episodes (with world ticks), intentions, kept structures, digest; follows the plan's MemoryAdapter interface (§10.6) |
 | world | `godling/world.py` | HTTP client for Clawblox and a compact reading of observations |
@@ -30,6 +30,10 @@ Useful flags:
 - `--gifted-skills`: also offer ready-made `stack_on`/`build_tower` (the comparison arm).
 - `--no-narration`: don't post intentions to world chat.
 - `--attach`: use a world that's already running.
+- `--guest-panel 8081`: also serve the guest panel at http://localhost:8081/. It shows the live view, what Godling thinks and needs, and buttons for the sky powers (stone, log, regrow, lightning, meteor). Free in test mode. It also runs on its own: `python3 tools/guest_panel.py --world http://localhost:8080 --run-dir <run>`.
+- `--sky-test-minutes 10`: drop a meteor near Godling every 10 minutes, its shadow 40 s ahead, to measure reactions without anyone at the panel.
+
+Each decision also carries a `needs` line (what the agenda is short of, with counts) for the panel. `analyze_run.py` reports reactions to sky events: applied, noticed (a glance or mention within a minute), named in a thought or intention, and engaged.
 
 Analyze afterwards:
 ```bash

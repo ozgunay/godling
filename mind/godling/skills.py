@@ -9,8 +9,8 @@ import time
 from dataclasses import dataclass, field
 
 from .world import (BODY_CENTRE_Y, BUILDING_KINDS, CUBE, FASTEN_SECONDS, LADDER_HEIGHT, LIFT_SECONDS, PICKUP_RANGE,
-                    PLACE_RANGE, PLACE_SECONDS, SNAPPED_KINDS, STEP, STRIKE_RANGE, STRIKE_SECONDS, TOOL_KINDS, WALK_SPEED,
-                    WorldError, grid, hdist, turned_size)
+                    PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, STEP, STRIKE_RANGE, STRIKE_SECONDS,
+                    TOOL_KINDS, TURN_RATE, WALK_SPEED, WorldError, grid, hdist, turned_size)
 
 # What the body can do. These know the body's own limits (reach, not walking through things)
 # but no strategy: how to stack, aim or build has to be learned by the mind.
@@ -52,6 +52,8 @@ CATALOG = {**PRIMITIVES, **GIFTED}
 
 
 MAX_DROP = 2.6  # the highest drop the body hops down from; higher needs a ladder
+GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
+GLANCE_HOLD = 0.4  # seconds the body keeps looking before it goes on
 
 
 def _quarter(turn):
@@ -95,6 +97,7 @@ class Skills:
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
+        self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
         self.log = log or (lambda **kw: None)
         self.offered = {**PRIMITIVES, **(GIFTED if gifted else {})}
         self.library = library  # skills the mind taught itself (learned.SkillLibrary)
@@ -103,6 +106,8 @@ class Skills:
 
     # ---- entry point -------------------------------------------------------------------
     def run(self, skill, args):
+        if self._depth == 0:
+            self.glance()
         started = time.time()
         if self.library is not None and any(isinstance(v, dict) for v in args.values()):
             # Perception helpers ({"nearest_free": "cube"}, {"pos": ...}) work in any step, not only inside learned skills.
@@ -144,6 +149,29 @@ class Skills:
         self.log(kind="skill", skill=skill, args=args, ok=result.ok, summary=result.summary,
                  facts=result.facts, seconds=result.seconds)
         return result
+
+    def glance(self):
+        """Reflex: turn towards what attention just noticed, between steps (and while standing). It never changes
+        the plan: the noticing is shown, and the mind hears of the event in its next plan as before."""
+        event = self.next_glance()
+        if not event:
+            return
+        try:
+            snap = self.world.observe()
+            x, z = event["at"]
+            dx, dz = x - snap.me[0], z - snap.me[2]
+            degrees = 0.0
+            if snap.facing and math.hypot(dx, dz) > 0.5:
+                fx, fz = snap.facing
+                degrees = abs(math.degrees(math.atan2(fx * dz - fz * dx, fx * dx + fz * dz)))
+            turned = math.hypot(dx, dz) > 0.5 and (snap.facing is None or degrees > GLANCE_IN_VIEW)
+            if turned:
+                self.world.act("Face", {"position": [x, BODY_CENTRE_Y, z]})
+                time.sleep(math.radians(degrees or 180) / TURN_RATE + GLANCE_HOLD)
+            self.log(kind="glance", text=event["text"], at=event["at"], turned=turned, degrees=round(degrees),
+                     tick=snap.tick, **{k: event[k] for k in ("sky", "sky_id") if k in event})
+        except WorldError as err:
+            self.log(kind="error", message=f"glance: {err}")
 
     # ---- helpers -----------------------------------------------------------------------
     def _observe(self):
@@ -380,7 +408,7 @@ class Skills:
         hits = []
         bottom = centre[1] - size[1] / 2
         for e in snap.entities.values():
-            if e.name in ignore or e.role == "Ocean" or e.name.startswith("Boundary"):
+            if e.name in ignore or e.role == "Ocean" or e.role in SKY_MARKERS or e.name.startswith("Boundary"):
                 continue
             # The world counts touching as overlap, so allow a hair of tolerance.
             if all(abs(centre[i] - e.pos[i]) < (size[i] + e.size[i]) / 2 + 0.01 for i in range(3)):
@@ -395,7 +423,7 @@ class Skills:
         bottom = centre[1] - size[1] / 2
         depth = None
         for e in snap.entities.values():
-            if e.name == name or e.role == "Ocean" or e.name.startswith("Boundary"):
+            if e.name == name or e.role == "Ocean" or e.role in SKY_MARKERS or e.name.startswith("Boundary"):
                 continue
             if all(abs(centre[i] - e.pos[i]) < (size[i] + e.size[i]) / 2 + 0.01 for i in range(3)):
                 if e.name == "HumanoidRootPart" or not -0.01 <= e.top - bottom <= 0.06:
@@ -892,4 +920,5 @@ class Skills:
         while time.time() < end:
             time.sleep(1.0)
             self._observe()
+            self.glance()
         return Result(True, "wait", f"waited {seconds}s")

@@ -325,6 +325,14 @@ function createEntityVisual(entity) {
     mesh2.receiveShadow = true;
     return mesh2;
   }
+  if (role === "SkyShadow") {
+    const geometry2 = new THREE.CircleGeometry(Math.max(size[0], size[2]) / 2, 32);
+    geometry2.rotateX(-Math.PI / 2);
+    return new THREE.Mesh(
+      geometry2,
+      new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.45, depthWrite: false })
+    );
+  }
   if (role === "Ground") {
     const group = new THREE.Group();
     const mesh2 = new THREE.Mesh(
@@ -428,6 +436,128 @@ function createEntityVisual(entity) {
   mesh.receiveShadow = true;
   return mesh;
 }
+var CHARACTER_MODEL = /godling\.glb$/;
+var WALK_STRIDE_SPEED = 0.655;
+var ONE_SHOTS = [
+  { attribute: "Reaches", clip: "PickUp", seconds: 1.1 },
+  // the world lifts a block in 1.0 s, lowers one in 1.2 s
+  { attribute: "Strikes", clip: "Strike", seconds: 1 }
+  // a hammer blow on the quarry
+];
+function createCharacterController(onError) {
+  let modules = null;
+  const templates = /* @__PURE__ */ new Map();
+  const states = /* @__PURE__ */ new Map();
+  function loadModules() {
+    if (!modules) {
+      modules = Promise.all([
+        import("https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js"),
+        import("https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js")
+      ]).then(([loaderMod, skeletonMod]) => ({ loader: new loaderMod.GLTFLoader(), clone: skeletonMod.clone }));
+    }
+    return modules;
+  }
+  function loadTemplate(url) {
+    if (!templates.has(url)) {
+      templates.set(url, loadModules().then(({ loader }) => new Promise((resolve, reject) => {
+        loader.load(url, (gltf) => resolve({
+          scene: gltf.scene,
+          animations: gltf.animations || [],
+          box: new THREE.Box3().setFromObject(gltf.scene)
+          // every part, in the rest pose
+        }), void 0, reject);
+      })));
+    }
+    return templates.get(url);
+  }
+  async function upsert({ entityId, root, modelUrl, size, yawOffsetDeg }) {
+    if (states.get(entityId)?.modelUrl === modelUrl) return;
+    const state = { modelUrl, ready: false };
+    states.set(entityId, state);
+    try {
+      const [template, { clone }] = await Promise.all([loadTemplate(modelUrl), loadModules()]);
+      if (states.get(entityId) !== state) return;
+      const model = clone(template.scene);
+      const height = template.box.getSize(new THREE.Vector3()).y;
+      const centre = template.box.getCenter(new THREE.Vector3());
+      state.scale = (size?.[1] ?? 5) / height;
+      model.scale.setScalar(state.scale);
+      model.position.set(-centre.x * state.scale, -centre.y * state.scale, -centre.z * state.scale);
+      model.traverse((node) => {
+        if (node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = true;
+        }
+      });
+      const pivot = new THREE.Group();
+      if (yawOffsetDeg) pivot.rotation.y = THREE.MathUtils.degToRad(yawOffsetDeg);
+      pivot.add(model);
+      for (const child of [...root.children]) root.remove(child);
+      root.add(pivot);
+      state.mixer = new THREE.AnimationMixer(model);
+      const action = (name, once) => {
+        const clip = template.animations.find((c) => c.name === name);
+        if (!clip) return null;
+        const a = state.mixer.clipAction(clip);
+        if (once) {
+          a.setLoop(THREE.LoopOnce, 1);
+          a.clampWhenFinished = true;
+        }
+        a.play();
+        a.setEffectiveWeight(0);
+        return a;
+      };
+      state.idle = action("Idle");
+      state.walk = action("Walk");
+      state.climb = action("Climb");
+      state.oneShots = ONE_SHOTS.map((spec) => ({ ...spec, action: action(spec.clip, true), count: null, left: 0 }));
+      state.idle?.setEffectiveWeight(1);
+      state.ready = true;
+    } catch (err) {
+      if (onError) onError(err, { entityId, modelUrl });
+    }
+  }
+  function update(entityId, { dt = 1 / 60, speed = 0, humanoidState = null, attributes = {} } = {}) {
+    const state = states.get(entityId);
+    if (!state?.ready) return;
+    let playing = null;
+    for (const shot of state.oneShots) {
+      const count = Number(attributes[shot.attribute] || 0);
+      if (count !== shot.count) {
+        if (shot.count !== null && shot.action) {
+          shot.action.reset().setEffectiveTimeScale(shot.action.getClip().duration / shot.seconds).play();
+          shot.left = shot.seconds;
+          for (const other of state.oneShots) if (other !== shot) other.left = 0;
+        }
+        shot.count = count;
+      }
+      shot.left = Math.max(0, shot.left - dt);
+      if (shot.left > 0) playing = shot;
+    }
+    const climbing = attributes.Climbing === true && Boolean(state.climb);
+    const airborne = humanoidState === "Jumping" || humanoidState === "Freefall";
+    const moving = speed > 0.5 && !airborne && !playing && !climbing;
+    const blend = (action, target, rate) => {
+      if (!action) return;
+      const w = action.getEffectiveWeight();
+      action.setEffectiveWeight(w + (target - w) * Math.min(1, dt * rate));
+    };
+    for (const shot of state.oneShots) blend(shot.action, shot === playing && !climbing ? 1 : 0, 14);
+    blend(state.climb, climbing ? 1 : 0, 10);
+    blend(state.walk, moving ? 1 : 0, 8);
+    blend(state.idle, moving || playing || climbing ? 0 : 1, 8);
+    if (state.walk && moving) {
+      state.walk.setEffectiveTimeScale(Math.min(3, Math.max(0.5, speed / (WALK_STRIDE_SPEED * state.scale))));
+    }
+    state.mixer.update(dt);
+  }
+  return {
+    upsert,
+    update,
+    remove: (entityId) => states.delete(entityId),
+    clear: () => states.clear()
+  };
+}
 function createRenderer(ctx) {
   const scene = new THREE.Scene();
   const captureConfig = globalThis.__mesaCaptureConfig && typeof globalThis.__mesaCaptureConfig === "object" ? globalThis.__mesaCaptureConfig : {};
@@ -484,6 +614,9 @@ function createRenderer(ctx) {
       ctx.log("warn", "Model entity load failed", { err: String(err), ...meta });
     }
   });
+  const characters = createCharacterController((err, meta) => {
+    ctx.log("warn", "Character model load failed", { err: String(err), ...meta });
+  });
   const tmpForward = new THREE.Vector3(0, 0, 1);
   const anchorPos = new THREE.Vector3(0, 4, 0);
   const clock = new THREE.Clock();
@@ -532,9 +665,13 @@ function createRenderer(ctx) {
   function updateScene(obs, dt) {
     const activeIds = /* @__PURE__ */ new Set();
     const stateByRootPartId = /* @__PURE__ */ new Map();
+    const attributesByRootPartId = /* @__PURE__ */ new Map();
     for (const player of obs.players || []) {
       if (typeof player.root_part_id === "number" && typeof player.humanoid_state === "string") {
         stateByRootPartId.set(player.root_part_id, player.humanoid_state);
+      }
+      if (typeof player.root_part_id === "number") {
+        attributesByRootPartId.set(player.root_part_id, player.attributes || {});
       }
     }
     for (const entity of obs.entities || []) {
@@ -561,7 +698,21 @@ function createRenderer(ctx) {
       obj.userData.prevPos = [entity.position[0], entity.position[1], entity.position[2]];
       if (obj.userData && obj.userData.isModelEntity) {
         const modelUrl = resolveEntityModelUrl(entity);
-        if (modelUrl) {
+        if (modelUrl && CHARACTER_MODEL.test(modelUrl)) {
+          void characters.upsert({
+            entityId: entity.id,
+            root: obj,
+            modelUrl,
+            size: entity.size || [2, 5, 2],
+            yawOffsetDeg: entity.model_yaw_offset_deg
+          });
+          characters.update(entity.id, {
+            dt,
+            speed,
+            humanoidState: stateByRootPartId.get(entity.id) || null,
+            attributes: attributesByRootPartId.get(entity.id) || {}
+          });
+        } else if (modelUrl) {
           void modelController.upsert({
             entityId: entity.id,
             root: obj,
@@ -581,6 +732,7 @@ function createRenderer(ctx) {
       if (!activeIds.has(id)) {
         scene.remove(obj);
         modelController.remove(id);
+        characters.remove(id);
         entityObjects.delete(id);
       }
     }
@@ -636,6 +788,7 @@ function createRenderer(ctx) {
       entityObjects.clear();
       colliderDebugObjects.clear();
       modelController.clear();
+      characters.clear();
       renderer.dispose();
     }
   };

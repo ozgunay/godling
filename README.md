@@ -8,9 +8,10 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 | `mind/` | The layered mind: LLM (L3), attention (L2), body skills (L1), memory arms. Run instructions are in [`mind/README.md`](mind/README.md). |
 | `world/` | Godling's Mesa Island: the world script, the renderer and the models. The changes from upstream are in [`world/README.md`](world/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |
-| `tools/` | Long-run launcher and run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`). |
+| `tools/` | Long-run launcher, run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`) and the guest panel for trying sky powers (`guest_panel.py`). |
 | `decisions/` | Decision records, ADR-002 to ADR-005. |
 | `research/` | Design notes and screenshots. |
+| `reports/`, `research_notes/` | Research reports and the notes behind them (god games: what Godling can use). |
 | `patches/` | The local fix to Clawblox itself (BUG-001). |
 
 ## Running

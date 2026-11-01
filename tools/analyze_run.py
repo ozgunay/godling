@@ -343,6 +343,63 @@ def mind_report(m):
     ]
 
 
+NOTICED_WITHIN = 60  # seconds: a glance or a mention this soon counts as noticing
+ENGAGED_WITHIN = 600  # seconds: using it, or naming it in an intention, this soon counts as engaging
+SKY_WORDS = re.compile(r"\b(sky|shadow|meteor|lightning|fell from|falling|dropped|grew back)\b", re.I)
+
+
+def analyze_reactions(mind_log, world_log):
+    """Reactions to sky events (research report, batch 1; the guest panel's powers and --sky-test-minutes), in three
+    stages: applied (the world did it: only this would decide a charge), noticed (a glance or a mention within a
+    minute: the product's promise) and engaged (used what it left, or planned with it, within ten minutes: up to
+    Godling). Named counts a thought or intention that mentions it."""
+    entries = [json.loads(line) for line in mind_log.read_text().splitlines() if line.strip()]
+    falls = {}  # sky_id -> {"kind", "start", "pieces"}
+    for e in entries:
+        if e["kind"] == "event" and e.get("sky"):
+            fall = falls.setdefault(e["sky_id"], {"kind": e["sky"], "start": e["time"], "pieces": set()})
+            if e.get("sky_stage") == "arrived":
+                fall["pieces"].update(e.get("entities") or [])
+    if not falls:
+        return None
+    world_applied = None
+    if world_log.exists():
+        world_applied = len(set(re.findall(r"SKY \w+ #(\d+)", world_log.read_text(errors="replace"))))
+    glances = [e for e in entries if e["kind"] == "glance" and e.get("sky")]
+    decisions = [e for e in entries if e["kind"] == "decision"]
+    uses = [e for e in entries if e["kind"] == "skill"]
+    out = {"applied": len(falls), "kinds": Counter(f["kind"] for f in falls.values()), "world_applied": world_applied,
+           "noticed": 0, "named": 0, "engaged": 0, "glance_after_s": []}
+    for sky_id, f in falls.items():
+        start = f["start"]
+        looked = [g["time"] - start for g in glances if g["sky_id"] == sky_id and 0 <= g["time"] - start <= NOTICED_WITHIN]
+        said = [d for d in decisions if 0 <= d["time"] - start <= ENGAGED_WITHIN and SKY_WORDS.search(
+            " ".join([d.get("thought", "")] + [p.get("intention", "") + " " + p.get("goal", "") for p in d.get("projects", [])]))]
+        if looked or any(d["time"] - start <= NOTICED_WITHIN for d in said):
+            out["noticed"] += 1
+        if looked:
+            out["glance_after_s"].append(min(looked))
+        out["named"] += bool(said)
+        near = [json.dumps(u.get("args")) for u in uses if 0 <= u["time"] - start <= ENGAGED_WITHIN]
+        near += [json.dumps(d.get("projects")) for d in decisions if 0 <= d["time"] - start <= ENGAGED_WITHIN]
+        out["engaged"] += any(name in text for name in f["pieces"] for text in near)
+    return out
+
+
+def reaction_report(r):
+    n = r["applied"]
+    world = f"; the world log shows {r['world_applied']}" if r["world_applied"] is not None else ""
+    return [
+        "## Reactions to sky events",
+        f"- Applied: **{n}** (" + ", ".join(f"{k} {v}" for k, v in sorted(r["kinds"].items())) + f"){world}",
+        f"- Noticed within {NOTICED_WITHIN} s: **{r['noticed']}/{n}**"
+        + (f"; first glance p50 {fmt_s(pct(r['glance_after_s'], 50))} after the warning" if r["glance_after_s"] else ""),
+        f"- Named in a thought or intention within {ENGAGED_WITHIN // 60} min: {r['named']}/{n}",
+        f"- Engaged (used it or planned with it) within {ENGAGED_WITHIN // 60} min: {r['engaged']}/{n}",
+        "",
+    ]
+
+
 # --- report ------------------------------------------------------------------
 
 
@@ -436,6 +493,9 @@ def report(run_dir, rec, agent, workspace):
     mind_log = run_dir / "mind" / "log.jsonl"
     if mind_log.exists():
         lines += mind_report(analyze_mind_log(mind_log))
+        reactions = analyze_reactions(mind_log, run_dir / "world.log")
+        if reactions:
+            lines += reaction_report(reactions)
 
     if workspace:
         lines += ["## Workspace memory", "| File | Bytes | ~Tokens |", "|---|---|---|"]

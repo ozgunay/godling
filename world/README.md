@@ -47,7 +47,18 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Reaches` (pick-ups, placements and fastenings) plays PickUp;
     - `Strikes` plays Strike;
     - `Climbing` loops Climb.
-- **Renderer.** `renderer/src/index.js` adds a Godling-only character controller:
+- **Face.** `Face {position}` turns the body on the spot towards a point (`TURN_RATE` 6 rad/s), without stepping anywhere. The mind's glance reflex uses it. A `MoveTo` cancels a turn.
+- **Sky events and the guest panel** (research report "God games lessons for Godling", batch 1).
+  - Five powers, `SKY_POWERS`:
+    - `Stone` and `Log` drop a piece from 12 up.
+    - `Regrow` grows the stump nearest Godling back at once.
+    - `Lightning` fells the tree nearest Godling into two logs, through the axe's `fellTree`.
+    - `Meteor` lays a `SkyShadow_n` on the ground; `SKY_WARN_SECONDS` (40) later a dark `Meteor_n` stone falls into it. It waits while anyone stands within 3 of the shadow's centre.
+  - Viewers choose what; the world chooses where. Drops land 8–16 from Godling, on open ground, at least 4 from any building piece.
+  - Every piece a power leaves carries `SkyEvent` (its kind) and `SkyId`. The world log prints a `SKY <kind> #<id>` line for each.
+  - Powers come only from the bodiless player `Sky` (`SKY_PLAYER`), which `tools/guest_panel.py` joins as. It is parked under the island, and the mind leaves it out of what it sees. `max_players` is 2 for it.
+  - `SKY_TEST_EVERY` (seconds, 0 = off) drops a meteor near Godling on a timer, to measure reactions without the panel. `run_godling.py --sky-test-minutes` sets it.
+- **Renderer.** `renderer/src/index.js` draws a `SkyShadow` as a dark disk, and adds a Godling-only character controller:
   - it sizes the model from its full bounds;
   - it plays Walk at the body's real speed, and the clips above.
 

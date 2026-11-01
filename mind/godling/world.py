@@ -11,7 +11,7 @@ import urllib.request
 
 CUBE = 2.5  # a building block (main.lua BLOCK_SIZE, ADR-005: Minecraft scale; upstream 0.75)
 GRID = CUBE  # placed blocks and logs settle into cells this wide (main.lua GRID)
-SNAPPED_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Log_")
+SNAPPED_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Log_")
 
 
 def grid(v):
@@ -28,13 +28,17 @@ STRIKE_RANGE = 6.0  # main.lua STRIKE_RANGE: body centre to the target's nearest
 STRIKE_SECONDS = 1.0  # one swing (main.lua STRIKE_COOLDOWN is 0.8)
 FASTEN_SECONDS = 2.5  # main.lua FASTEN_COOLDOWN
 LADDER_HEIGHT = 3 * CUBE  # main.lua LADDER_SIZE.Y
+TURN_RATE = 6.0  # main.lua TURN_RATE: radians per second when Face turns the body on the spot
+SKY_PLAYER = "Sky"  # main.lua SKY_PLAYER: the guest panel's bodiless player, which is not someone on the island
+SKY_MARKERS = ("SkyShadow", "SkyFlash")  # shadows and bolts of sky events: seen, never touched
 STEP = 0.45  # the highest step the legs take without a ladder
-MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Brick_", "Log_", "Boulder_", "Ring_", "Rock_",
-                 "Hammer_", "Axe_", "Ladder_")
+MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Brick_", "Log_", "Boulder_", "Ring_",
+                 "Rock_", "Hammer_", "Axe_", "Ladder_")
 TOOL_KINDS = ("Hammer_", "Axe_")
 BUILDING_KINDS = ("Log_", "Boulder_")  # building pieces besides blocks
-# What "nearest_free" can look for: building pieces by kind (stones are cubes; bricks are long stones).
-PIECE_KINDS = {"cube": lambda e: e.is_cube, "stone": lambda e: e.name.startswith("Stone_"),
+# What "nearest_free" can look for: building pieces by kind (stones are cubes; bricks are long stones; a stone that
+# fell from the sky is a stone too).
+PIECE_KINDS = {"cube": lambda e: e.is_cube, "stone": lambda e: e.name.startswith(("Stone_", "Meteor_")),
                "log": lambda e: e.name.startswith("Log_"),
                "boulder": lambda e: e.name.startswith("Boulder_")}
 
@@ -115,8 +119,10 @@ class Snapshot:
         self.me = tuple(player.get("position") or (0, 0, 0))
         attrs = player.get("attributes") or {}
         self.last_result = attrs.get("LastActionResult", "")
+        fx, fz = attrs.get("ViewForwardX"), attrs.get("ViewForwardZ")  # which way the body faces
+        self.facing = (fx, fz) if isinstance(fx, (int, float)) and isinstance(fz, (int, float)) else None
         self.others = [(p.get("name", "?"), tuple(p.get("position", (0, 0, 0))))
-                       for p in raw.get("other_players") or []]
+                       for p in raw.get("other_players") or [] if p.get("name") != SKY_PLAYER]
         ents = ((raw.get("world") or {}).get("entities")) or []
         self.entities = {e.name: e for e in (Entity(r) for r in ents)}
         self.events = raw.get("events") or []
@@ -138,6 +144,10 @@ class Snapshot:
 
     def landmarks(self):
         return [e for e in self.entities.values() if e.role in ("Mesa", "Tree", "Quarry")]
+
+    def sky_shadows(self):
+        """Shadows of things about to fall from the sky (main.lua sky events); nothing stands on them."""
+        return [e for e in self.entities.values() if e.role == "SkyShadow"]
 
     def held(self):
         """The object floating above our head, if any (holding is implicit in Mesa)."""

@@ -327,6 +327,16 @@ function createEntityVisual(entity) {
     return mesh
   }
 
+  if (role === 'SkyShadow') {
+    // Godling's sky events: the shadow of a stone that is about to land (world/main.lua, SKY_WARN_SECONDS).
+    const geometry = new THREE.CircleGeometry(Math.max(size[0], size[2]) / 2, 32)
+    geometry.rotateX(-Math.PI / 2) // baked in, as for the ocean
+    return new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
+    )
+  }
+
   if (role === 'Ground') {
     const group = new THREE.Group()
     const mesh = new THREE.Mesh(
