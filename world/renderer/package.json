@@ -2,6 +2,15 @@
   "name": "@clawblox-renderers/mesa-island",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  },
   "clawbloxRenderer": {
     "apiVersion": 1,
     "entry": "./src/index.js",

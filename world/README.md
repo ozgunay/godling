@@ -47,11 +47,41 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Reaches` (pick-ups, placements and fastenings) plays PickUp;
     - `Strikes` plays Strike;
     - `Climbing` loops Climb.
-- **Renderer.** `renderer/src/index.js` adds a Godling-only character controller:
-  - it sizes the model from its full bounds;
-  - it plays Walk at the body's real speed, and the clips above.
-
-  Other models still use the runtime helper.
+- **Renderer (ADR-006).** Godling's own, in `renderer/src/`; it no longer uses the runtime's model helpers.
+  - **No CDN.**
+    - three.js r187 is bundled in: `npm install`, then `npm run build` (`build.mjs`).
+    - The bundle `dist/renderer.bundle.js` is committed. Runs copy the world without `node_modules`, and the build step then keeps the committed bundle.
+    - On native Windows `clawblox run` can't find `npm`, and in WSL `npm` may be Windows' own. Either way Clawblox falls back to the committed bundle, so rebuild after changing `src/`.
+    - With Clawblox patched (`patches/VIEWER-001`), the page loads nothing from outside the server.
+  - **Quality tiers** (`quality.js`): low, medium, high.
+    - They set resolution, antialiasing, shadows, the sea's detail and the clouds.
+    - The tier is chosen from the device (phone or PC, cores, memory).
+    - A software-rendered or automated browser always gets low. That is how Clawblox's `/observe/image` captures Godling's view.
+    - The resolution scales down by itself when frames run slow.
+  - **Sky and sun** (`sky.js`): three.js's `Sky`.
+    - One sun direction drives the light, shadows, fog, clouds and the sea's reflections.
+    - By default the sun stands where the light always stood, so the art's checked colours hold.
+    - `?time=18` shows that hour; `?dayMinutes=20` runs a day in 20 minutes. A day/night cycle in the world itself is not decided.
+  - **Sea** (`sea.js`): it follows the camera to the horizon.
+    - The vertex shader makes Gerstner waves.
+    - Per pixel: a fresnel blend of water colour and sky, the sun's glint, and foam at the shore.
+    - The shore comes from a distance map baked from the Ground and Mesa parts and the terrain.
+    - The Ocean part only gives the sea level.
+  - **Clouds** (`clouds.js`): Minecraft-style. A flat pixel layer on low, voxel puffs on medium and high.
+  - **Drawing parts** (`instances.js`): all parts and static models are instanced, one draw call per kind of mesh.
+  - **The castaway island's looks** (set by the world script; read in `index.js`):
+    - `Ground` is drawn in the part's colour. With `Surface` "Sand" it is matte sand, where the sea draws its foam.
+    - `Mesa` with `Surface` "Rock" is grey volcanic stone in block-high strata, with a moss cap on every step. Other mesas keep the tan stripes.
+    - `Wreck` with no model is drawn as a deflated yellow life raft, from its part's size and colour. A `ModelUrl` (`raft.glb`) takes over when set.
+  - **Models** (`models.js`): each loads once.
+    - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
+    - Animated ones (Godling) get their own mixer. The clips follow the attributes above, and Walk plays at the body's real speed.
+    - In a first-person capture, the body the camera sits in is hidden, so its own head no longer fills Godling's view.
+  - **Terrain** (`terrain.js`): Clawblox voxel terrain, drawn as blocks, when the patched server sends it.
+  - **Checks.**
+    - `?stats=1` shows frame rate, draw calls, triangles and the tier.
+    - `?quality=low|medium|high` forces a tier.
+    - `globalThis.__godlingRenderer` has the same counts for scripts.
 
 The mind's thinking is not shown in the world. It goes to the run's `mind/thinking.jsonl`, for a separate viewer.
 
