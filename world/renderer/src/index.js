@@ -1,12 +1,14 @@
 import * as THREE from 'three'
 import { CSM } from 'three/addons/csm/CSM.js'
 import { chooseTier, createResolutionGovernor } from './quality.js'
-import { createSky, DEFAULT_SUN, sunForHour } from './sky.js'
+import { createSky, DEFAULT_SUN, MOON_COLOR, sunForHour } from './sky.js'
 import { createSea } from './sea.js'
 import { createClouds } from './clouds.js'
 import { createModelLibrary, createCharacterController } from './models.js'
 import { createInstancer } from './instances.js'
 import { createTerrain } from './terrain.js'
+import { createFires } from './fire.js'
+import { createFishLayer } from './fish.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -218,12 +220,35 @@ function createPartKit(onMaterial) {
     plank: standard({ color: 0x9c6e48, roughness: 0.92, metalness: 0.0 }),
     plankGroove: standard({ color: 0x6f4a2c, roughness: 1.0, metalness: 0.0 }),
     ring: standard({ roughness: 0.82, metalness: 0.12 }),
+    // The pieces of the castaway's life (ADR-007), until the art pipeline models them; colours are the parts'.
+    sandMark: standard({ roughness: 1.0, metalness: 0.0, vertexColors: true }),
+    husk: standard({ roughness: 0.95, metalness: 0.0 }),
+    leather: standard({ roughness: 0.6, metalness: 0.0 }),
+    seam: standard({ color: 0x8c8a84, roughness: 0.8, metalness: 0.0 }),
+    wood: standard({ roughness: 0.85, metalness: 0.0 }),
+    freshWood: standard({ color: 0xe0c08e, roughness: 0.8, metalness: 0.0 }),
+    fishSkin: standard({ roughness: 0.4, metalness: 0.15 }),
   }
   const GEOMETRIES = {
     box: () => new THREE.BoxGeometry(1, 1, 1),
     cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
     sphere: () => new THREE.SphereGeometry(0.5, 16, 16),
     rock: () => new THREE.DodecahedronGeometry(1, 0),
+    // A groove: its floor darker than its rims, so a strip lying on the sand reads as drawn into it.
+    groove: () => {
+      const box = new THREE.BoxGeometry(1, 1, 1)
+      const normals = box.attributes.normal
+      const shades = []
+      for (let i = 0; i < normals.count; i++) {
+        const shade = normals.getY(i) > 0.5 ? 0.78 : normals.getY(i) < -0.5 ? 0.7 : 1.15
+        shades.push(shade, shade, shade)
+      }
+      box.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3))
+      return box
+    },
+    seamRing: () => new THREE.TorusGeometry(0.5, 0.014, 6, 40),
+    spearTip: () => new THREE.ConeGeometry(0.5, 1, 8).rotateX(Math.PI / 2), // point along +Z
+    tail: () => new THREE.ConeGeometry(0.5, 1, 4).rotateZ(-Math.PI / 2), // point along +X, into the body
   }
   return {
     geometry(key, make = GEOMETRIES[key]) {
@@ -367,6 +392,15 @@ export function createRenderer(ctx) {
   const hemisphere = new THREE.HemisphereLight(0x87ceeb, 0x98fb98, 0.4)
   scene.add(ambient, hemisphere)
   const SKY_BLUE = new THREE.Color(0x87ceeb)
+  const GRASS_BOUNCE = new THREE.Color(0x98fb98)
+  const WHITE = new THREE.Color(1, 1, 1)
+  const NIGHT_AMBIENT = new THREE.Color(0.55, 0.64, 0.95) // nights are blue, and still readable
+  const NIGHT_GROUND = new THREE.Color(0.12, 0.14, 0.2)
+  const ramp = (a, b, v) => {
+    const t = Math.min(1, Math.max(0, (v - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+  }
+  const light = { direction: DEFAULT_SUN, color: WHITE, intensity: 1.2, glint: 6 } // the sun's or the moon's
 
   // The sun's shadows: one map around the camera's target, or cascades (high tier) that stay sharp up close.
   const csm = tier.cascades > 0
@@ -422,6 +456,8 @@ export function createRenderer(ctx) {
   const sea = createSea(scene, tier, sky)
   const clouds = createClouds(scene, tier)
   const terrain = createTerrain(scene, { onMaterial })
+  const fires = createFires(scene, tier)
+  const fish = createFishLayer(scene)
 
   // Time of day: `?time=17.5` holds the sun at that hour; `?dayMinutes=20` runs a whole day in 20 minutes.
   // Without either the sun stands where the light always stood.
@@ -430,9 +466,13 @@ export function createRenderer(ctx) {
   const startHour = Number.isFinite(fixedHour) ? fixedHour : 9
   let sunClock = 0
   let sunPlaced = false
+  // The world's own clock, when it keeps one: an entity with a TimeOfDay attribute (Godling's day and night,
+  // ADR-007). The URL settings above still win, for looking at a chosen hour.
+  let worldHour = NaN
   const sunNow = (time) => {
     if (dayMinutes > 0) return sunForHour((startHour + (time / (dayMinutes * 60)) * 24) % 24)
     if (Number.isFinite(fixedHour)) return sunForHour(fixedHour)
+    if (Number.isFinite(worldHour)) return sunForHour(worldHour)
     return DEFAULT_SUN
   }
 
@@ -535,6 +575,7 @@ export function createRenderer(ctx) {
         kind: 'parts',
         parts: template.parts.map((p, i) =>
           part(`model:${modelUrl}#${i}`, p.geometry, p.material, fit.clone().multiply(p.matrix))),
+        swims: role === 'Fish', // a swimming fish's model rides the waves, half under (see updateScene)
       }
     }
 
@@ -581,12 +622,61 @@ export function createRenderer(ctx) {
       }
       case 'PickupObject':
         return { kind: 'parts', parts: [part('block', kit.geometry('box'), kit.material('rock'), scaled(...size), { colored: true })] }
+      // The castaway's life (ADR-007). A ModelUrl, once the art pipeline makes one, is drawn instead (above).
+      case 'Fire':
+        return { kind: 'fire' }
+      case 'Fish':
+        return { kind: 'fish' }
+      case 'SandMark': // half its height, lying on the sand: a groove more than a ribbon
+        return {
+          kind: 'parts',
+          parts: [part('sandMark', kit.geometry('groove'), kit.material('sandMark'),
+            scaled(size[0], size[1] / 2, size[2]).setPosition(0, -size[1] / 4, 0), { colored: true })],
+        }
+      case 'Coconut':
+        return { kind: 'parts', parts: [part('coconut', kit.geometry('sphere'), kit.material('husk'), scaled(size[0], size[0] * 0.92, size[0]), { colored: true })] }
+      case 'Volleyball': {
+        const d = size[0]
+        const ring = (turn) => part('seam', kit.geometry('seamRing'), kit.material('seam'), turn.multiply(scaled(d * 1.01, d * 1.01, d * 1.01)))
+        return {
+          kind: 'parts',
+          parts: [
+            part('volleyball', kit.geometry('sphere'), kit.material('leather'), scaled(d, d, d), { colored: true }),
+            ring(new THREE.Matrix4()),
+            ring(new THREE.Matrix4().makeRotationY(Math.PI / 2)),
+            ring(new THREE.Matrix4().makeRotationX(Math.PI / 2)),
+          ],
+        }
+      }
+      case 'Catch': { // a fish lying on its side on the sand: nose at +X, its back along Z
+        const [l, h, w] = size
+        const fixed = entity.attributes?.Cooked ? 0x8b5a2b : null // cooked over a fire: browned
+        return {
+          kind: 'parts',
+          parts: [
+            part('catchBody', kit.geometry('sphere'), kit.material('fishSkin'), scaled(l * 0.78, h, w).setPosition(l * 0.1, 0, 0), { colored: true, fixed }),
+            part('catchTail', kit.geometry('tail'), kit.material('fishSkin'), scaled(l * 0.3, h * 0.18, w * 1.15).setPosition(-l * 0.35, 0, 0), { colored: true, fixed }),
+          ],
+        }
+      }
       default: {
         const primitive = entity.render && entity.render.primitive
+        if (role === 'Tool' && entity.attributes?.ToolKind === 'Spear') { // a carved log: a shaft and a pale point at +Z
+          const [, , l] = size
+          const r = Math.min(size[0], size[1]) * 0.55
+          return {
+            kind: 'parts',
+            parts: [
+              part('spearShaft', kit.geometry('cylinder'), kit.material('wood'),
+                new THREE.Matrix4().makeRotationX(Math.PI / 2).multiply(scaled(r, l * 0.86, r)).setPosition(0, 0, -l * 0.07), { colored: true }),
+              part('spearTip', kit.geometry('spearTip'), kit.material('freshWood'), scaled(r, r, l * 0.14).setPosition(0, 0, l * 0.43)),
+            ],
+          }
+        }
         if (primitive === 'cylinder') {
           return { kind: 'parts', parts: [part('cylinder', kit.geometry('cylinder'), kit.material('plain'), scaled(size[0], size[1], size[0]), { colored: true })] }
         }
-        if (primitive === 'sphere') {
+        if (primitive === 'sphere' || primitive === 'ball') { // a Ball part's primitive is "ball"
           return { kind: 'parts', parts: [part('sphere', kit.geometry('sphere'), kit.material('plain'), scaled(size[0], size[0], size[0]), { colored: true })] }
         }
         return { kind: 'parts', parts: [part('plain', kit.geometry('box'), kit.material('plain'), scaled(...size), { colored: true })] }
@@ -600,6 +690,8 @@ export function createRenderer(ctx) {
     return [
       entity.render?.role || entity.name || '',
       entity.attributes?.Surface || '',
+      entity.attributes?.ToolKind || '',
+      entity.attributes?.Cooked ? 'cooked' : '',
       entity.render?.primitive || '',
       modelUrl || '',
       modelUrl && models.get(modelUrl) ? 'loaded' : '',
@@ -611,6 +703,7 @@ export function createRenderer(ctx) {
 
   function release(record) {
     for (const slot of record.slots || []) instancer.remove(slot.slot)
+    if (record.kind === 'fire') fires.remove(record.id)
     if (record.root) {
       scene.remove(record.root)
       characters.remove(record.id)
@@ -622,11 +715,16 @@ export function createRenderer(ctx) {
     if (key.endsWith('|hidden')) return record
     const look = describe(entity)
     record.kind = look.kind
+    record.swims = Boolean(look.swims)
     if (look.kind === 'parts') {
       for (const p of look.parts) {
         const group = instancer.group(p.key, p.geometry, p.material, { colored: Boolean(p.colored) })
-        record.slots.push({ slot: instancer.add(group, entityMatrix), local: p.local, linear: Boolean(p.linear), colored: Boolean(p.colored) })
+        record.slots.push({
+          slot: instancer.add(group, entityMatrix), local: p.local, linear: Boolean(p.linear), colored: Boolean(p.colored), fixed: p.fixed ?? null,
+        })
       }
+    } else if (look.kind === 'fire') {
+      fires.add(entity.id)
     } else if (look.kind === 'character') {
       record.root = new THREE.Group()
       record.modelUrl = look.modelUrl
@@ -687,9 +785,12 @@ export function createRenderer(ctx) {
     let seaLevel = null
     const land = []
     const landKey = []
+    const swimming = []
 
     for (const entity of obs.entities || []) {
       activeIds.add(entity.id)
+      const hour = Number(entity.attributes?.TimeOfDay)
+      if (Number.isFinite(hour)) worldHour = hour
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -707,6 +808,10 @@ export function createRenderer(ctx) {
 
       if (record.kind === 'sea') {
         seaLevel = position[1] + (entity.size?.[1] ?? 0) / 2
+      } else if (record.kind === 'fish' || record.swims) {
+        swimming.push({ id: entity.id, position, rotation, size: entity.size, modelled: record.swims })
+      } else if (record.kind === 'fire') {
+        fires.place(entity.id, position, entity.size)
       }
       const role = entity.render?.role
       if (shown && LAND_ROLES.has(role) && entity.size) {
@@ -715,22 +820,27 @@ export function createRenderer(ctx) {
       }
 
       if (record.kind === 'parts') {
-        if (moved || record.fresh !== false) {
+        if (moved || record.fresh !== false || record.swims) {
+          // A swimming fish sits on the water as it is drawn now, its back out and its belly under.
+          const water = record.swims ? sea.surfaceAt(position[0], position[2]) : null
+          const y = water == null ? position[1] : water + 0.02
           if (rotation) {
             entityMatrix.set(
               rotation[0][0], rotation[0][1], rotation[0][2], position[0],
-              rotation[1][0], rotation[1][1], rotation[1][2], position[1],
+              rotation[1][0], rotation[1][1], rotation[1][2], y,
               rotation[2][0], rotation[2][1], rotation[2][2], position[2],
               0, 0, 0, 1,
             )
           } else {
-            entityMatrix.makeTranslation(position[0], position[1], position[2])
+            entityMatrix.makeTranslation(position[0], y, position[2])
           }
           for (const s of record.slots) instancer.setMatrix(s.slot, partMatrix.multiplyMatrices(entityMatrix, s.local))
         }
         const colorKey = entity.render?.color ? entity.render.color.join(',') : ''
         if (colorKey !== record.color) {
-          for (const s of record.slots) if (s.colored) instancer.setColor(s.slot, resolveEntityColor(entity, s.linear, color))
+          for (const s of record.slots) {
+            if (s.colored) instancer.setColor(s.slot, s.fixed != null ? color.setHex(s.fixed) : resolveEntityColor(entity, s.linear, color))
+          }
           record.color = colorKey
         }
       } else if (record.kind === 'character') {
@@ -809,32 +919,41 @@ export function createRenderer(ctx) {
       dt,
     })
 
-    return { seaLevel, land, landKey: landKey.join(';'), cameraTarget }
+    return { seaLevel, land, landKey: landKey.join(';'), cameraTarget, swimming }
   }
 
   function updateSunAndLights(dt, cameraTarget) {
     sunClock += dt
-    if (!sunPlaced || (dayMinutes > 0 && sunClock >= 0.5)) {
+    if (!sunPlaced || ((dayMinutes > 0 || Number.isFinite(worldHour)) && sunClock >= 0.5)) {
       sky.setSun(sunNow(elapsed))
       sunPlaced = true
       sunClock = 0
     }
     const day = sky.daylight
-    ambient.intensity = 0.6 * (0.25 + 0.75 * day)
+    const night = sky.night
+    // By night the sun's light is the moon's: cool and dim, from where the moon stands, fading in after dusk.
+    const moonlit = sky.sun.y < -0.02
+    light.direction = moonlit ? sky.moon : sky.sun
+    light.color = moonlit ? MOON_COLOR : sky.sunColor
+    light.intensity = moonlit ? 0.34 * ramp(-0.02, -0.2, sky.sun.y) : 1.2 * day
+    light.glint = moonlit ? 2.5 * ramp(-0.02, -0.2, sky.sun.y) : 6 * day
+    ambient.color.copy(WHITE).lerp(NIGHT_AMBIENT, night)
+    ambient.intensity = 0.6 * (0.3 + 0.7 * day)
     hemisphere.color.copy(SKY_BLUE).lerp(sky.zenith, 0.35)
+    hemisphere.groundColor.copy(GRASS_BOUNCE).lerp(NIGHT_GROUND, night)
     hemisphere.intensity = 0.4 * (0.35 + 0.65 * day)
     scene.fog.color.copy(sky.fogColor)
     if (csm) {
-      csm.lightDirection.copy(sky.sun).negate()
-      for (const light of csm.lights) {
-        light.color.copy(sky.sunColor)
-        light.intensity = 1.2 * day
+      csm.lightDirection.copy(light.direction).negate()
+      for (const l of csm.lights) {
+        l.color.copy(light.color)
+        l.intensity = light.intensity
       }
       csm.update()
     } else {
-      sunLight.color.copy(sky.sunColor)
-      sunLight.intensity = 1.2 * day
-      sunLight.position.copy(cameraTarget).addScaledVector(sky.sun, 120)
+      sunLight.color.copy(light.color)
+      sunLight.intensity = light.intensity
+      sunLight.position.copy(cameraTarget).addScaledVector(light.direction, 120)
       sunLight.target.position.copy(cameraTarget)
     }
   }
@@ -842,11 +961,13 @@ export function createRenderer(ctx) {
   function draw(obs, dt) {
     latestObs = obs
     elapsed += dt
-    const { seaLevel, land, landKey, cameraTarget } = updateScene(obs, dt)
+    const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt)
     updateSunAndLights(dt, cameraTarget)
     sky.update(camera, elapsed)
-    sea.update({ camera, time: elapsed, seaLevel, land, landKey })
+    sea.update({ camera, time: elapsed, seaLevel, land, landKey, light })
     clouds.update({ camera, time: elapsed, sky })
+    fires.update({ time: elapsed, camera, daylight: sky.daylight, night: sky.night })
+    fish.update(swimming, sea, elapsed)
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
     renderer.render(scene, camera)
@@ -917,6 +1038,8 @@ export function createRenderer(ctx) {
       sea.dispose()
       clouds.dispose()
       terrain.dispose()
+      fires.dispose()
+      fish.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()
