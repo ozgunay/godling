@@ -16,7 +16,9 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
     scene.updateMatrixWorld(true)
     const parts = []
     scene.traverse((node) => {
-      if (!node.isMesh) return
+      // art/build_props.py gives each prop a "bounds" material: two specks at its outline's corners, there only
+      // so the model's box is its whole outline (the box is taken before this). Not worth a draw call.
+      if (!node.isMesh || node.material?.name === 'bounds') return
       onMaterial?.(node.material)
       parts.push({ geometry: node.geometry, material: node.material, matrix: node.matrixWorld.clone() })
     })

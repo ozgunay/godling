@@ -204,10 +204,17 @@ function createPartKit(onMaterial) {
   const MATERIALS = {
     plain: standard({ roughness: 0.5, metalness: 0.2 }),
     rock: standard({ roughness: 0.95, metalness: 0.0, flatShading: true }),
-    ground: standard({ color: 0x55efc4, roughness: 0.5, metalness: 0.2 }),
+    ground: standard({ roughness: 0.5, metalness: 0.2 }), // in the part's colour: grass, or upstream's mint
+    sand: standard({ roughness: 0.96, metalness: 0.0 }),
     mesaFoot: standard({ color: 0x8b6940, roughness: 0.9, metalness: 0.0 }),
     mesaMiddle: standard({ color: 0xa57d50, roughness: 0.9, metalness: 0.0 }),
     mesaTop: standard({ color: 0x55cfb0, roughness: 0.9, metalness: 0.0 }),
+    // Set light: filmic tone mapping darkens greys a lot (art/README.md).
+    rockDark: standard({ color: 0x9a9286, roughness: 0.95, metalness: 0.0 }),
+    rockLight: standard({ color: 0xb4ada2, roughness: 0.95, metalness: 0.0 }),
+    rockMoss: standard({ color: 0x6da34c, roughness: 0.9, metalness: 0.0 }),
+    raft: standard({ roughness: 0.55, metalness: 0.0 }), // rubberised fabric, in the part's colour
+    raftFloor: standard({ color: 0x2f3236, roughness: 0.8, metalness: 0.0 }),
     plank: standard({ color: 0x9c6e48, roughness: 0.92, metalness: 0.0 }),
     plankGroove: standard({ color: 0x6f4a2c, roughness: 1.0, metalness: 0.0 }),
     ring: standard({ roughness: 0.82, metalness: 0.12 }),
@@ -246,6 +253,61 @@ const MESA_LAYERS = [
   { frac: 0.80, hFrac: 0.20, material: 'mesaTop' },
 ]
 const LAND_ROLES = new Set(['Ground', 'Mesa']) // what makes the coastline for the sea's shore map
+const STRATUM = 2.5 // rock (Mesa, Surface "Rock") is drawn in block-high strata, as the block grid (ADR-005)
+const MOSS = 0.35 // the green cap on rock, as on Monuriki's peak
+
+// Rock: alternating strata of volcanic stone, one block each from the foot, and a cap of moss on top.
+function rockParts(size, part, kit) {
+  const [w, h, d] = size
+  const bottom = -h / 2
+  const stoneTop = h / 2 - Math.min(MOSS, h / 2)
+  const parts = []
+  for (let y = bottom, i = 0; y < stoneTop - 1e-3; y += STRATUM, i += 1) {
+    const top = Math.min(y + STRATUM, stoneTop)
+    const key = i % 2 ? 'rockLight' : 'rockDark'
+    parts.push(part(key, kit.geometry('box'), kit.material(key),
+      new THREE.Matrix4().makeScale(w, top - y, d).setPosition(0, (y + top) / 2, 0)))
+  }
+  parts.push(part('rockMoss', kit.geometry('box'), kit.material('rockMoss'),
+    new THREE.Matrix4().makeScale(w, h / 2 - stoneTop, d).setPosition(0, (stoneTop + h / 2) / 2, 0)))
+  return parts
+}
+
+// A busted inflatable life raft, from its part's size and colour: a ring of fat tubes with rounded corners round a
+// dark floor, the side facing -Z gone flat.
+function lifeRaftParts(size, part, kit) {
+  const [w, h, d] = size
+  const r = Math.max(0.15, Math.min(h * 0.45, d * 0.2, w * 0.2))
+  const y = -h / 2 + r
+  const lengthX = Math.max(0.01, w - 2 * r)
+  const lengthZ = Math.max(0.01, d - 2 * r)
+  const flat = 0.45 // how much of its height the deflated side keeps
+  const tube = (x, z, length, alongX, squash) => {
+    const sag = (1 - squash) * r
+    const turn = alongX ? new THREE.Matrix4().makeRotationZ(Math.PI / 2) : new THREE.Matrix4().makeRotationX(Math.PI / 2)
+    // In the cylinder's own frame the length is Y; after the turn its local X (along X) or Z (along Z) is upright.
+    const scale = alongX ? [2 * r * squash, length, 2 * r] : [2 * r, length, 2 * r * squash]
+    const local = new THREE.Matrix4().makeTranslation(x, y - sag, z).multiply(turn).multiply(new THREE.Matrix4().makeScale(...scale))
+    return part('raftTube', kit.geometry('cylinder'), kit.material('raft'), local, { colored: true })
+  }
+  const corner = (x, z, squash) => part('raftCorner', kit.geometry('sphere'), kit.material('raft'),
+    new THREE.Matrix4().makeTranslation(x, y - (1 - squash) * r, z).multiply(new THREE.Matrix4().makeScale(2 * r, 2 * r * squash, 2 * r)),
+    { colored: true })
+  const ex = w / 2 - r
+  const ez = d / 2 - r
+  return [
+    part('raftFloor', kit.geometry('box'), kit.material('raftFloor'),
+      new THREE.Matrix4().makeScale(lengthX + r, Math.min(0.12, h * 0.1), lengthZ + r).setPosition(0, -h / 2 + 0.06, 0)),
+    tube(0, ez, lengthX, true, 1),
+    tube(0, -ez, lengthX, true, flat),
+    tube(ex, 0, lengthZ, false, 1),
+    tube(-ex, 0, lengthZ, false, 0.8),
+    corner(ex, ez, 1),
+    corner(-ex, ez, 0.9),
+    corner(ex, -ez, 0.7),
+    corner(-ex, -ez, flat),
+  ]
+}
 
 // A small on-screen readout for `?stats=1`: frame rate, draw calls, triangles, tier and resolution.
 function createStatsReadout(canvas, renderer, tier, instancer) {
@@ -480,9 +542,14 @@ export function createRenderer(ctx) {
     switch (role) {
       case 'Ocean':
         return { kind: 'sea' }
-      case 'Ground':
-        return { kind: 'parts', parts: [part('ground', kit.geometry('box'), kit.material('ground'), scaled(...size))] }
+      case 'Ground': {
+        const surface = entity.attributes?.Surface === 'Sand' ? 'sand' : 'ground'
+        return { kind: 'parts', parts: [part(surface, kit.geometry('box'), kit.material(surface), scaled(...size), { colored: true })] }
+      }
+      case 'Wreck':
+        return { kind: 'parts', parts: lifeRaftParts(size, part, kit) }
       case 'Mesa':
+        if (entity.attributes?.Surface === 'Rock') return { kind: 'parts', parts: rockParts(size, part, kit) }
         return {
           kind: 'parts',
           parts: MESA_LAYERS.map((layer) => {
@@ -532,6 +599,7 @@ export function createRenderer(ctx) {
     const visible = !(entity.render && (entity.render.visible === false || entity.render.transparency >= 0.999))
     return [
       entity.render?.role || entity.name || '',
+      entity.attributes?.Surface || '',
       entity.render?.primitive || '',
       modelUrl || '',
       modelUrl && models.get(modelUrl) ? 'loaded' : '',
