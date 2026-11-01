@@ -651,6 +651,25 @@ local BOULDERS = { { name = "Boulder_1", pos = {ISLAND.boulders[1][1], 1.3, ISLA
 local BOULDER_DIAMETER = 2.6
 -- A person's hop (about 0.6 up) instead of upstream's 6-unit leap: the way up is ladders and building.
 local JUMP_POWER = 15
+-- Face: the body turns on the spot towards a point (the glance reflex), without stepping anywhere.
+local TURN_RATE = 6 -- radians per second
+-- Sky events (research report "God games lessons for Godling", batch 1): a stone falls from the sky, announced
+-- by a dark shadow on the ground SKY_WARN_SECONDS before it lands, so the landing can be watched and met. It lands
+-- as a stone block, building material. Viewers will buy these; until they can send them in, SKY_TEST_EVERY drops
+-- one near the player on a timer (seconds, 0 = off; run_godling.py --sky-test-minutes sets it).
+local SKY_TEST_EVERY = 0
+local SKY_WARN_SECONDS = 40
+local SKY_DROP_HEIGHT = 40
+local SKY_FALL_SPEED = 25 -- already falling fast when it appears: about 1.3 s to the ground
+local SKY_SPOT_NEAR, SKY_SPOT_FAR = 8, 16 -- from the player: close enough to see, clear of its feet
+local SKY_SPOT_CLEARANCE = 4 -- no building piece this close, so a test drop never hits what was built
+local SKY_SHADOW_CLEARANCE = 3 -- a stone lands only while nobody stands this close to its shadow's centre
+-- The guest panel (tools/guest_panel.py) joins under this name to send sky powers. It has no body in the world: it
+-- is parked out of sight under the island, and the mind leaves it out of what it sees.
+local SKY_PLAYER = "Sky"
+local SKY_PARKING = Vector3.new(0, -40, 0)
+local SKY_GIFT_HEIGHT = 12 -- dropped stones and logs fall from here
+local SKY_FLASH_SECONDS = 0.5 -- how long a lightning bolt shows
 -- Models from the art pipeline (asset://name.glb); nil draws a plain coloured part.
 local ART = { Hammer = "asset://hammer.glb", Quarry = "asset://quarry.glb", Stone = "asset://stone.glb",
     Axe = "asset://axe.glb", Log = "asset://log.glb", Ladder = "asset://ladder.glb", Boulder = "asset://boulder.glb",
@@ -727,17 +746,17 @@ local GRASS_COLOR = Color3.fromRGB(108, 178, 72) -- a natural grass green, not u
 local ROCK_TERRAIN_COLOR = Color3.fromRGB(128, 124, 118)
 local groundParts = {}
 for n, r in ipairs(ISLAND.sand) do
-    table.insert(groundParts, { name = "Beach_" .. n, size = {r[3], GROUND_HEIGHT, r[4]}, pos = {r[1], r[2]}, sand = true })
+    table.insert(groundParts, { name = "Beach_" .. n, size = {r[3], GROUND_HEIGHT, r[4]}, pos = {r[1], GROUND_Y, r[2]}, sand = true })
 end
 for n, r in ipairs(ISLAND.grass) do
-    table.insert(groundParts, { name = "Ground_" .. n, size = {r[3], GROUND_HEIGHT, r[4]}, pos = {r[1], r[2]} })
+    table.insert(groundParts, { name = "Ground_" .. n, size = {r[3], GROUND_HEIGHT, r[4]}, pos = {r[1], GROUND_Y, r[2]} })
 end
 
 for _, g in ipairs(groundParts) do
     local part = findWorkspaceChild(g.name) or Instance.new("Part")
     part.Name = g.name
     part.Size = Vector3.new(g.size[1], g.size[2], g.size[3])
-    part.Position = Vector3.new(g.pos[1], GROUND_Y - (g.sand and SAND_DROP or 0), g.pos[2])
+    part.Position = Vector3.new(g.pos[1], GROUND_Y - (g.sand and SAND_DROP or 0), g.pos[3])
     part.Anchored = true
     part.Color = g.sand and SAND_COLOR or GRASS_COLOR
     part.Material = Enum.Material.SmoothPlastic
@@ -1090,6 +1109,17 @@ local function setupPlayer(player, shouldSpawnAtStart)
         humanoid = character:FindFirstChild("Humanoid")
     end
 
+    if player.Name == SKY_PLAYER then -- the guest panel: no body on the island
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = true
+            hrp.CanCollide = false
+            hrp.Position = SKY_PARKING
+        end
+        player:SetAttribute("LastActionResult", "Ready")
+        return
+    end
+
     if humanoid then
         humanoid.WalkSpeed = 16
         humanoid.JumpPower = JUMP_POWER -- upstream: 50
@@ -1431,7 +1461,7 @@ local function positionOccupied(player, targetCFrame, object)
     probe:Destroy()
 
     for _, hit in ipairs(hits) do
-        if hit:IsA("Part") then
+        if hit:IsA("Part") and hit:GetAttribute("RenderRole") ~= "SkyShadow" then -- a shadow takes no room
             return true
         end
     end
@@ -1722,6 +1752,8 @@ end
 
 local logCounter = 0
 
+local fellTree -- below: chopping and lightning both fell trees
+
 local function chopTree(tree, body)
     local chops = (tree:GetAttribute("Chops") or 0) + 1
     if chops < CHOPS_PER_TREE then
@@ -1729,8 +1761,13 @@ local function chopTree(tree, body)
         return "StrikeHit:" .. chops .. "/" .. CHOPS_PER_TREE
     end
     tree:SetAttribute("Chops", 0)
-    -- It falls away from the one chopping it, along the grid: two logs side by side in the cells beside the stump,
-    -- which stays behind. (Logs that fell at a slant were pushed far off by their slanted boxes and settled askew.)
+    return "StrikeFelled:" .. table.concat(fellTree(tree, body), ",")
+end
+
+-- A tree falls away from `body`, along the grid: two logs side by side in the cells beside the stump, which stays
+-- behind. (Logs that fell at a slant were pushed far off by their slanted boxes and settled askew.) `mark` (optional)
+-- is applied to each log. Returns the logs' names.
+function fellTree(tree, body, mark)
     local base = Vector3.new(tree.Position.X, 0, tree.Position.Z)
     local away = Vector3.new(base.X - body.X, 0, base.Z - body.Z)
     if math.abs(away.X) >= math.abs(away.Z) then
@@ -1746,8 +1783,11 @@ local function chopTree(tree, body)
         local spot = base + away * (tree.Size.X / 2 + LOG_SIZE.X / 2) + side * ((i - 1) * BLOCK_SIZE)
             + Vector3.new(0, LOG_SIZE.Y / 2 + 0.02, 0)
         local name = "Log_" .. logCounter
-        createPiece(name, freeSpawn(CFrame.new(spot) * CFrame.fromOrientation(0, yaw, 0), LOG_SIZE, side), LOG_SIZE,
-            Color3.fromRGB(140, 98, 62), "Log", woodPhysics, ART.Log) -- a square beam: a round one rolled away
+        local log = createPiece(name, freeSpawn(CFrame.new(spot) * CFrame.fromOrientation(0, yaw, 0), LOG_SIZE, side),
+            LOG_SIZE, Color3.fromRGB(140, 98, 62), "Log", woodPhysics, ART.Log) -- a square beam: a round one rolled away
+        if mark then
+            mark(log)
+        end
         names[i] = name
     end
     tree.Size = Vector3.new(tree.Size.X, BLOCK_SIZE / 2, tree.Size.Z) -- a stump half a block high
@@ -1755,7 +1795,16 @@ local function chopTree(tree, body)
     tree:SetAttribute("RenderRole", "Stump")
     tree:SetAttribute("ModelUrl", ART.Stump)
     tree:SetAttribute("FelledAt", os.clock())
-    return "StrikeFelled:" .. table.concat(names, ",")
+    return names
+end
+
+local function regrowStump(t)
+    local stump = t.part
+    stump.Size = Vector3.new(t.size[1], t.size[2], t.size[3])
+    stump.Position = Vector3.new(t.pos[1], t.pos[2], t.pos[3])
+    stump:SetAttribute("RenderRole", "Tree")
+    stump:SetAttribute("ModelUrl", t.model) -- a palm grows back a palm
+    stump:SetAttribute("SkyEvent", "") -- grown back by itself; a sky regrowth marks it again
 end
 
 local function regrowTrees()
@@ -1763,10 +1812,7 @@ local function regrowTrees()
         local stump = t.part
         if stump and stump.Parent and stump:GetAttribute("RenderRole") == "Stump"
             and os.clock() - (stump:GetAttribute("FelledAt") or 0) >= TREE_REGROW_SECONDS then
-            stump.Size = Vector3.new(t.size[1], t.size[2], t.size[3])
-            stump.Position = Vector3.new(t.pos[1], t.pos[2], t.pos[3])
-            stump:SetAttribute("RenderRole", "Tree")
-            stump:SetAttribute("ModelUrl", t.model)
+            regrowStump(t)
         end
     end
 end
@@ -1918,7 +1964,7 @@ local fishDue = {} -- os.clock() times when a caught fish is replaced
 
 local function overLand(x, z)
     for _, g in ipairs(groundParts) do
-        if math.abs(x - g.pos[1]) <= g.size[1] / 2 and math.abs(z - g.pos[2]) <= g.size[3] / 2 then
+        if math.abs(x - g.pos[1]) <= g.size[1] / 2 and math.abs(z - g.pos[3]) <= g.size[3] / 2 then
             return true
         end
     end
@@ -2469,7 +2515,7 @@ local markCount = 0
 local function onOpenSand(x, z)
     local sand = false
     for _, g in ipairs(groundParts) do
-        if math.abs(x - g.pos[1]) <= g.size[1] / 2 and math.abs(z - g.pos[2]) <= g.size[3] / 2 then
+        if math.abs(x - g.pos[1]) <= g.size[1] / 2 and math.abs(z - g.pos[3]) <= g.size[3] / 2 then
             if not g.sand then
                 return false -- grass lies over the sand here
             end
@@ -2556,6 +2602,55 @@ local function advanceClimbers(dt)
     end
 end
 
+local turners = {} -- player -> the yaw Face is turning the body to
+local skyPower -- with the sky events below: the guest panel's powers
+
+local function yawOf(cframe) -- the way a part faces, as the yaw the engine gives a walking body (forward is -Z)
+    local look = cframe.LookVector
+    return math.atan2(-look.X, -look.Z)
+end
+
+local function face(player, inputData)
+    local hrp = getHumanoidRootPart(player)
+    local target = inputData and inputData.position and parsePosition(inputData.position)
+    if not hrp or not target then
+        player:SetAttribute("LastActionResult", "FaceFailed:InvalidPosition")
+        return
+    end
+    if climbers[player] then
+        player:SetAttribute("LastActionResult", "FaceFailed:Climbing")
+        return
+    end
+    local dx, dz = target.X - hrp.Position.X, target.Z - hrp.Position.Z
+    if dx * dx + dz * dz < 0.01 then
+        player:SetAttribute("LastActionResult", "FaceFailed:TooClose")
+        return
+    end
+    local humanoid = getHumanoid(player)
+    if humanoid then
+        humanoid:CancelMoveTo()
+    end
+    turners[player] = math.atan2(-dx, -dz)
+    player:SetAttribute("LastActionResult", "FaceStarted")
+end
+
+local function advanceTurners(dt)
+    for player, target in pairs(turners) do
+        local hrp = getHumanoidRootPart(player)
+        if not hrp or climbers[player] then
+            turners[player] = nil
+        else
+            local now = yawOf(hrp.CFrame)
+            local delta = (target - now + math.pi) % (2 * math.pi) - math.pi
+            local step = math.clamp(delta, -TURN_RATE * dt, TURN_RATE * dt)
+            hrp.CFrame = CFrame.new(hrp.Position) * CFrame.fromOrientation(0, now + step, 0)
+            if math.abs(delta) <= TURN_RATE * dt then
+                turners[player] = nil
+            end
+        end
+    end
+end
+
 if AgentInputService then
     AgentInputService.InputReceived:Connect(function(player, inputType, inputData)
         local humanoid = getHumanoid(player)
@@ -2567,7 +2662,12 @@ if AgentInputService then
                 player:SetAttribute("LastActionResult", "MoveToFailed:InvalidPosition")
                 return
             end
+            turners[player] = nil -- walking turns the body itself
             humanoid:MoveTo(targetPosition)
+        elseif inputType == "Face" then
+            face(player, inputData)
+        elseif inputType == "Sky" then
+            skyPower(player, inputData)
         elseif inputType == "Stop" then
             humanoid:CancelMoveTo()
         elseif inputType == "Jump" then
@@ -2696,6 +2796,241 @@ local function deliverCube()
 end
 
 --------------------------------------------------------------------------------
+-- SKY EVENTS (Godling: a stone falls from the sky, announced by its shadow)
+--------------------------------------------------------------------------------
+
+local skyState = SUPPLY_SEED + 1 -- its own fixed sequence, so the supply drops stay as they were
+local skyCounter = 0
+local skyTimer = 0
+local skyFalls = {} -- { n, x, z, shadow, landsAt }
+
+local function skyRandom()
+    skyState = (skyState * 16807) % 2147483647
+    return skyState / 2147483647
+end
+
+local function clearOfPieces(x, z, clearance)
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        if inst:IsA("Part") and inst:GetAttribute("IsPickupObject") then
+            local dx, dz = inst.Position.X - x, inst.Position.Z - z
+            if dx * dx + dz * dz < clearance * clearance then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+local function skySpotNear(player)
+    local hrp = getHumanoidRootPart(player)
+    if not hrp then
+        return nil
+    end
+    for _ = 1, 40 do
+        local angle = skyRandom() * 2 * math.pi
+        local dist = SKY_SPOT_NEAR + skyRandom() * (SKY_SPOT_FAR - SKY_SPOT_NEAR)
+        local x, z = hrp.Position.X + math.cos(angle) * dist, hrp.Position.Z + math.sin(angle) * dist
+        if clearSupplySpot(x, z) and clearOfPieces(x, z, SKY_SPOT_CLEARANCE) then
+            return x, z
+        end
+    end
+    return nil
+end
+
+local skyFlashes = {} -- { part, gone }
+
+local function skyMark(kind, id)
+    return function(part)
+        part:SetAttribute("SkyEvent", kind)
+        part:SetAttribute("SkyId", id)
+    end
+end
+
+local function skyMarker(name, size, position, color, role) -- a shadow or a bolt: seen, never touched
+    local part = Instance.new("Part")
+    part.Name = name
+    part.Size = size
+    part.Position = position
+    part.Anchored = true
+    part.CanCollide = false
+    part.Color = color
+    part:SetAttribute("RenderRole", role)
+    part.Parent = Workspace
+    return part
+end
+
+local function godlingPlayer() -- the one the sky aims for: the first player that is not the guest panel
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name ~= SKY_PLAYER then
+            return player
+        end
+    end
+    return nil
+end
+
+local function shadowOccupied(fall) -- the sky never drops a stone on someone: it waits until the shadow is clear
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp then
+            local dx, dz = hrp.Position.X - fall.x, hrp.Position.Z - fall.z
+            if dx * dx + dz * dz < SKY_SHADOW_CLEARANCE * SKY_SHADOW_CLEARANCE then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function announceSkyFall(x, z)
+    skyCounter = skyCounter + 1
+    local shadow = skyMarker("SkyShadow_" .. skyCounter, Vector3.new(3.2, 0.06, 3.2), Vector3.new(x, 0.04, z),
+        Color3.fromRGB(24, 22, 20), "SkyShadow")
+    skyMark("Meteor", skyCounter)(shadow)
+    shadow:SetAttribute("LandsIn", SKY_WARN_SECONDS)
+    table.insert(skyFalls, { n = skyCounter, x = x, z = z, shadow = shadow, landsAt = os.clock() + SKY_WARN_SECONDS })
+    print(string.format("SKY Meteor #%d warned at (%.1f, %.1f), lands in %ds", skyCounter, x, z, SKY_WARN_SECONDS))
+    return skyCounter
+end
+
+local function advanceSkyFalls()
+    local now = os.clock()
+    local i = 1
+    while i <= #skyFalls do
+        local fall = skyFalls[i]
+        if now >= fall.landsAt and not shadowOccupied(fall) then
+            fall.shadow:Destroy()
+            local size = Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+            local stone = createPiece("Meteor_" .. fall.n, CFrame.new(fall.x, SKY_DROP_HEIGHT, fall.z), size,
+                Color3.fromRGB(64, 56, 52), "Stone", stonePhysics) -- dark and bare: not a quarried stone
+            skyMark("Meteor", fall.n)(stone)
+            stone.AssemblyLinearVelocity = Vector3.new(0, -SKY_FALL_SPEED, 0)
+            print(string.format("SKY Meteor #%d landed at (%.1f, %.1f)", fall.n, fall.x, fall.z))
+            table.remove(skyFalls, i)
+        else
+            local left = math.max(0, math.ceil(fall.landsAt - now)) -- 0 while it waits for a clear shadow
+            if fall.shadow:GetAttribute("LandsIn") ~= left then
+                fall.shadow:SetAttribute("LandsIn", left)
+            end
+            i = i + 1
+        end
+    end
+    i = 1
+    while i <= #skyFlashes do
+        if now >= skyFlashes[i].gone then
+            skyFlashes[i].part:Destroy()
+            table.remove(skyFlashes, i)
+        else
+            i = i + 1
+        end
+    end
+end
+
+local function nearestTree(role, to)
+    local best, bestDist = nil, math.huge
+    for _, t in ipairs(trees) do
+        local part = t.part
+        if part and part.Parent and part:GetAttribute("RenderRole") == role then
+            local d = (Vector3.new(part.Position.X, 0, part.Position.Z) - Vector3.new(to.X, 0, to.Z)).Magnitude
+            if d < bestDist then
+                best, bestDist = t, d
+            end
+        end
+    end
+    return best
+end
+
+local function dropGift(kind, x, z)
+    skyCounter = skyCounter + 1
+    local piece
+    if kind == "Stone" then
+        quarryWork.made = quarryWork.made + 1 -- stones share one numbering, wherever they come from
+        local size = Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+        piece = createPiece("Stone_" .. quarryWork.made, CFrame.new(x, SKY_GIFT_HEIGHT, z), size,
+            Color3.fromRGB(150, 146, 140), "Stone", stonePhysics, ART.Stone)
+    else
+        logCounter = logCounter + 1
+        piece = createPiece("Log_" .. logCounter, CFrame.new(x, SKY_GIFT_HEIGHT, z), LOG_SIZE,
+            Color3.fromRGB(140, 98, 62), "Log", woodPhysics, ART.Log)
+    end
+    skyMark(kind, skyCounter)(piece)
+    print(string.format("SKY %s #%d dropped %s at (%.1f, %.1f)", kind, skyCounter, piece.Name, x, z))
+    return skyCounter
+end
+
+-- What the guest panel can do. Viewers choose what; the world chooses where: near Godling, in view, clear of what
+-- it built. Each returns the event's number, or nil and why not.
+local SKY_POWERS = {
+    Meteor = function(godling)
+        local x, z = skySpotNear(godling)
+        if not x then
+            return nil, "NoClearSpot"
+        end
+        return announceSkyFall(x, z)
+    end,
+    Stone = function(godling)
+        local x, z = skySpotNear(godling)
+        if not x then
+            return nil, "NoClearSpot"
+        end
+        return dropGift("Stone", x, z)
+    end,
+    Log = function(godling)
+        local x, z = skySpotNear(godling)
+        if not x then
+            return nil, "NoClearSpot"
+        end
+        return dropGift("Log", x, z)
+    end,
+    Lightning = function(godling)
+        local hrp = getHumanoidRootPart(godling)
+        local t = hrp and nearestTree("Tree", hrp.Position)
+        if not t then
+            return nil, "NoStandingTree"
+        end
+        skyCounter = skyCounter + 1
+        local p = t.part.Position
+        local bolt = skyMarker("SkyBolt_" .. skyCounter, Vector3.new(0.35, 30, 0.35), Vector3.new(p.X, 15, p.Z),
+            Color3.fromRGB(255, 244, 170), "SkyFlash")
+        table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+        local mark = skyMark("Lightning", skyCounter)
+        local names = fellTree(t.part, hrp.Position, function(log)
+            mark(log)
+            log:SetAttribute("FromTree", t.name)
+        end)
+        print(string.format("SKY Lightning #%d felled %s into %s", skyCounter, t.name, table.concat(names, ",")))
+        return skyCounter
+    end,
+    Regrow = function(godling)
+        local hrp = getHumanoidRootPart(godling)
+        local t = hrp and nearestTree("Stump", hrp.Position)
+        if not t then
+            return nil, "NoStump"
+        end
+        skyCounter = skyCounter + 1
+        regrowStump(t)
+        skyMark("Regrow", skyCounter)(t.part)
+        print(string.format("SKY Regrow #%d grew %s back", skyCounter, t.name))
+        return skyCounter
+    end,
+}
+
+function skyPower(player, inputData)
+    if player.Name ~= SKY_PLAYER then -- only the guest panel calls on the sky; Godling cannot
+        player:SetAttribute("LastActionResult", "SkyFailed:NotTheSky")
+        return
+    end
+    local name = inputData and tostring(inputData.power or "")
+    local power = SKY_POWERS[name]
+    local godling = godlingPlayer()
+    if not power or not godling then
+        player:SetAttribute("LastActionResult", "SkyFailed:" .. (power and "NobodyHere" or "UnknownPower"))
+        return
+    end
+    local id, why = power(godling)
+    player:SetAttribute("LastActionResult", id and ("SkyDone:" .. name .. ":" .. id) or ("SkyFailed:" .. why))
+end
+
+--------------------------------------------------------------------------------
 -- MAIN LOOP
 --------------------------------------------------------------------------------
 
@@ -2751,6 +3086,21 @@ RunService.Heartbeat:Connect(function(dt)
         settleTimer = 0
         settleResting() -- pieces that came to rest square into their cells and hold there
     end
+    advanceTurners(dt)
+    if SKY_TEST_EVERY > 0 then
+        skyTimer = skyTimer + dt
+        if skyTimer >= SKY_TEST_EVERY then
+            skyTimer = 0
+            local player = godlingPlayer()
+            if player then
+                local x, z = skySpotNear(player)
+                if x then
+                    announceSkyFall(x, z)
+                end
+            end
+        end
+    end
+    advanceSkyFalls()
     keepsakeTimer = keepsakeTimer + dt
     if keepsakeTimer >= 10 then
         keepsakeTimer = 0
