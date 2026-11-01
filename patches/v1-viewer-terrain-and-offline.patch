@@ -1,0 +1,506 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 6e18707..241eb3a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -14,7 +14,7 @@ tokio = { version = "1.49", features = ["full"] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ sha2 = "0.10"
+-tower-http = { version = "0.6", features = ["cors", "fs"] }
++tower-http = { version = "0.6", features = ["cors", "fs", "set-header"] }
+ uuid = { version = "1", features = ["v4", "serde"] }
+ rand = "0.8"
+ rapier3d = { version = "0.25", features = ["profiler"] }
+diff --git a/frontend_runtime/dist/index.html b/frontend_runtime/dist/index.html
+index ba6412c..9079cbd 100644
+--- a/frontend_runtime/dist/index.html
++++ b/frontend_runtime/dist/index.html
+@@ -15,7 +15,7 @@
+         "imports": {
+           "three": "https://esm.sh/three@0.160.0",
+           "three/": "https://esm.sh/three@0.160.0/",
+-          "lucide": "https://esm.sh/lucide@0.468.0"
++          "lucide": "./ui/vendor/lucide.js"
+         }
+       }
+     </script>
+diff --git a/frontend_runtime/dist/main.js b/frontend_runtime/dist/main.js
+index 8fc373c..85fb8e8 100644
+--- a/frontend_runtime/dist/main.js
++++ b/frontend_runtime/dist/main.js
+@@ -5,7 +5,7 @@ import {
+   Wrench,
+   CircleAlert,
+   User,
+-} from "https://esm.sh/lucide@0.468.0"
++} from "./vendor/lucide.js"
+ 
+ function icon(iconNode, size = 14) {
+   const el = createLucideElement(iconNode)
+@@ -117,6 +117,7 @@ function applySpectatorDelta(baseState, delta) {
+     sounds: Array.isArray(delta.sounds) ? delta.sounds : (baseState.sounds || []),
+     recent_events: Array.isArray(delta.recent_events) ? delta.recent_events : [],
+   }
++  if (delta.terrain && typeof delta.terrain === 'object') next.terrain = delta.terrain
+ 
+   if (!Array.isArray(delta.entities) || delta.entities.length === 0) {
+     next.__spectatorDelta = { changedEntityIds, removedEntityIds, addedEntityIds }
+diff --git a/frontend_runtime/dist/sdk/three.js b/frontend_runtime/dist/sdk/three.js
+index 6de62cc..34f127f 100644
+--- a/frontend_runtime/dist/sdk/three.js
++++ b/frontend_runtime/dist/sdk/three.js
+@@ -47,7 +47,7 @@ function notifyTrackedAssetLoadsSettled() {
+   for (const listener of listeners) listener()
+ }
+ 
+-function trackAssetLoad(promise) {
++export function trackAssetLoad(promise) {
+   trackedAssetLoads.pending += 1
+   return Promise.resolve(promise).finally(() => {
+     trackedAssetLoads.pending = Math.max(0, trackedAssetLoads.pending - 1)
+diff --git a/frontend_runtime/dist/vendor/lucide.js b/frontend_runtime/dist/vendor/lucide.js
+new file mode 100644
+index 0000000..d5aaac4
+--- /dev/null
++++ b/frontend_runtime/dist/vendor/lucide.js
+@@ -0,0 +1,32 @@
++/* lucide 0.468.0 (ISC), only the icons the runtime uses: vendored so the viewer needs no CDN. */
++/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */var s=(t,a,r=[])=>{let f=document.createElementNS("http://www.w3.org/2000/svg",t);return Object.keys(a).forEach(o=>{f.setAttribute(o,String(a[o]))}),r.length&&r.forEach(o=>{let m=s(...o);f.appendChild(m)}),f},u=([t,a,r])=>s(t,a,r);/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */var e={xmlns:"http://www.w3.org/2000/svg",width:24,height:24,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor","stroke-width":2,"stroke-linecap":"round","stroke-linejoin":"round"};/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */var l=["svg",e,[["circle",{cx:"12",cy:"12",r:"10"}],["line",{x1:"12",x2:"12",y1:"8",y2:"12"}],["line",{x1:"12",x2:"12.01",y1:"16",y2:"16"}]]];/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */var d=["svg",e,[["path",{d:"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"}],["circle",{cx:"12",cy:"7",r:"4"}]]];/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */var p=["svg",e,[["path",{d:"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"}]]];/**
++ * @license lucide v0.468.0 - ISC
++ *
++ * This source code is licensed under the ISC license.
++ * See the LICENSE file in the root directory of this source tree.
++ */export{l as CircleAlert,d as User,p as Wrench,u as createElement};
+diff --git a/src/bin/cli.rs b/src/bin/cli.rs
+index 70c4f91..09625ee 100644
+--- a/src/bin/cli.rs
++++ b/src/bin/cli.rs
+@@ -60,7 +60,7 @@ use clawblox::{
+         find_or_create_instance,
+         instance::{
+             ErrorMode, GameInstance, PlayerObservation, SpectatorEntity, SpectatorObservation,
+-            SpectatorPlayerInfo, SpectatorRender,
++            SpectatorPlayerInfo, SpectatorRender, SpectatorTerrain,
+         },
+         script_bundle::load_world_and_entry_script,
+         GameManager, GameManagerHandle,
+@@ -1607,6 +1607,18 @@ fn detect_renderer_source_entry(game_dir: &Path) -> Option<String> {
+     None
+ }
+ 
++/// World files that change while a world is being made (the renderer bundle, models): browsers
++/// revalidate them, a cheap 304, instead of guessing how long a stale copy may be shown.
++fn revalidated(
++    dir: PathBuf,
++) -> tower_http::set_header::SetResponseHeader<ServeDir, axum::http::HeaderValue> {
++    tower_http::set_header::SetResponseHeader::if_not_present(
++        ServeDir::new(dir),
++        axum::http::header::CACHE_CONTROL,
++        axum::http::HeaderValue::from_static("no-cache"),
++    )
++}
++
+ fn command_exists(bin: &str) -> bool {
+     Command::new(bin).arg("--version").output().is_ok()
+ }
+@@ -2416,8 +2428,8 @@ fn run_game(
+             .route("/audio", post(local_audio))
+             .route("/chat", post(local_chat))
+             .route("/chat/messages", get(local_chat_messages))
+-            .nest_service("/renderer-files", ServeDir::new(path.join("renderer")))
+-            .nest_service("/assets", ServeDir::new(path.join("assets")))
++            .nest_service("/renderer-files", revalidated(path.join("renderer")))
++            .nest_service("/assets", revalidated(path.join("assets")))
+             .nest_service("/static", ServeDir::new(path.join("static")))
+             .with_state(state)
+             .layer(cors), &base_path);
+@@ -2710,8 +2722,8 @@ fn run_replay(
+             .route("/replay/pause", post(replay_pause))
+             .route("/replay/play", post(replay_play))
+             .route("/replay/play-range", post(replay_play_range))
+-            .nest_service("/renderer-files", ServeDir::new(world_dir.join("renderer")))
+-            .nest_service("/assets", ServeDir::new(world_dir.join("assets")))
++            .nest_service("/renderer-files", revalidated(world_dir.join("renderer")))
++            .nest_service("/assets", revalidated(world_dir.join("assets")))
+             .nest_service("/static", ServeDir::new(world_dir.join("static")))
+             .with_state(replay_state)
+             .layer(cors), &base_path);
+@@ -3529,8 +3541,8 @@ fn run_external_runtime(
+                 .route("/spectate/ws", get(external_spectate_ws))
+                 .route("/api.md", get(external_skill))
+                 .route("/skill.md", get(external_skill))
+-                .nest_service("/renderer-files", ServeDir::new(path.join("renderer")))
+-                .nest_service("/assets", ServeDir::new(path.join("assets")))
++                .nest_service("/renderer-files", revalidated(path.join("renderer")))
++                .nest_service("/assets", revalidated(path.join("assets")))
+                 .nest_service("/static", ServeDir::new(path.join("static")))
+                 .with_state(state)
+                 .layer(cors),
+@@ -4045,6 +4057,9 @@ struct LiveSpectatorDelta {
+     sounds: Vec<serde_json::Value>,
+     #[serde(skip_serializing_if = "Vec::is_empty")]
+     recent_events: Vec<serde_json::Value>,
++    /// Only when the terrain changed; it replaces the client's terrain whole.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    terrain: Option<SpectatorTerrain>,
+ }
+ 
+ fn spectator_render_matches(a: &SpectatorRender, b: &SpectatorRender) -> bool {
+@@ -4143,6 +4158,11 @@ fn compute_live_replication_delta(
+             .iter()
+             .filter_map(|event| serde_json::to_value(event).ok())
+             .collect(),
++        terrain: current
++            .terrain
++            .as_ref()
++            .filter(|terrain| base.terrain.as_ref() != Some(*terrain))
++            .cloned(),
+     }
+ }
+ 
+@@ -4157,6 +4177,9 @@ fn apply_replication_update_to_observation(
+     base.players = current.players;
+     base.sounds = current.sounds;
+     base.recent_events = current.recent_events;
++    if current.terrain.is_some() {
++        base.terrain = current.terrain;
++    }
+ 
+     if !removed_entity_ids.is_empty() {
+         let removed: HashSet<u32> = removed_entity_ids.iter().copied().collect();
+diff --git a/src/game/instance.rs b/src/game/instance.rs
+index 59feb0b..a3ce481 100644
+--- a/src/game/instance.rs
++++ b/src/game/instance.rs
+@@ -30,7 +30,7 @@ pub use observation::{
+     OtherPlayerInfo, PlayerCameraPose, PlayerInfo, PlayerObservation, ReplicationObservationUpdate,
+     SpectatorEntity,
+     SpectatorObservation, SpectatorPlayerAnimation, SpectatorPlayerInfo, SpectatorRender,
+-    SpectatorReplicatedEvent, SpectatorSound, UDim2Json, VisibleEntity, WorldEntity, WorldInfo,
++    SpectatorReplicatedEvent, SpectatorSound, SpectatorTerrain, UDim2Json, VisibleEntity, WorldEntity, WorldInfo,
+     PLAYER_EYE_HEIGHT,
+ };
+ 
+diff --git a/src/game/instance/observation.rs b/src/game/instance/observation.rs
+index f89f150..2a91b72 100644
+--- a/src/game/instance/observation.rs
++++ b/src/game/instance/observation.rs
+@@ -1,4 +1,5 @@
+ use super::*;
++use crate::game::lua::instance::{TerrainCell, TerrainData, TerrainVoxel, TERRAIN_VOXEL_SIZE};
+ use crate::game::profiling::{record_values, ProfileFrame};
+ 
+ /// Round a float to 2 decimal places (reduces JSON payload size)
+@@ -422,6 +423,7 @@ pub(super) fn build_spectator_observation(instance: &GameInstance) -> SpectatorO
+     let mut entities = Vec::new();
+     let mut players = Vec::new();
+     let mut sounds = Vec::new();
++    let mut terrain = None;
+     let mut workspace_descendants = 0usize;
+     let mut part_entities = 0usize;
+     let mut sound_instances = 0usize;
+@@ -436,6 +438,12 @@ pub(super) fn build_spectator_observation(instance: &GameInstance) -> SpectatorO
+         for part in descendants {
+             let data = part.data.lock().unwrap();
+ 
++            if let Some(terrain_data) = &data.terrain_data {
++                if !terrain_data.voxels.is_empty() {
++                    terrain = Some(build_spectator_terrain(terrain_data));
++                }
++            }
++
+             // Collect playing Sound instances
+             if let Some(sound_data) = &data.sound_data {
+                 sound_instances += 1;
+@@ -663,6 +671,7 @@ pub(super) fn build_spectator_observation(instance: &GameInstance) -> SpectatorO
+         sounds,
+         // Spectator feed is public-only: client-targeted FireClient events are excluded.
+         recent_events: instance.recent_public_replicated_events(),
++        terrain,
+     }
+ }
+ 
+@@ -741,6 +750,15 @@ impl GameInstance {
+                 };
+ 
+                 let instance = Instance::from_ref(instance_ref);
++                // An edited Terrain: send all its voxels (an empty list clears them).
++                let terrain = {
++                    let data = instance.data.lock().unwrap();
++                    data.terrain_data.as_ref().map(build_spectator_terrain)
++                };
++                if terrain.is_some() {
++                    observation.terrain = terrain;
++                    continue;
++                }
+                 let Some(entity_instance) = replication_entity_instance(instance) else {
+                     if let Ok(entity_id) = u32::try_from(dirty.id) {
+                         if known_entity_ids.contains(&entity_id) {
+@@ -970,6 +988,7 @@ impl GameInstance {
+             entities: Vec::new(),
+             sounds: Vec::new(),
+             recent_events: self.recent_public_replicated_events(),
++            terrain: None,
+         }
+     }
+ 
+@@ -1629,6 +1648,54 @@ pub struct SpectatorObservation {
+     pub sounds: Vec<SpectatorSound>,
+     #[serde(default)]
+     pub recent_events: Vec<SpectatorReplicatedEvent>,
++    /// Workspace.Terrain's voxels. Full observations carry it when there is any terrain; live
++    /// replication updates carry it only when the terrain changed.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub terrain: Option<SpectatorTerrain>,
++}
++
++/// Terrain voxels in a compact form for renderers.
++#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
++pub struct SpectatorTerrain {
++    /// Changes with every terrain edit.
++    pub revision: u64,
++    pub voxel_size: f32,
++    /// Material names; `voxels` refers to them by index.
++    pub materials: Vec<String>,
++    /// Six numbers per voxel: cell x, y and z, material index, solid occupancy and liquid
++    /// occupancy (both 0-255). A cell spans `cell * voxel_size` to `(cell + 1) * voxel_size`.
++    pub voxels: Vec<i32>,
++}
++
++pub(super) fn build_spectator_terrain(terrain: &TerrainData) -> SpectatorTerrain {
++    let mut cells: Vec<(&TerrainCell, &TerrainVoxel)> = terrain.voxels.iter().collect();
++    cells.sort_unstable_by_key(|(cell, _)| (cell.x, cell.y, cell.z));
++    let mut materials: Vec<String> = Vec::new();
++    let mut voxels = Vec::with_capacity(cells.len() * 6);
++    for (cell, voxel) in cells {
++        let name = voxel.solid_material.name();
++        let index = match materials.iter().position(|m| m == name) {
++            Some(index) => index,
++            None => {
++                materials.push(name.to_string());
++                materials.len() - 1
++            }
++        };
++        voxels.extend_from_slice(&[
++            cell.x,
++            cell.y,
++            cell.z,
++            index as i32,
++            (voxel.solid_occupancy.clamp(0.0, 1.0) * 255.0).round() as i32,
++            (voxel.liquid_occupancy.clamp(0.0, 1.0) * 255.0).round() as i32,
++        ]);
++    }
++    SpectatorTerrain {
++        revision: terrain.revision,
++        voxel_size: TERRAIN_VOXEL_SIZE,
++        materials,
++        voxels,
++    }
+ }
+ 
+ #[derive(Debug, Clone)]
+diff --git a/src/game/lua/instance/bindings/methods/terrain.rs b/src/game/lua/instance/bindings/methods/terrain.rs
+index ee50079..1739119 100644
+--- a/src/game/lua/instance/bindings/methods/terrain.rs
++++ b/src/game/lua/instance/bindings/methods/terrain.rs
+@@ -6,15 +6,19 @@ use crate::game::lua::types::{CFrame, Material, Region3, Vector3};
+ pub(super) fn add_methods<M: UserDataMethods<Instance>>(methods: &mut M) {
+     methods.add_method(
+         "FillBlock",
+-        |_, this, (cframe, size, material): (CFrame, Vector3, Material)| -> mlua::Result<()> {
+-            let mut data = this.data.lock().unwrap();
+-            let Some(terrain) = data.terrain_data.as_mut() else {
+-                return Err(mlua::Error::runtime(
+-                    "FillBlock is only supported on Terrain",
+-                ));
+-            };
+-
+-            terrain.fill_block(cframe, size, material);
++        |lua, this, (cframe, size, material): (CFrame, Vector3, Material)| -> mlua::Result<()> {
++            {
++                let mut data = this.data.lock().unwrap();
++                let Some(terrain) = data.terrain_data.as_mut() else {
++                    return Err(mlua::Error::runtime(
++                        "FillBlock is only supported on Terrain",
++                    ));
++                };
++
++                terrain.fill_block(cframe, size, material);
++            }
++            // Spectators see terrain through live replication (SpectatorObservation.terrain).
++            this.mark_replication_dirty(lua);
+             Ok(())
+         },
+     );
+@@ -87,7 +91,7 @@ pub(super) fn add_methods<M: UserDataMethods<Instance>>(methods: &mut M) {
+ 
+     methods.add_method(
+         "WriteVoxelChannels",
+-        |_, this, (region, resolution, channels): (Region3, f32, Table)| {
++        |lua, this, (region, resolution, channels): (Region3, f32, Table)| {
+             validate_terrain_resolution(resolution)?;
+             let (min_cell, dims) = terrain_region_cells(region)?;
+             let mut data = this.data.lock().unwrap();
+@@ -138,6 +142,9 @@ pub(super) fn add_methods<M: UserDataMethods<Instance>>(methods: &mut M) {
+                     }
+                 }
+             }
++            terrain.touch();
++            drop(data);
++            this.mark_replication_dirty(lua);
+ 
+             Ok(())
+         },
+diff --git a/src/game/lua/instance/class_data.rs b/src/game/lua/instance/class_data.rs
+index 4f85f2e..2a3b80c 100644
+--- a/src/game/lua/instance/class_data.rs
++++ b/src/game/lua/instance/class_data.rs
+@@ -251,10 +251,17 @@ impl Default for TerrainVoxel {
+ #[derive(Debug, Clone, Default)]
+ pub struct TerrainData {
+     pub voxels: HashMap<TerrainCell, TerrainVoxel>,
++    /// Counts edits, so spectators are sent the terrain again only when it changed.
++    pub revision: u64,
+ }
+ 
+ impl TerrainData {
++    pub fn touch(&mut self) {
++        self.revision = self.revision.wrapping_add(1);
++    }
++
+     pub fn fill_block(&mut self, cframe: CFrame, size: Vector3, material: Material) {
++        self.touch();
+         let size = Vector3::new(size.x.abs(), size.y.abs(), size.z.abs());
+         if size.x <= 0.0 || size.y <= 0.0 || size.z <= 0.0 {
+             return;
+diff --git a/src/recording.rs b/src/recording.rs
+index aaef19d..333c35f 100644
+--- a/src/recording.rs
++++ b/src/recording.rs
+@@ -1135,6 +1135,7 @@ mod tests {
+             entities,
+             sounds: Vec::new(),
+             recent_events: Vec::<SpectatorReplicatedEvent>::new(),
++            terrain: None,
+         }
+     }
+ 
+diff --git a/tests/spectator_terrain_test.rs b/tests/spectator_terrain_test.rs
+new file mode 100644
+index 0000000..190ff3c
+--- /dev/null
++++ b/tests/spectator_terrain_test.rs
+@@ -0,0 +1,88 @@
++//! Terrain reaches spectators: in full observations, and in live replication updates only when
++//! it changed.
++
++use std::collections::HashSet;
++
++use clawblox::game::instance::{GameInstance, SpectatorTerrain};
++use uuid::Uuid;
++
++fn run(instance: &GameInstance, source: &str) {
++    instance
++        .lua_runtime
++        .as_ref()
++        .expect("missing runtime")
++        .lua()
++        .load(source)
++        .exec()
++        .expect("script failed");
++}
++
++fn voxel_count(terrain: &SpectatorTerrain) -> usize {
++    terrain.voxels.len() / 6
++}
++
++#[test]
++fn full_observation_carries_terrain_only_when_there_is_some() {
++    let mut instance = GameInstance::new(Uuid::new_v4(), None);
++    instance.load_script("local _ = 1");
++    assert!(instance.get_spectator_observation().terrain.is_none());
++
++    run(
++        &instance,
++        r#"
++        workspace.Terrain:FillBlock(CFrame.new(2, 2, 2), Vector3.new(4, 4, 4), Enum.Material.Grass)
++        workspace.Terrain:FillBlock(CFrame.new(10, 2, 2), Vector3.new(4, 4, 4), Enum.Material.Water)
++        "#,
++    );
++    let terrain = instance
++        .get_spectator_observation()
++        .terrain
++        .expect("terrain should be in the full observation");
++    assert_eq!(terrain.voxel_size, 4.0);
++    assert_eq!(voxel_count(&terrain), 2);
++    let grass = terrain.materials.iter().position(|m| m == "Grass").expect("Grass material");
++    let rows: Vec<&[i32]> = terrain.voxels.chunks(6).collect();
++    assert!(
++        rows.iter().any(|v| v[0] == 0 && v[1] == 0 && v[2] == 0 && v[3] == grass as i32 && v[4] == 255),
++        "the grass voxel should be solid at cell (0, 0, 0): {rows:?}"
++    );
++    assert!(
++        rows.iter().any(|v| v[0] == 2 && v[4] == 0 && v[5] == 255),
++        "the water voxel should be liquid at cell (2, 0, 0): {rows:?}"
++    );
++}
++
++#[test]
++fn replication_update_carries_terrain_only_after_an_edit() {
++    let mut instance = GameInstance::new(Uuid::new_v4(), None);
++    instance.load_script(
++        r#"workspace.Terrain:FillBlock(CFrame.new(2, 2, 2), Vector3.new(4, 4, 4), Enum.Material.Slate)"#,
++    );
++    let base = instance.get_spectator_observation();
++    let revision = base.terrain.as_ref().expect("initial terrain").revision;
++    let known: HashSet<u32> = base.entities.iter().map(|e| e.id).collect();
++    let since = instance.replication_revision();
++
++    let quiet = instance.get_replication_observation_update(&known, since);
++    assert!(quiet.observation.terrain.is_none(), "no edit, no terrain in the update");
++
++    run(
++        &instance,
++        r#"workspace.Terrain:FillBlock(CFrame.new(2, 6, 2), Vector3.new(4, 4, 4), Enum.Material.Sand)"#,
++    );
++    let edited = instance.get_replication_observation_update(&known, since);
++    let terrain = edited.observation.terrain.expect("an edit should send the terrain");
++    assert!(terrain.revision > revision);
++    assert_eq!(voxel_count(&terrain), 2);
++
++    run(
++        &instance,
++        r#"workspace.Terrain:FillBlock(CFrame.new(2, 4, 2), Vector3.new(4, 8, 4), Enum.Material.Air)"#,
++    );
++    let cleared = instance
++        .get_replication_observation_update(&known, edited.latest_revision)
++        .observation
++        .terrain
++        .expect("clearing the terrain should send an empty terrain");
++    assert_eq!(voxel_count(&cleared), 0);
++}

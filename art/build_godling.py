@@ -6,7 +6,10 @@ Original design: a chubby cream vinyl-toy figure with a rounded TV-like head, a 
 glowing mint eyes, a small gold halo, and coral mitten-hands and boots.
 
 Rig: the Mixamo skeleton from art/source, shrunk to chibi proportions (bone directions and rolls kept, so
-the Mixamo clips still play on it). Every body part is a rigid mesh riding one bone: a toy, not skin.
+the Mixamo clips still play on it). Every body part is rigid and moves with one bone: a toy, not skin. The
+parts are joined into one mesh, each fully weighted to its bone, so the body draws in one call per material.
+
+Budget (it has to run in phone browsers): about 5k triangles in all.
 
 Clips (60 fps): Idle (a calm stance), Walk (in place: the world moves the body), PickUp (reach down and
 lift, sped up to about 2 s) from the Mixamo sources; Strike (a two-handed overhead swing, 1.0 s) and Climb
@@ -34,6 +37,11 @@ IDLE_FRAMES = 30  # source frames 1..30 of the pick-up clip are a calm stance; p
 
 PICKUP_BEND = 0.35  # an adult's pick-up bends the back ~90°: with a big head that is a face-plant
 BENDING = ("Spine", "Spine1", "Spine2", "Neck", "Head")
+
+# Mesh detail (segments, rings). Smooth shading hides the facets at the size Godling is seen.
+BEAN = (16, 10)  # torso, mittens, boots
+LIMB = (12, 8)
+BEVEL_SEGMENTS = 4  # the head's rounded edges
 
 # Colours as seen on screen (sRGB); converted to the linear values materials take.
 PALETTE = {
@@ -74,7 +82,7 @@ def finish(obj, mat_name, smooth=True):
     return obj
 
 
-def ellipsoid(name, centre, radii, mat_name, rotation=None, segments=40, rings=20):
+def ellipsoid(name, centre, radii, mat_name, rotation=None, segments=BEAN[0], rings=BEAN[1]):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=segments, ring_count=rings, radius=1.0, location=(0, 0, 0))
     obj = bpy.context.active_object
     obj.name = name
@@ -90,7 +98,7 @@ def limb(name, a, b, radius, mat_name, overlap=0.6):
     direction = b - a
     rotation = Vector((0, 0, 1)).rotation_difference(direction.normalized())
     return ellipsoid(name, (a + b) / 2, (radius, radius, direction.length / 2 + radius * overlap), mat_name,
-                     rotation, segments=32, rings=16)
+                     rotation, segments=LIMB[0], rings=LIMB[1])
 
 
 def rounded_box(name, centre, size, bevel, mat_name):
@@ -101,15 +109,15 @@ def rounded_box(name, centre, size, bevel, mat_name):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     mod = obj.modifiers.new("bevel", "BEVEL")
     mod.width = bevel
-    mod.segments = 8
+    mod.segments = BEVEL_SEGMENTS
     mod.limit_method = "NONE"
-    obj.modifiers.new("smooth", "SUBSURF").levels = 2
+    mod.harden_normals = True  # flat faces stay flat under smooth shading
     return finish(obj, mat_name)
 
 
 def smile(at):
     """The lower half of a thin ring, facing forward: a small glowing smile."""
-    bpy.ops.mesh.primitive_torus_add(major_radius=0.032, minor_radius=0.0065, major_segments=32, minor_segments=8,
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.032, minor_radius=0.0065, major_segments=16, minor_segments=4,
                                      location=(0, 0, 0), rotation=(math.radians(90), 0, 0))
     obj = bpy.context.active_object
     obj.name = "Smile"
@@ -378,14 +386,29 @@ def bone_world(arm, name, end="head"):
     return arm.matrix_world @ (bone.head_local if end == "head" else bone.tail_local)
 
 
-def attach(part, arm, bone_name):
-    """Ride a bone rigidly, keeping the part where it was built."""
-    world = part.matrix_world.copy()
-    part.parent = arm
-    part.parent_type = "BONE"
-    part.parent_bone = bone_name
-    bpy.context.view_layer.update()
-    part.matrix_world = world
+def join_and_skin(arm, parts):
+    """One mesh for the whole body, each part fully weighted to its bone. It moves like rigid parts riding
+    their bones, but draws in one call per material instead of one per part."""
+    for part, bone_name in parts:
+        bpy.ops.object.select_all(action="DESELECT")
+        bpy.context.view_layer.objects.active = part
+        part.select_set(True)
+        for mod in list(part.modifiers):
+            bpy.ops.object.modifier_apply(modifier=mod.name)
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        group = part.vertex_groups.new(name=bone_name)
+        group.add(range(len(part.data.vertices)), 1.0, "REPLACE")
+    bpy.ops.object.select_all(action="DESELECT")
+    for part, _ in parts:
+        part.select_set(True)
+    body = parts[0][0]
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.join()
+    body.name = "Body"
+    arm.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.parent_set(type="ARMATURE", keep_transform=True)  # the weights are already there
+    return body
 
 
 def build_body(arm):
@@ -405,11 +428,11 @@ def build_body(arm):
     face = front - 0.011  # the screen's surface
     for side in (-1, 1):
         parts.append((ellipsoid(f"Eye{'L' if side < 0 else 'R'}", Vector((centre.x + side * 0.08, face, centre.z + 0.02)),
-                                (0.036, 0.008, 0.056), "eye", segments=24, rings=12), "Head"))
+                                (0.036, 0.008, 0.056), "eye", segments=12, rings=6), "Head"))
         parts.append((ellipsoid(f"Cheek{'L' if side < 0 else 'R'}", Vector((centre.x + side * 0.135, face, centre.z - 0.05)),
-                                (0.026, 0.005, 0.016), "blush", segments=16, rings=8), "Head"))
+                                (0.026, 0.005, 0.016), "blush", segments=8, rings=5), "Head"))
     parts.append((smile(Vector((centre.x, face, centre.z - 0.035))), "Head"))
-    bpy.ops.mesh.primitive_torus_add(major_radius=0.17, minor_radius=0.02, major_segments=48, minor_segments=12,
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.17, minor_radius=0.02, major_segments=24, minor_segments=6,
                                      location=centre + Vector((0, 0.02, 0.33)), rotation=(math.radians(12), 0, 0))
     halo = finish(bpy.context.active_object, "gold")
     halo.name = "Halo"
@@ -427,8 +450,7 @@ def build_body(arm):
         foot, toe = B(f"{side}Foot"), B(f"{side}ToeBase")
         boot_centre = Vector(((foot.x + toe.x) / 2, (foot.y + toe.y) / 2 - 0.01, 0.045))
         parts.append((ellipsoid(f"{side}Boot", boot_centre, (0.07, 0.105, 0.05), "coral"), f"{side}Foot"))
-    for part, bone in parts:
-        attach(part, arm, "mixamorig:" + bone)
+    join_and_skin(arm, [(part, "mixamorig:" + bone) for part, bone in parts])
 
 
 def main():
