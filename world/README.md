@@ -85,6 +85,15 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Ground` is drawn in the part's colour. With `Surface` "Sand" it is matte sand, where the sea draws its foam.
     - `Mesa` with `Surface` "Rock" is grey volcanic stone in block-high strata, with a moss cap on every step. Other mesas keep the tan stripes.
     - `Wreck` with no model is drawn as a deflated yellow life raft, from its part's size and colour. A `ModelUrl` (`raft.glb`) takes over when set.
+  - **Day and night** (ADR-007): the sun follows any entity's `TimeOfDay` attribute (the world's hidden Clock) unless `?time=` or `?dayMinutes=` is set.
+    - By night the sky shows a blue glow, pixel stars and a moon opposite the sun.
+    - The sun's light becomes cool, dim moonlight. Ambient light turns blue, the sea glints with the moon, and the clouds are moonlit.
+  - **Castaway life** (`fire.js`, `fish.js`, `index.js`):
+    - **Fire.** `Fire` is pixel flames on three crossed quads and a smoke column about 40 high, bent by a breeze and dark at night. It also has a warm flickering point light. The lights come from a fixed pool (1, 2 or 3 by tier), given to the fires nearest the camera, so lighting a fire never recompiles materials.
+    - **Fish.** `Fish` ride the sea's waves (`sea.surfaceAt`, the shader's waves on the CPU) with a dark shape under the surface and a faint wake. Without a model a dorsal fin breaks the surface; with `fish.glb` the model rides half under.
+    - **Sand writing.** `SandMark` is drawn at half height with a dark floor and light rims, so a stroke reads as a groove in the sand.
+    - **Pieces without models.** `Coconut`, `Volleyball` (with seams), a `Tool` with `ToolKind` "Spear", and `Catch` (browned when `Cooked`) are drawn procedurally until a `ModelUrl` is set.
+    - **Ball parts.** Their primitive is `ball` and they draw round.
   - **Models** (`models.js`): each loads once.
     - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
     - Animated ones (Godling) get their own mixer. The clips follow the attributes above, and Walk plays at the body's real speed.

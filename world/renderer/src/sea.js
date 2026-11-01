@@ -239,22 +239,62 @@ export function createSea(scene, tier, sky) {
   scene.add(mesh)
 
   let shoreKey = ''
+  const now = { time: 0, level: null, eyeX: 0, eyeZ: 0 }
+  const waves = WAVES.slice(0, waveCount)
+
+  // The shore map at (x, z), as the vertex shader reads it (bilinear, 1 off the map).
+  function shoreAt(x, z) {
+    const u = (x - 0) / (2 * SHORE_HALF_EXTENT) + 0.5
+    const v = (z - 0) / (2 * SHORE_HALF_EXTENT) + 0.5
+    if (u < 0 || v < 0 || u > 1 || v > 1) return 1
+    const n = SHORE_MAP_SIZE
+    const fx = Math.min(n - 1, Math.max(0, u * n - 0.5))
+    const fz = Math.min(n - 1, Math.max(0, v * n - 0.5))
+    const i = Math.floor(fx)
+    const j = Math.floor(fz)
+    const i1 = Math.min(n - 1, i + 1)
+    const j1 = Math.min(n - 1, j + 1)
+    const tx = fx - i
+    const tz = fz - j
+    const at = (a, b) => shoreData[b * n + a] / 255
+    return (at(i, j) * (1 - tx) + at(i1, j) * tx) * (1 - tz) + (at(i, j1) * (1 - tx) + at(i1, j1) * tx) * tz
+  }
 
   return {
     mesh,
-    // `seaLevel` is the top of the Ocean part; `land` lists the island's footprints at that height.
-    update({ camera, time, seaLevel, land, landKey }) {
+    // The water's height at (x, z) now: the vertex shader's waves, on the CPU, for things that float (fish).
+    surfaceAt(x, z) {
+      if (now.level == null) return null
+      const shore = shoreAt(x, z)
+      const calm = 0.3 + 0.7 * Math.min(1, Math.max(0, shore / 0.4)) ** 2 * (3 - 2 * Math.min(1, Math.max(0, shore / 0.4)))
+      const eye = Math.hypot(now.eyeX - x, now.eyeZ - z)
+      let y = now.level
+      for (const [dx, dz, length, amp] of waves) {
+        const k = (2 * Math.PI) / length
+        const t = Math.min(1, Math.max(0, (eye - length * 6) / (length * 8)))
+        const a = amp * calm * (1 - t * t * (3 - 2 * t))
+        y += a * Math.sin(k * (dx * x + dz * z - Math.sqrt(9.8 / k) * 0.55 * now.time))
+      }
+      return y
+    },
+    // `seaLevel` is the top of the Ocean part; `land` lists the island's footprints at that height. `light` is the
+    // sun's or, at night, the moon's: its direction, colour and how strongly it glints on the water.
+    update({ camera, time, seaLevel, land, landKey, light }) {
+      now.level = seaLevel
       if (seaLevel == null) {
         mesh.visible = false
         return
       }
+      now.time = time
+      now.eyeX = camera.position.x
+      now.eyeZ = camera.position.z
       mesh.visible = true
       const u = material.uniforms
       u.seaLevel.value = seaLevel
       u.time.value = time
-      u.sunDirection.value.copy(sky.sun)
-      u.sunColor.value.copy(sky.sunColor)
-      u.sunStrength.value = 6 * sky.daylight
+      u.sunDirection.value.copy(light.direction)
+      u.sunColor.value.copy(light.color)
+      u.sunStrength.value = light.glint
       u.waterLight.value = 0.25 + 0.75 * sky.daylight
       mesh.position.set(Math.round(camera.position.x / SNAP) * SNAP, 0, Math.round(camera.position.z / SNAP) * SNAP)
       if (landKey !== shoreKey) {

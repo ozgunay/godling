@@ -16,6 +16,21 @@ const MAP_WIDTH = 64 // azimuth
 const MAP_HEIGHT = 16 // elevation, from the horizon up
 // The light's direction before this sky existed; the props' colours were checked under it.
 export const DEFAULT_SUN = new THREE.Vector3(30, 50, 20).normalize()
+// Night (the world's clock, ADR-007): Preetham's sky goes black, so a deep blue glow, stars and a moon are laid over
+// it, in linear light after the sky's exposure. The moon stands opposite the sun, lifted clear of the horizon.
+const NIGHT_ZENITH = [0.006, 0.010, 0.030]
+const NIGHT_HORIZON = [0.018, 0.026, 0.052]
+export const MOON_COLOR = new THREE.Color(0.62, 0.72, 1.0)
+const NIGHT_GLSL = /* glsl */`
+  vec3 nightSky = mix( nightHorizon, nightZenith, clamp( direction.y * 1.6, 0.0, 1.0 ) );
+  vec3 starCell = floor( direction * 360.0 ); // pixel stars, Minecraft-style
+  float starSeed = fract( sin( dot( starCell, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 );
+  float stars = step( 0.9968, starSeed ) * smoothstep( 0.03, 0.25, direction.y )
+    * ( 0.55 + 0.45 * sin( time * 1.7 + starSeed * 80.0 ) );
+  float toMoon = dot( direction, moonDirection );
+  float moonLight = smoothstep( 0.99925, 0.9996, toMoon ) * 1.4 + pow( max( toMoon, 0.0 ), 300.0 ) * 0.12;
+  vec3 night = nightSky + vec3( stars * 0.8 ) + vec3( 0.85, 0.9, 1.0 ) * moonLight;
+  gl_FragColor = vec4( texColor * skyExposure + night * nightAmount, 1.0 );`
 
 // Preetham constants, as in Sky.js.
 const TOTAL_RAYLEIGH = [5.804542996261093e-6, 1.3562911419845635e-5, 3.0265902468824876e-5]
@@ -104,11 +119,16 @@ export function createSky(scene, tier) {
   const uniforms = dome.material.uniforms
   const shader = dome.material.fragmentShader
   const exposed = shader
-    .replace('uniform float time;', 'uniform float time;\nuniform float skyExposure;')
-    .replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * skyExposure, 1.0 );')
+    .replace('uniform float time;', 'uniform float time;\nuniform float skyExposure;\nuniform float nightAmount;\n' +
+      'uniform vec3 moonDirection;\nuniform vec3 nightZenith;\nuniform vec3 nightHorizon;')
+    .replace('gl_FragColor = vec4( texColor, 1.0 );', NIGHT_GLSL)
   if (exposed === shader || !exposed.includes('texColor * skyExposure')) console.warn('sky: exposure hook not found')
   dome.material.fragmentShader = exposed
   uniforms.skyExposure = { value: SKY_EXPOSURE }
+  uniforms.nightAmount = { value: 0 }
+  uniforms.moonDirection = { value: new THREE.Vector3(0, 1, 0) }
+  uniforms.nightZenith = { value: new THREE.Vector3(...NIGHT_ZENITH) }
+  uniforms.nightHorizon = { value: new THREE.Vector3(...NIGHT_HORIZON) }
   uniforms.turbidity.value = ATMOSPHERE.turbidity
   uniforms.rayleigh.value = ATMOSPHERE.rayleigh
   uniforms.mieCoefficient.value = ATMOSPHERE.mieCoefficient
@@ -129,23 +149,37 @@ export function createSky(scene, tier) {
   map.colorSpace = THREE.NoColorSpace
 
   const sun = new THREE.Vector3()
+  const moon = new THREE.Vector3()
   const sunColor = new THREE.Color() // the sunlight's tint (brightest channel 1)
   const zenith = new THREE.Color()
   const fogColor = new THREE.Color()
   let daylight = 1 // 0 at night, 1 by day
+  let night = 0 // how much of the night sky shows: 0 by day, 1 once the sun is well down
   const sample = [0, 0, 0]
+
+  // The sky's radiance plus the night glow, as the dome draws it (without stars and moon).
+  function skyAt(atmosphere, dx, dy, dz, out) {
+    radiance(atmosphere, dx, dy, dz, out)
+    const t = clamp(dy * 1.6, 0, 1)
+    for (let c = 0; c < 3; c++) out[c] += (NIGHT_HORIZON[c] + (NIGHT_ZENITH[c] - NIGHT_HORIZON[c]) * t) * night
+    return out
+  }
 
   function setSun(direction) {
     if (sun.distanceToSquared(direction) < 1e-8 && map.version > 0) return false
     sun.copy(direction).normalize()
     uniforms.sunPosition.value.copy(sun)
+    moon.set(-sun.x, Math.max(0.3, -sun.y), -sun.z).normalize()
+    night = smoothstep(0.05, -0.2, sun.y)
+    uniforms.moonDirection.value.copy(moon)
+    uniforms.nightAmount.value = night
     const atmosphere = atmosphereFor(sun)
 
     for (let j = 0; j < MAP_HEIGHT; j++) {
       const elevation = ((j + 0.5) / MAP_HEIGHT) * Math.PI * 0.5
       for (let i = 0; i < MAP_WIDTH; i++) {
         const phi = ((i + 0.5) / MAP_WIDTH - 0.5) * Math.PI * 2 // the sea shader's atan(z, x)
-        radiance(atmosphere, Math.cos(elevation) * Math.cos(phi), Math.sin(elevation), Math.cos(elevation) * Math.sin(phi), sample)
+        skyAt(atmosphere, Math.cos(elevation) * Math.cos(phi), Math.sin(elevation), Math.cos(elevation) * Math.sin(phi), sample)
         const o = (j * MAP_WIDTH + i) * 4
         data[o] = THREE.DataUtils.toHalfFloat(sample[0])
         data[o + 1] = THREE.DataUtils.toHalfFloat(sample[1])
@@ -159,13 +193,13 @@ export function createSky(scene, tier) {
     const horizon = [0, 0, 0]
     for (let i = 0; i < 16; i++) {
       const phi = (i / 16) * Math.PI * 2
-      radiance(atmosphere, Math.cos(phi) * 0.999, 0.035, Math.sin(phi) * 0.999, sample)
+      skyAt(atmosphere, Math.cos(phi) * 0.999, 0.035, Math.sin(phi) * 0.999, sample)
       for (let c = 0; c < 3; c++) horizon[c] += sample[c] / 16
     }
     const shown = acesFilmic(horizon, TONE_EXPOSURE)
     fogColor.setRGB(shown[0], shown[1], shown[2])
 
-    radiance(atmosphere, 0, 1, 0, sample)
+    skyAt(atmosphere, 0, 1, 0, sample)
     const top = Math.max(sample[0], sample[1], sample[2], 1e-6)
     zenith.setRGB(sample[0] / top, sample[1] / top, sample[2] / top)
 
@@ -182,11 +216,15 @@ export function createSky(scene, tier) {
     dome,
     map,
     sun,
+    moon,
     sunColor,
     zenith,
     fogColor,
     get daylight() {
       return daylight
+    },
+    get night() {
+      return night
     },
     setSun,
     update(camera, time) {

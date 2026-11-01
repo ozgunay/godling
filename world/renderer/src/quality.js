@@ -6,6 +6,8 @@
 export const TIERS = {
   low: {
     name: 'low',
+    fireLights: 1, // fires that light their surroundings at once (the nearest)
+    smokePuffs: 28, // per fire
     pixelRatio: 1.25, // the most device pixels per CSS pixel
     antialias: false,
     shadowMapSize: 1024,
@@ -21,6 +23,8 @@ export const TIERS = {
   },
   medium: {
     name: 'medium',
+    fireLights: 2,
+    smokePuffs: 56,
     pixelRatio: 1.5,
     antialias: true,
     shadowMapSize: 2048,
@@ -36,6 +40,8 @@ export const TIERS = {
   },
   high: {
     name: 'high',
+    fireLights: 3,
+    smokePuffs: 84,
     pixelRatio: 2,
     antialias: true,
     shadowMapSize: 2048,
