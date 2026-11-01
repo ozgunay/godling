@@ -142,9 +142,11 @@ def serve(world, port, run_dir=None, view=None):
     base = world.rstrip("/")
     sky = Sky(base)
     results = deque(maxlen=30)
-    view = view or spectator_url(base, run_dir)
-    page = PAGE.replace("__VIEW__", html.escape(view, quote=True)).replace("__POWERS__", json.dumps(
+    page = PAGE.replace("__POWERS__", json.dumps(
         [{"name": n, "label": label, "does": does, "tier": tier} for n, label, does, tier in POWERS]))
+
+    def page_now():  # the world may print its spectator link after the panel starts
+        return page.replace("__VIEW__", html.escape(view or spectator_url(base, run_dir), quote=True))
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, body, kind="application/json", code=200):
@@ -158,7 +160,7 @@ def serve(world, port, run_dir=None, view=None):
 
         def do_GET(self):
             if self.path == "/":
-                self._send(page, "text/html; charset=utf-8")
+                self._send(page_now(), "text/html; charset=utf-8")
             elif self.path == "/status":
                 self._send(json.dumps({"world": world_up(base), "results": list(results), **mind_status(run_dir)}))
             else:
