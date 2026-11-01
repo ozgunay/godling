@@ -9,17 +9,21 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 | `world/` | Godling's Mesa Island: the world script, the renderer and the models. The changes from upstream are in [`world/README.md`](world/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |
 | `tools/` | Long-run launcher, run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`) and the guest panel for trying sky powers (`guest_panel.py`). |
-| `decisions/` | Decision records, ADR-002 to ADR-005. |
+| `decisions/` | Decision records, ADR-002 to ADR-006. |
 | `research/` | Design notes and screenshots. |
 | `reports/`, `research_notes/` | Research reports and the notes behind them (god games: what Godling can use). |
-| `patches/` | The local fix to Clawblox itself (BUG-001). |
+| `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001). |
 
 ## Running
 Everything runs inside WSL (Ubuntu 22.04), because Clawblox's agent mode needs tmux.
 
-1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with `patches/v0-fix-cli-sandbox.patch` applied:
+1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with both patches applied:
+   - `patches/v0-fix-cli-sandbox.patch` (BUG-001);
+   - `patches/v1-viewer-terrain-and-offline.patch` (VIEWER-001): terrain for viewers, a viewer with no CDN, fresh world files.
+
+   The world still runs on Clawblox without v1, but its page then needs esm.sh for one icon set.
    ```bash
-   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && cargo install --path . --locked
+   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && git apply /path/to/godling/patches/v1-viewer-terrain-and-offline.patch && cargo install --path . --locked
    ```
 2. A DeepSeek key: run `tools/setup_deepseek.sh`, or set `DEEPSEEK_API_KEY`.
 3. One run: `python3 mind/run_godling.py --run-dir ~/godling-runs/<name>`.

@@ -1,4 +1,16 @@
-import * as THREE from 'https://esm.sh/three@0.160.0'
+import * as THREE from 'three'
+import { CSM } from 'three/addons/csm/CSM.js'
+import { chooseTier, createResolutionGovernor } from './quality.js'
+import { createSky, DEFAULT_SUN, sunForHour } from './sky.js'
+import { createSea } from './sea.js'
+import { createClouds } from './clouds.js'
+import { createModelLibrary, createCharacterController } from './models.js'
+import { createInstancer } from './instances.js'
+import { createTerrain } from './terrain.js'
+
+// Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
+// own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
+// quality tier (quality.js) sets resolution, shadows, sea and clouds for the device.
 
 const COLLIDER_DEBUG_FILL_MATERIAL = new THREE.MeshBasicMaterial({
   color: 0x00d8ff,
@@ -39,33 +51,14 @@ function resolveEntityModelUrl(entity) {
   return null
 }
 
-function resolveEntityColorHex(entity) {
+// Part colours are sRGB, as in Roblox; the rock's has always been read as linear, and the art was checked so.
+function resolveEntityColor(entity, linear, out) {
   const color = entity?.render?.color
   if (!Array.isArray(color) || color.length < 3) {
     console.warn(`Entity ${entity?.id ?? '?'} (role=${entity?.render?.role ?? '?'}) missing render.color`)
-    return 0xff00ff
+    return out.setHex(0xff00ff)
   }
-  return (Math.round(color[0] * 255) << 16) |
-    (Math.round(color[1] * 255) << 8) |
-    Math.round(color[2] * 255)
-}
-
-function resolveEntityColor(entity) {
-  const color = entity?.render?.color
-  if (!Array.isArray(color) || color.length < 3) {
-    console.warn(`Entity ${entity?.id ?? '?'} (role=${entity?.render?.role ?? '?'}) missing render.color`)
-    return new THREE.Color(0xff00ff)
-  }
-  return new THREE.Color(color[0], color[1], color[2])
-}
-
-function createRockLikeMaterial(color) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.95,
-    metalness: 0.0,
-    flatShading: true,
-  })
+  return linear ? out.setRGB(color[0], color[1], color[2]) : out.setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace)
 }
 
 function readDebugFlag(name) {
@@ -203,387 +196,145 @@ function createColliderDebugVisual(entity) {
   return group
 }
 
-function applyColorToMeshes(obj, colorHex) {
-  obj.traverse((child) => {
-    if (child.isMesh && child.material && child.userData?.preserveColor !== true) {
-      child.material.color.setHex(colorHex)
-    }
-  })
-}
-
-function applyEntityAppearance(obj, entity) {
-  if (!obj?.userData) return
-
-  if (obj.userData.dynamicRole === 'Rock' && obj.material) {
-    obj.material.color.copy(resolveEntityColor(entity))
+// One geometry and one material of each kind for the whole world, shared by every part drawn with them.
+function createPartKit(onMaterial) {
+  const geometries = new Map()
+  const materials = new Map()
+  const standard = (options) => () => new THREE.MeshStandardMaterial(options)
+  const MATERIALS = {
+    plain: standard({ roughness: 0.5, metalness: 0.2 }),
+    rock: standard({ roughness: 0.95, metalness: 0.0, flatShading: true }),
+    ground: standard({ roughness: 0.5, metalness: 0.2 }), // in the part's colour: grass, or upstream's mint
+    sand: standard({ roughness: 0.96, metalness: 0.0 }),
+    mesaFoot: standard({ color: 0x8b6940, roughness: 0.9, metalness: 0.0 }),
+    mesaMiddle: standard({ color: 0xa57d50, roughness: 0.9, metalness: 0.0 }),
+    mesaTop: standard({ color: 0x55cfb0, roughness: 0.9, metalness: 0.0 }),
+    // Set light: filmic tone mapping darkens greys a lot (art/README.md).
+    rockDark: standard({ color: 0x9a9286, roughness: 0.95, metalness: 0.0 }),
+    rockLight: standard({ color: 0xb4ada2, roughness: 0.95, metalness: 0.0 }),
+    rockMoss: standard({ color: 0x6da34c, roughness: 0.9, metalness: 0.0 }),
+    raft: standard({ roughness: 0.55, metalness: 0.0 }), // rubberised fabric, in the part's colour
+    raftFloor: standard({ color: 0x2f3236, roughness: 0.8, metalness: 0.0 }),
+    plank: standard({ color: 0x9c6e48, roughness: 0.92, metalness: 0.0 }),
+    plankGroove: standard({ color: 0x6f4a2c, roughness: 1.0, metalness: 0.0 }),
+    ring: standard({ roughness: 0.82, metalness: 0.12 }),
+    // A sky event's warning (world/main.lua): the shadow of a stone about to land. Unlit, see-through, casts nothing.
+    skyShadow: () => new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
   }
-
-  if (obj.userData.dynamicRole === 'PickupObject' && obj.material) {
-    obj.material.color.setHex(resolveEntityColorHex(entity))
+  const GEOMETRIES = {
+    box: () => new THREE.BoxGeometry(1, 1, 1),
+    cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
+    sphere: () => new THREE.SphereGeometry(0.5, 16, 16),
+    rock: () => new THREE.DodecahedronGeometry(1, 0),
+    disk: () => new THREE.CircleGeometry(0.5, 32).rotateX(-Math.PI / 2),
   }
-
-  if ((obj.userData.dynamicRole === 'Ball' || obj.userData.dynamicRole === 'Ring') && obj.userData.isStyledCarryable) {
-    applyColorToMeshes(obj, resolveEntityColorHex(entity))
-  }
-}
-
-function buildSky(scene) {
-  const skyMat = new THREE.ShaderMaterial({
-    uniforms: {
-      topColor: { value: new THREE.Color(0x87ceeb) },
-      bottomColor: { value: new THREE.Color(0xffecd2) },
-    },
-    vertexShader: `
-      varying vec3 vWP;
-      void main(){
-        vWP = (modelMatrix * vec4(position, 1.0)).xyz;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 topColor, bottomColor;
-      varying vec3 vWP;
-      void main(){
-        float h = normalize(vWP).y;
-        gl_FragColor = vec4(mix(bottomColor, topColor, max(h, 0.0)), 1.0);
-      }
-    `,
-    side: THREE.BackSide,
-    depthWrite: false,
-  })
-  scene.add(new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 32), skyMat))
-}
-
-function buildClouds(scene) {
-  const cloudList = []
-  const cloudMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.8,
-    roughness: 1,
-  })
-
-  for (let i = 0; i < 20; i++) {
-    const cg = new THREE.Group()
-    for (let j = 0; j < 3 + Math.floor(Math.random() * 4); j++) {
-      const p = new THREE.Mesh(new THREE.SphereGeometry(6 + Math.random() * 10, 8, 8), cloudMat)
-      p.position.set(j * 8 - 16, Math.random() * 5, Math.random() * 6 - 3)
-      p.scale.y = 0.6
-      cg.add(p)
-    }
-    cg.position.set(Math.random() * 500 - 250, 50 + Math.random() * 50, Math.random() * 300 - 150)
-    scene.add(cg)
-    cloudList.push({ mesh: cg, speed: 0.5 + Math.random() * 1.5 })
-  }
-
-  return cloudList
-}
-
-function updateClouds(clouds, dt) {
-  for (const c of clouds) {
-    c.mesh.position.x += c.speed * dt
-    if (c.mesh.position.x > 250) c.mesh.position.x = -250
-  }
-}
-
-function createEntityVisual(entity) {
-  const role = (entity.render && entity.render.role) || entity.name || ''
-  const size = entity.size || [1, 1, 1]
-  const modelUrl = resolveEntityModelUrl(entity)
-  const color = resolveEntityColorHex(entity)
-
-  if (modelUrl) {
-    const root = new THREE.Group()
-    root.userData.isModelEntity = true
-    root.userData.modelUrl = modelUrl
-    const fallback = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.35, 0.5, 8, 16),
-      new THREE.MeshStandardMaterial({ color: 0xffa07a, roughness: 0.5, metalness: 0.05 }),
-    )
-    fallback.castShadow = true
-    fallback.receiveShadow = true
-    const scale = (size[1] || 5) / 1.3
-    fallback.scale.setScalar(scale)
-    root.add(fallback)
-    return root
-  }
-
-  if (role === 'Ocean') {
-    const geometry = new THREE.PlaneGeometry(size[0], size[2])
-    // Bake rotation into geometry; per-frame updateScene resets object quaternion
-    // when entity rotation is identity, which would otherwise flip the plane vertical.
-    geometry.rotateX(-Math.PI / 2)
-    const mesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshStandardMaterial({
-        color: 0x4ab0d6,
-        transparent: true,
-        opacity: 0.72,
-        roughness: 0.08,
-        metalness: 0.18,
-      }),
-    )
-    mesh.receiveShadow = true
-    return mesh
-  }
-
-  if (role === 'SkyShadow') {
-    // Godling's sky events: the shadow of a stone that is about to land (world/main.lua, SKY_WARN_SECONDS).
-    const geometry = new THREE.CircleGeometry(Math.max(size[0], size[2]) / 2, 32)
-    geometry.rotateX(-Math.PI / 2) // baked in, as for the ocean
-    return new THREE.Mesh(
-      geometry,
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
-    )
-  }
-
-  if (role === 'Ground') {
-    const group = new THREE.Group()
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(size[0], size[1], size[2]),
-      new THREE.MeshStandardMaterial({ color: 0x55efC4, roughness: 0.5, metalness: 0.2 }),
-    )
-    mesh.receiveShadow = true
-    mesh.castShadow = true
-    group.add(mesh)
-    return group
-  }
-
-  if (role === 'Mesa') {
-    const group = new THREE.Group()
-    const w = size[0], h = size[1], d = size[2]
-
-    const layers = [
-      { frac: 0.0,  hFrac: 0.40, color: 0x8b6940 },
-      { frac: 0.40, hFrac: 0.40, color: 0xa57d50 },
-      { frac: 0.80, hFrac: 0.20, color: 0x55cfb0 },
-    ]
-
-    for (const layer of layers) {
-      const lh = h * layer.hFrac
-      const ly = -h / 2 + h * layer.frac + lh / 2
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(w, lh, d),
-        new THREE.MeshStandardMaterial({ color: layer.color, roughness: 0.9, metalness: 0.0 }),
-      )
-      mesh.position.y = ly
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      group.add(mesh)
-    }
-
-    return group
-  }
-
-  if (role === 'Rock') {
-    const mesh = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(Math.max(size[0], size[1], size[2]) / 2, 0),
-      createRockLikeMaterial(resolveEntityColor(entity)),
-    )
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    mesh.userData.dynamicRole = 'Rock'
-    return mesh
-  }
-
-  if (role === 'Plank') {
-    const group = new THREE.Group()
-
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(size[0], size[1], size[2]),
-      new THREE.MeshStandardMaterial({ color: 0x9c6e48, roughness: 0.92, metalness: 0.0 }),
-    )
-    body.castShadow = true
-    body.receiveShadow = true
-    group.add(body)
-
-    const slatOffsets = [-0.28, 0, 0.28]
-    for (const zFrac of slatOffsets) {
-      const groove = new THREE.Mesh(
-        new THREE.BoxGeometry(size[0] * 0.96, size[1] * 0.12, size[2] * 0.08),
-        new THREE.MeshStandardMaterial({ color: 0x6f4a2c, roughness: 1.0, metalness: 0.0 }),
-      )
-      groove.position.set(0, size[1] * 0.18, size[2] * zFrac)
-      groove.castShadow = true
-      groove.receiveShadow = true
-      groove.userData.preserveColor = true
-      group.add(groove)
-    }
-
-    return group
-  }
-
-  if (role === 'Ring') {
-    const group = new THREE.Group()
-    const outerRadius = Math.min(size[0], size[2]) * 0.5
-    const tubeRadius = Math.max(Math.min(size[1] * 0.5, outerRadius * 0.45), 0.05)
-    const ringRadius = Math.max(outerRadius - tubeRadius, 0.05)
-
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(ringRadius, tubeRadius, 18, 40),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.82, metalness: 0.12 }),
-    )
-    ring.rotation.x = Math.PI / 2
-    ring.castShadow = true
-    ring.receiveShadow = true
-    group.add(ring)
-    group.userData.dynamicRole = 'Ring'
-    group.userData.isStyledCarryable = true
-    return group
-  }
-
-  if (role === 'PickupObject') {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(size[0], size[1], size[2]),
-      createRockLikeMaterial(resolveEntityColor(entity)),
-    )
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    mesh.userData.dynamicRole = 'PickupObject'
-    return mesh
-  }
-
-  // Default: box with entity color
-  let geometry
-  const primitive = entity.render && entity.render.primitive
-  if (primitive === 'cylinder') geometry = new THREE.CylinderGeometry(size[0] / 2, size[0] / 2, size[1], 16)
-  else if (primitive === 'sphere') geometry = new THREE.SphereGeometry(size[0] / 2, 16, 16)
-  else geometry = new THREE.BoxGeometry(size[0], size[1], size[2])
-
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 }))
-  mesh.castShadow = true
-  mesh.receiveShadow = true
-  return mesh
-}
-
-// Godling (art/build_godling.py) gets its own model handling. The runtime's model helper sizes a model by
-// its first mesh and plays only walk and idle; Godling is many rigid parts and has more clips, driven by the
-// player's attributes: a one-shot clip each time a counter goes up, Climb for as long as "Climbing" is true.
-const CHARACTER_MODEL = /godling\.glb$/
-const WALK_STRIDE_SPEED = 0.655 // model metres per second the Walk clip covers at normal speed
-const ONE_SHOTS = [
-  { attribute: 'Reaches', clip: 'PickUp', seconds: 1.1 }, // the world lifts a block in 1.0 s, lowers one in 1.2 s
-  { attribute: 'Strikes', clip: 'Strike', seconds: 1.0 }, // a hammer blow on the quarry
-]
-
-function createCharacterController(onError) {
-  let modules = null
-  const templates = new Map()
-  const states = new Map()
-
-  function loadModules() {
-    if (!modules) {
-      modules = Promise.all([
-        import('https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'),
-        import('https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js'),
-      ]).then(([loaderMod, skeletonMod]) => ({ loader: new loaderMod.GLTFLoader(), clone: skeletonMod.clone }))
-    }
-    return modules
-  }
-
-  function loadTemplate(url) {
-    if (!templates.has(url)) {
-      templates.set(url, loadModules().then(({ loader }) => new Promise((resolve, reject) => {
-        loader.load(url, (gltf) => resolve({
-          scene: gltf.scene,
-          animations: gltf.animations || [],
-          box: new THREE.Box3().setFromObject(gltf.scene), // every part, in the rest pose
-        }), undefined, reject)
-      })))
-    }
-    return templates.get(url)
-  }
-
-  async function upsert({ entityId, root, modelUrl, size, yawOffsetDeg }) {
-    if (states.get(entityId)?.modelUrl === modelUrl) return
-    const state = { modelUrl, ready: false }
-    states.set(entityId, state)
-    try {
-      const [template, { clone }] = await Promise.all([loadTemplate(modelUrl), loadModules()])
-      if (states.get(entityId) !== state) return
-      const model = clone(template.scene)
-      const height = template.box.getSize(new THREE.Vector3()).y
-      const centre = template.box.getCenter(new THREE.Vector3())
-      state.scale = (size?.[1] ?? 5) / height
-      model.scale.setScalar(state.scale)
-      model.position.set(-centre.x * state.scale, -centre.y * state.scale, -centre.z * state.scale)
-      model.traverse((node) => {
-        if (node.isMesh) {
-          node.castShadow = true
-          node.receiveShadow = true
-        }
-      })
-      const pivot = new THREE.Group()
-      if (yawOffsetDeg) pivot.rotation.y = THREE.MathUtils.degToRad(yawOffsetDeg)
-      pivot.add(model)
-      for (const child of [...root.children]) root.remove(child)
-      root.add(pivot)
-
-      state.mixer = new THREE.AnimationMixer(model)
-      const action = (name, once) => {
-        const clip = template.animations.find((c) => c.name === name)
-        if (!clip) return null
-        const a = state.mixer.clipAction(clip)
-        if (once) {
-          a.setLoop(THREE.LoopOnce, 1)
-          a.clampWhenFinished = true
-        }
-        a.play()
-        a.setEffectiveWeight(0)
-        return a
-      }
-      state.idle = action('Idle')
-      state.walk = action('Walk')
-      state.climb = action('Climb')
-      state.oneShots = ONE_SHOTS.map((spec) => ({ ...spec, action: action(spec.clip, true), count: null, left: 0 }))
-      state.idle?.setEffectiveWeight(1)
-      state.ready = true
-    } catch (err) {
-      if (onError) onError(err, { entityId, modelUrl })
-    }
-  }
-
-  function update(entityId, { dt = 1 / 60, speed = 0, humanoidState = null, attributes = {} } = {}) {
-    const state = states.get(entityId)
-    if (!state?.ready) return
-    let playing = null // the one-shot clip in progress, if any; a new one cuts an older one short
-    for (const shot of state.oneShots) {
-      const count = Number(attributes[shot.attribute] || 0)
-      if (count !== shot.count) {
-        if (shot.count !== null && shot.action) {
-          shot.action.reset().setEffectiveTimeScale(shot.action.getClip().duration / shot.seconds).play()
-          shot.left = shot.seconds
-          for (const other of state.oneShots) if (other !== shot) other.left = 0
-        }
-        shot.count = count
-      }
-      shot.left = Math.max(0, shot.left - dt)
-      if (shot.left > 0) playing = shot
-    }
-    const climbing = attributes.Climbing === true && Boolean(state.climb)
-    const airborne = humanoidState === 'Jumping' || humanoidState === 'Freefall'
-    const moving = speed > 0.5 && !airborne && !playing && !climbing
-    const blend = (action, target, rate) => {
-      if (!action) return
-      const w = action.getEffectiveWeight()
-      action.setEffectiveWeight(w + (target - w) * Math.min(1, dt * rate))
-    }
-    for (const shot of state.oneShots) blend(shot.action, shot === playing && !climbing ? 1 : 0, 14)
-    blend(state.climb, climbing ? 1 : 0, 10)
-    blend(state.walk, moving ? 1 : 0, 8)
-    blend(state.idle, moving || playing || climbing ? 0 : 1, 8)
-    if (state.walk && moving) {
-      // Feet keep pace with the body: the clip's stride, scaled with the model, at the body's real speed.
-      state.walk.setEffectiveTimeScale(Math.min(3, Math.max(0.5, speed / (WALK_STRIDE_SPEED * state.scale))))
-    }
-    state.mixer.update(dt)
-  }
-
   return {
-    upsert,
-    update,
-    remove: (entityId) => states.delete(entityId),
-    clear: () => states.clear(),
+    geometry(key, make = GEOMETRIES[key]) {
+      if (!geometries.has(key)) geometries.set(key, make())
+      return geometries.get(key)
+    },
+    material(key) {
+      if (!materials.has(key)) {
+        const material = MATERIALS[key]()
+        onMaterial(material)
+        materials.set(key, material)
+      }
+      return materials.get(key)
+    },
+    dispose() {
+      for (const geometry of geometries.values()) geometry.dispose()
+      for (const material of materials.values()) material.dispose()
+      geometries.clear()
+      materials.clear()
+    },
+  }
+}
+
+const MESA_LAYERS = [
+  { frac: 0.0, hFrac: 0.40, material: 'mesaFoot' },
+  { frac: 0.40, hFrac: 0.40, material: 'mesaMiddle' },
+  { frac: 0.80, hFrac: 0.20, material: 'mesaTop' },
+]
+const LAND_ROLES = new Set(['Ground', 'Mesa']) // what makes the coastline for the sea's shore map
+const STRATUM = 2.5 // rock (Mesa, Surface "Rock") is drawn in block-high strata, as the block grid (ADR-005)
+const MOSS = 0.35 // the green cap on rock, as on Monuriki's peak
+
+// Rock: alternating strata of volcanic stone, one block each from the foot, and a cap of moss on top.
+function rockParts(size, part, kit) {
+  const [w, h, d] = size
+  const bottom = -h / 2
+  const stoneTop = h / 2 - Math.min(MOSS, h / 2)
+  const parts = []
+  for (let y = bottom, i = 0; y < stoneTop - 1e-3; y += STRATUM, i += 1) {
+    const top = Math.min(y + STRATUM, stoneTop)
+    const key = i % 2 ? 'rockLight' : 'rockDark'
+    parts.push(part(key, kit.geometry('box'), kit.material(key),
+      new THREE.Matrix4().makeScale(w, top - y, d).setPosition(0, (y + top) / 2, 0)))
+  }
+  parts.push(part('rockMoss', kit.geometry('box'), kit.material('rockMoss'),
+    new THREE.Matrix4().makeScale(w, h / 2 - stoneTop, d).setPosition(0, (stoneTop + h / 2) / 2, 0)))
+  return parts
+}
+
+// A busted inflatable life raft, from its part's size and colour: a ring of fat tubes with rounded corners round a
+// dark floor, the side facing -Z gone flat.
+function lifeRaftParts(size, part, kit) {
+  const [w, h, d] = size
+  const r = Math.max(0.15, Math.min(h * 0.45, d * 0.2, w * 0.2))
+  const y = -h / 2 + r
+  const lengthX = Math.max(0.01, w - 2 * r)
+  const lengthZ = Math.max(0.01, d - 2 * r)
+  const flat = 0.45 // how much of its height the deflated side keeps
+  const tube = (x, z, length, alongX, squash) => {
+    const sag = (1 - squash) * r
+    const turn = alongX ? new THREE.Matrix4().makeRotationZ(Math.PI / 2) : new THREE.Matrix4().makeRotationX(Math.PI / 2)
+    // In the cylinder's own frame the length is Y; after the turn its local X (along X) or Z (along Z) is upright.
+    const scale = alongX ? [2 * r * squash, length, 2 * r] : [2 * r, length, 2 * r * squash]
+    const local = new THREE.Matrix4().makeTranslation(x, y - sag, z).multiply(turn).multiply(new THREE.Matrix4().makeScale(...scale))
+    return part('raftTube', kit.geometry('cylinder'), kit.material('raft'), local, { colored: true })
+  }
+  const corner = (x, z, squash) => part('raftCorner', kit.geometry('sphere'), kit.material('raft'),
+    new THREE.Matrix4().makeTranslation(x, y - (1 - squash) * r, z).multiply(new THREE.Matrix4().makeScale(2 * r, 2 * r * squash, 2 * r)),
+    { colored: true })
+  const ex = w / 2 - r
+  const ez = d / 2 - r
+  return [
+    part('raftFloor', kit.geometry('box'), kit.material('raftFloor'),
+      new THREE.Matrix4().makeScale(lengthX + r, Math.min(0.12, h * 0.1), lengthZ + r).setPosition(0, -h / 2 + 0.06, 0)),
+    tube(0, ez, lengthX, true, 1),
+    tube(0, -ez, lengthX, true, flat),
+    tube(ex, 0, lengthZ, false, 1),
+    tube(-ex, 0, lengthZ, false, 0.8),
+    corner(ex, ez, 1),
+    corner(-ex, ez, 0.9),
+    corner(ex, -ez, 0.7),
+    corner(-ex, -ez, flat),
+  ]
+}
+
+// A small on-screen readout for `?stats=1`: frame rate, draw calls, triangles, tier and resolution.
+function createStatsReadout(canvas, renderer, tier, instancer) {
+  const box = document.createElement('div')
+  box.style.cssText = 'position:absolute;left:8px;top:8px;z-index:10;padding:4px 7px;border-radius:4px;' +
+    'background:rgba(0,0,0,.55);color:#e8fff6;font:11px/1.35 ui-monospace,monospace;pointer-events:none;white-space:pre'
+  ;(canvas.parentElement || document.body).appendChild(box)
+  let time = 0
+  let frames = 0
+  return {
+    tick(dt) {
+      time += dt
+      frames += 1
+      if (time < 0.5) return
+      const { calls, triangles } = renderer.info.render
+      const { groups, instances } = instancer.stats()
+      box.textContent = `${Math.round(frames / time)} fps · ${calls} calls · ${(triangles / 1000).toFixed(1)}k tris\n` +
+        `${tier.name} (${tier.reason}) · px ${renderer.getPixelRatio().toFixed(2)} · ${instances} parts in ${groups} groups`
+      time = 0
+      frames = 0
+    },
+    dispose() {
+      box.remove()
+    },
   }
 }
 
@@ -593,37 +344,100 @@ export function createRenderer(ctx) {
     ? globalThis.__mesaCaptureConfig
     : {}
   const debugCollidersEnabled = Boolean(captureConfig.debugColliders) || readDebugFlag('debugColliders') || readDebugFlag('debugCollider')
+  const params = new URLSearchParams(globalThis.location?.search || '')
+
+  const tier = chooseTier(captureConfig)
+  const governor = createResolutionGovernor(tier)
+  ctx.log('info', 'Renderer quality', { tier: tier.name, reason: tier.reason, gpu: tier.gpu })
 
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 3000)
 
-  const renderer = new THREE.WebGLRenderer({ canvas: ctx.canvas, antialias: true })
+  const renderer = new THREE.WebGLRenderer({ canvas: ctx.canvas, antialias: tier.antialias, powerPreference: 'high-performance' })
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.2
   renderer.outputColorSpace = THREE.SRGBColorSpace
+  let viewport = { width: 1, height: 1, dpr: globalThis.devicePixelRatio || 1 }
+  const applyResolution = () => {
+    renderer.setPixelRatio(Math.min(viewport.dpr, tier.pixelRatio) * governor.scale)
+    renderer.setSize(viewport.width, viewport.height, false)
+  }
 
-  // Lights (matching fall-guys)
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6))
-  scene.add(new THREE.HemisphereLight(0x87ceeb, 0x98fb98, 0.4))
+  // Lights. By day at the default sun they are as before this renderer had a sky, so the props' colours, which
+  // were checked in the game, still hold; the sky only changes them at other times of day.
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6)
+  const hemisphere = new THREE.HemisphereLight(0x87ceeb, 0x98fb98, 0.4)
+  scene.add(ambient, hemisphere)
+  const SKY_BLUE = new THREE.Color(0x87ceeb)
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.2)
-  dirLight.position.set(30, 50, 20)
-  dirLight.castShadow = true
-  dirLight.shadow.mapSize.set(2048, 2048)
-  dirLight.shadow.camera.left = -80
-  dirLight.shadow.camera.right = 80
-  dirLight.shadow.camera.top = 80
-  dirLight.shadow.camera.bottom = -80
-  dirLight.shadow.camera.near = 1
-  dirLight.shadow.camera.far = 200
-  dirLight.shadow.bias = -0.00005
-  scene.add(dirLight)
-  scene.add(dirLight.target)
+  // The sun's shadows: one map around the camera's target, or cascades (high tier) that stay sharp up close.
+  const csm = tier.cascades > 0
+    ? new CSM({
+      camera,
+      parent: scene,
+      cascades: tier.cascades,
+      maxFar: 240,
+      mode: 'practical',
+      shadowMapSize: tier.shadowMapSize,
+      lightDirection: DEFAULT_SUN.clone().negate(),
+      lightIntensity: 1.2,
+      lightNear: 1,
+      lightFar: 800,
+      lightMargin: 120,
+    })
+    : null
+  if (csm) {
+    csm.fade = true
+    for (const light of csm.lights) {
+      light.shadow.bias = -0.0002
+      light.shadow.normalBias = 0.03
+      light.shadow.radius = tier.shadowRadius
+    }
+  }
+  const sunLight = new THREE.DirectionalLight(0xffffff, 1.2)
+  if (!csm) {
+    sunLight.castShadow = true
+    sunLight.shadow.mapSize.set(tier.shadowMapSize, tier.shadowMapSize)
+    sunLight.shadow.camera.left = -tier.shadowExtent
+    sunLight.shadow.camera.right = tier.shadowExtent
+    sunLight.shadow.camera.top = tier.shadowExtent
+    sunLight.shadow.camera.bottom = -tier.shadowExtent
+    sunLight.shadow.camera.near = 1
+    sunLight.shadow.camera.far = 260
+    sunLight.shadow.bias = -0.0001
+    // Pushed out by most of a shadow texel, or curved surfaces speckle with their own shadow (shadow acne).
+    sunLight.shadow.normalBias = ((tier.shadowExtent * 2) / tier.shadowMapSize) * 0.75
+    sunLight.shadow.radius = tier.shadowRadius
+    scene.add(sunLight, sunLight.target)
+  }
+  const litMaterials = new Set()
+  const onMaterial = (material) => {
+    for (const m of Array.isArray(material) ? material : [material]) {
+      if (!m || litMaterials.has(m) || !(m.isMeshStandardMaterial || m.isMeshPhongMaterial || m.isMeshLambertMaterial)) continue
+      litMaterials.add(m)
+      csm?.setupMaterial(m)
+    }
+  }
 
-  // Sky and clouds
-  buildSky(scene)
-  const clouds = buildClouds(scene)
+  const sky = createSky(scene, tier)
+  scene.fog = new THREE.Fog(sky.fogColor.clone(), tier.fogFar * 0.32, tier.fogFar)
+  const sea = createSea(scene, tier, sky)
+  const clouds = createClouds(scene, tier)
+  const terrain = createTerrain(scene, { onMaterial })
+
+  // Time of day: `?time=17.5` holds the sun at that hour; `?dayMinutes=20` runs a whole day in 20 minutes.
+  // Without either the sun stands where the light always stood.
+  const fixedHour = params.has('time') ? Number(params.get('time')) : NaN
+  const dayMinutes = Number(params.get('dayMinutes'))
+  const startHour = Number.isFinite(fixedHour) ? fixedHour : 9
+  let sunClock = 0
+  let sunPlaced = false
+  const sunNow = (time) => {
+    if (dayMinutes > 0) return sunForHour((startHour + (time / (dayMinutes * 60)) * 24) % 24)
+    if (Number.isFinite(fixedHour)) return sunForHour(fixedHour)
+    return DEFAULT_SUN
+  }
 
   const interpolationDelayMs = Number.isFinite(captureConfig.interpolationDelayMs)
     ? Math.max(0, Number(captureConfig.interpolationDelayMs))
@@ -653,20 +467,35 @@ export function createRenderer(ctx) {
   if (cameraModes?.api && ctx.runtime?.internal?.expose) {
     ctx.runtime.internal.expose('camera', cameraModes.api)
   }
-  const entityObjects = new Map()
-  const colliderDebugObjects = new Map()
-  const modelController = ctx.runtime.three.createModelEntityController(THREE, {
-    onError(err, meta) {
-      ctx.log('warn', 'Model entity load failed', { err: String(err), ...meta })
+
+  // Entities whose look changes when a model arrives are rebuilt; the runtime's replay waits for tracked loads
+  // (patched Clawblox exports trackAssetLoad; upstream keeps it private, and then models are simply untracked).
+  let modelsArrived = 0
+  const models = createModelLibrary({
+    onReady() {
+      modelsArrived += 1
     },
+    onError(err, meta) {
+      ctx.log('warn', 'Model load failed', { err: String(err), ...meta })
+    },
+    trackLoad: ctx.runtime?.three?.trackAssetLoad,
+    onMaterial,
   })
-  const characters = createCharacterController((err, meta) => {
-    ctx.log('warn', 'Character model load failed', { err: String(err), ...meta })
-  })
+  const characters = createCharacterController(models)
+  const instancer = createInstancer(scene)
+  const kit = createPartKit(onMaterial)
+  const records = new Map() // entity id -> how it is drawn
+  const colliderDebugObjects = new Map()
+  const stats = readDebugFlag('stats') ? createStatsReadout(ctx.canvas, renderer, tier, instancer) : null
 
   const tmpForward = new THREE.Vector3(0, 0, 1)
   const anchorPos = new THREE.Vector3(0, 4, 0)
-  const clock = new THREE.Clock()
+  const entityMatrix = new THREE.Matrix4()
+  const partMatrix = new THREE.Matrix4()
+  const color = new THREE.Color()
+  let lastStateMs = performance.now()
+  let elapsed = 0
+  let latestObs = null
 
   function syncColliderDebug(entity, visible) {
     if (!debugCollidersEnabled) return
@@ -692,6 +521,132 @@ export function createRenderer(ctx) {
     debugObj.visible = visible
   }
 
+  // What an entity is drawn with: instanced parts (each a group key, geometry, material and a transform inside
+  // the entity), an animated character, the sea's level, or nothing yet (its model is still loading).
+  function describe(entity) {
+    const role = (entity.render && entity.render.role) || entity.name || ''
+    const size = entity.size || [1, 1, 1]
+    const modelUrl = resolveEntityModelUrl(entity)
+    const part = (key, geometry, material, local, extra = {}) => ({ key, geometry, material, local, ...extra })
+
+    if (modelUrl) {
+      const template = models.get(modelUrl)
+      if (!template) return { kind: 'pending' }
+      if (template.animated) return { kind: 'character', modelUrl }
+      const fit = models.fit(template, size, entity.model_yaw_offset_deg, new THREE.Matrix4())
+      return {
+        kind: 'parts',
+        parts: template.parts.map((p, i) =>
+          part(`model:${modelUrl}#${i}`, p.geometry, p.material, fit.clone().multiply(p.matrix))),
+      }
+    }
+
+    const scaled = (x, y, z) => new THREE.Matrix4().makeScale(x, y, z)
+    switch (role) {
+      case 'Ocean':
+        return { kind: 'sea' }
+      case 'Ground': {
+        const surface = entity.attributes?.Surface === 'Sand' ? 'sand' : 'ground'
+        return { kind: 'parts', parts: [part(surface, kit.geometry('box'), kit.material(surface), scaled(...size), { colored: true })] }
+      }
+      case 'Wreck':
+        return { kind: 'parts', parts: lifeRaftParts(size, part, kit) }
+      case 'Mesa':
+        if (entity.attributes?.Surface === 'Rock') return { kind: 'parts', parts: rockParts(size, part, kit) }
+        return {
+          kind: 'parts',
+          parts: MESA_LAYERS.map((layer) => {
+            const lh = size[1] * layer.hFrac
+            const local = scaled(size[0], lh, size[2]).setPosition(0, -size[1] / 2 + size[1] * layer.frac + lh / 2, 0)
+            return part(layer.material, kit.geometry('box'), kit.material(layer.material), local)
+          }),
+        }
+      case 'Rock': {
+        const r = Math.max(size[0], size[1], size[2]) / 2
+        return { kind: 'parts', parts: [part('rock', kit.geometry('rock'), kit.material('rock'), scaled(r, r, r), { colored: true, linear: true })] }
+      }
+      case 'Plank':
+        return {
+          kind: 'parts',
+          parts: [
+            part('plank', kit.geometry('box'), kit.material('plank'), scaled(...size)),
+            ...[-0.28, 0, 0.28].map((zFrac) => part('plankGroove', kit.geometry('box'), kit.material('plankGroove'),
+              scaled(size[0] * 0.96, size[1] * 0.12, size[2] * 0.08).setPosition(0, size[1] * 0.18, size[2] * zFrac))),
+          ],
+        }
+      case 'Ring': {
+        const outerRadius = Math.min(size[0], size[2]) * 0.5
+        const tubeRadius = Math.max(Math.min(size[1] * 0.5, outerRadius * 0.45), 0.05)
+        const ringRadius = Math.max(outerRadius - tubeRadius, 0.05)
+        const key = `ring:${ringRadius.toFixed(3)}:${tubeRadius.toFixed(3)}`
+        const geometry = kit.geometry(key, () => new THREE.TorusGeometry(ringRadius, tubeRadius, 18, 40).rotateX(Math.PI / 2))
+        return { kind: 'parts', parts: [part(key, geometry, kit.material('ring'), new THREE.Matrix4(), { colored: true })] }
+      }
+      case 'SkyShadow':
+        return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
+      case 'PickupObject':
+        return { kind: 'parts', parts: [part('block', kit.geometry('box'), kit.material('rock'), scaled(...size), { colored: true })] }
+      default: {
+        const primitive = entity.render && entity.render.primitive
+        if (primitive === 'cylinder') {
+          return { kind: 'parts', parts: [part('cylinder', kit.geometry('cylinder'), kit.material('plain'), scaled(size[0], size[1], size[0]), { colored: true })] }
+        }
+        if (primitive === 'sphere') {
+          return { kind: 'parts', parts: [part('sphere', kit.geometry('sphere'), kit.material('plain'), scaled(size[0], size[0], size[0]), { colored: true })] }
+        }
+        return { kind: 'parts', parts: [part('plain', kit.geometry('box'), kit.material('plain'), scaled(...size), { colored: true })] }
+      }
+    }
+  }
+
+  function lookKey(entity) {
+    const modelUrl = resolveEntityModelUrl(entity)
+    const visible = !(entity.render && (entity.render.visible === false || entity.render.transparency >= 0.999))
+    return [
+      entity.render?.role || entity.name || '',
+      entity.attributes?.Surface || '',
+      entity.render?.primitive || '',
+      modelUrl || '',
+      modelUrl && models.get(modelUrl) ? 'loaded' : '',
+      (entity.size || []).join(','),
+      entity.model_yaw_offset_deg ?? '',
+      visible ? 'shown' : 'hidden',
+    ].join('|')
+  }
+
+  function release(record) {
+    for (const slot of record.slots || []) instancer.remove(slot.slot)
+    if (record.root) {
+      scene.remove(record.root)
+      characters.remove(record.id)
+    }
+  }
+
+  function build(entity, key) {
+    const record = { id: entity.id, key, kind: 'none', slots: [], position: null, rotation: null, color: null }
+    if (key.endsWith('|hidden')) return record
+    const look = describe(entity)
+    record.kind = look.kind
+    if (look.kind === 'parts') {
+      for (const p of look.parts) {
+        const group = instancer.group(p.key, p.geometry, p.material, { colored: Boolean(p.colored), castShadow: p.castShadow !== false })
+        record.slots.push({ slot: instancer.add(group, entityMatrix), local: p.local, linear: Boolean(p.linear), colored: Boolean(p.colored) })
+      }
+    } else if (look.kind === 'character') {
+      record.root = new THREE.Group()
+      record.modelUrl = look.modelUrl
+      scene.add(record.root)
+    }
+    return record
+  }
+
+  const sameNumbers = (a, b) => {
+    if (a === b) return true
+    if (!a || !b || a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+    return true
+  }
+
   function computeAnchorPosition(obs) {
     let count = 0
     let sumX = 0
@@ -714,6 +669,7 @@ export function createRenderer(ctx) {
     return new THREE.Vector3(sumX / count, sumY / count, sumZ / count)
   }
 
+  // Returns the sea level and the island's footprint for the sea.
   function updateScene(obs, dt) {
     const activeIds = new Set()
     const stateByRootPartId = new Map()
@@ -727,70 +683,102 @@ export function createRenderer(ctx) {
       }
     }
 
+    // A first-person camera (the server's capture of what Godling sees) sits inside the body's head: hide that
+    // body, or its own head fills the view.
+    const attach = cameraModes?.spectator?.state?.attach
+    const attachedPlayer = attach ? (obs.players || []).find((p) => String(p?.id || '') === attach.playerId) : null
+    const hiddenBodyId = attachedPlayer?.root_part_id ?? null
+
+    let seaLevel = null
+    const land = []
+    const landKey = []
+
     for (const entity of obs.entities || []) {
       activeIds.add(entity.id)
-      let obj = entityObjects.get(entity.id)
-      if (!obj) {
-        obj = createEntityVisual(entity)
-        entityObjects.set(entity.id, obj)
-        scene.add(obj)
+      const key = lookKey(entity)
+      let record = records.get(entity.id)
+      if (!record || record.key !== key) {
+        if (record) release(record)
+        record = build(entity, key)
+        records.set(entity.id, record)
+      }
+      const shown = !key.endsWith('|hidden')
+      syncColliderDebug(entity, shown)
+
+      const position = entity.position
+      const rotation = entity.rotation || null
+      const moved = !sameNumbers(record.position, position) ||
+        !(record.rotation === rotation || (record.rotation && rotation && record.rotation.every((row, i) => sameNumbers(row, rotation[i]))))
+
+      if (record.kind === 'sea') {
+        seaLevel = position[1] + (entity.size?.[1] ?? 0) / 2
+      }
+      const role = entity.render?.role
+      if (shown && LAND_ROLES.has(role) && entity.size) {
+        land.push({ center: position, half: entity.size.map((v) => v / 2), rotation })
+        landKey.push(`${entity.id}:${position.join(',')}:${entity.size.join(',')}`)
       }
 
-      obj.position.set(entity.position[0], entity.position[1], entity.position[2])
-      if (entity.rotation) obj.quaternion.copy(rotationToQuaternion(entity.rotation))
-      else obj.quaternion.identity()
-      obj.visible = !(entity.render && entity.render.visible === false)
-      applyEntityAppearance(obj, entity)
-      syncColliderDebug(entity, obj.visible)
-
-      const prev = obj.userData.prevPos
-      let speed = 0
-      if (prev) {
-        const dx = entity.position[0] - prev[0]
-        const dz = entity.position[2] - prev[2]
-        speed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001)
-      }
-      obj.userData.prevPos = [entity.position[0], entity.position[1], entity.position[2]]
-
-      if (obj.userData && obj.userData.isModelEntity) {
-        const modelUrl = resolveEntityModelUrl(entity)
-        if (modelUrl && CHARACTER_MODEL.test(modelUrl)) {
-          void characters.upsert({
-            entityId: entity.id,
-            root: obj,
-            modelUrl,
-            size: entity.size || [2, 5, 2],
-            yawOffsetDeg: entity.model_yaw_offset_deg,
-          })
-          characters.update(entity.id, {
-            dt,
-            speed,
-            humanoidState: stateByRootPartId.get(entity.id) || null,
-            attributes: attributesByRootPartId.get(entity.id) || {},
-          })
-        } else if (modelUrl) {
-          void modelController.upsert({
-            entityId: entity.id,
-            root: obj,
-            modelUrl,
-            size: entity.size || [2, 5, 2],
-            yawOffsetDeg: entity.model_yaw_offset_deg,
-          })
-          modelController.update(entity.id, {
-            dt,
-            speed,
-            humanoidState: stateByRootPartId.get(entity.id) || null,
-          })
+      if (record.kind === 'parts') {
+        if (moved || record.fresh !== false) {
+          if (rotation) {
+            entityMatrix.set(
+              rotation[0][0], rotation[0][1], rotation[0][2], position[0],
+              rotation[1][0], rotation[1][1], rotation[1][2], position[1],
+              rotation[2][0], rotation[2][1], rotation[2][2], position[2],
+              0, 0, 0, 1,
+            )
+          } else {
+            entityMatrix.makeTranslation(position[0], position[1], position[2])
+          }
+          for (const s of record.slots) instancer.setMatrix(s.slot, partMatrix.multiplyMatrices(entityMatrix, s.local))
         }
+        const colorKey = entity.render?.color ? entity.render.color.join(',') : ''
+        if (colorKey !== record.color) {
+          for (const s of record.slots) if (s.colored) instancer.setColor(s.slot, resolveEntityColor(entity, s.linear, color))
+          record.color = colorKey
+        }
+      } else if (record.kind === 'character') {
+        const root = record.root
+        root.position.set(position[0], position[1], position[2])
+        if (rotation) root.quaternion.copy(rotationToQuaternion(rotation))
+        else root.quaternion.identity()
+        root.visible = entity.id !== hiddenBodyId
+
+        let speed = 0
+        const prev = record.prevPos
+        if (prev) {
+          const dx = position[0] - prev[0]
+          const dz = position[2] - prev[2]
+          speed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001)
+        }
+        record.prevPos = [position[0], position[1], position[2]]
+        characters.upsert({
+          entityId: entity.id,
+          root,
+          modelUrl: record.modelUrl,
+          size: entity.size || [2, 5, 2],
+          yawOffsetDeg: entity.model_yaw_offset_deg,
+        })
+        characters.update(entity.id, {
+          dt,
+          speed,
+          humanoidState: stateByRootPartId.get(entity.id) || null,
+          attributes: attributesByRootPartId.get(entity.id) || {},
+        })
+      }
+      record.fresh = false
+      if (moved) {
+        // Copies: the snapshot buffer may hand over the same arrays again with new numbers in them.
+        record.position = position.slice()
+        record.rotation = rotation ? rotation.map((row) => row.slice()) : null
       }
     }
 
-    for (const [id, obj] of entityObjects.entries()) {
+    for (const [id, record] of records.entries()) {
       if (!activeIds.has(id)) {
-        scene.remove(obj)
-        modelController.remove(id)
-        characters.remove(id)
-        entityObjects.delete(id)
+        release(record)
+        records.delete(id)
       }
     }
     for (const [id, obj] of colliderDebugObjects.entries()) {
@@ -798,6 +786,13 @@ export function createRenderer(ctx) {
         scene.remove(obj)
         colliderDebugObjects.delete(id)
       }
+    }
+
+    terrain.update(obs.terrain)
+    if (seaLevel != null && obs.terrain) {
+      const fromTerrain = terrain.landAt(seaLevel)
+      land.push(...fromTerrain.boxes)
+      landKey.push(fromTerrain.key)
     }
 
     const players = obs.players || []
@@ -819,15 +814,64 @@ export function createRenderer(ctx) {
       dt,
     })
 
-    dirLight.position.set(cameraTarget.x + 30, 50, cameraTarget.z + 20)
-    dirLight.target.position.copy(cameraTarget)
+    return { seaLevel, land, landKey: landKey.join(';'), cameraTarget }
+  }
+
+  function updateSunAndLights(dt, cameraTarget) {
+    sunClock += dt
+    if (!sunPlaced || (dayMinutes > 0 && sunClock >= 0.5)) {
+      sky.setSun(sunNow(elapsed))
+      sunPlaced = true
+      sunClock = 0
+    }
+    const day = sky.daylight
+    ambient.intensity = 0.6 * (0.25 + 0.75 * day)
+    hemisphere.color.copy(SKY_BLUE).lerp(sky.zenith, 0.35)
+    hemisphere.intensity = 0.4 * (0.35 + 0.65 * day)
+    scene.fog.color.copy(sky.fogColor)
+    if (csm) {
+      csm.lightDirection.copy(sky.sun).negate()
+      for (const light of csm.lights) {
+        light.color.copy(sky.sunColor)
+        light.intensity = 1.2 * day
+      }
+      csm.update()
+    } else {
+      sunLight.color.copy(sky.sunColor)
+      sunLight.intensity = 1.2 * day
+      sunLight.position.copy(cameraTarget).addScaledVector(sky.sun, 120)
+      sunLight.target.position.copy(cameraTarget)
+    }
+  }
+
+  function draw(obs, dt) {
+    latestObs = obs
+    elapsed += dt
+    const { seaLevel, land, landKey, cameraTarget } = updateScene(obs, dt)
+    updateSunAndLights(dt, cameraTarget)
+    sky.update(camera, elapsed)
+    sea.update({ camera, time: elapsed, seaLevel, land, landKey })
+    clouds.update({ camera, time: elapsed, sky })
+    instancer.flush()
+    if (governor.sample(dt)) applyResolution()
+    renderer.render(scene, camera)
+    stats?.tick(dt)
+  }
+
+  // For debugging in the browser console and for checks: the tier, per-frame counts and the sky.
+  globalThis.__godlingRenderer = {
+    tier,
+    sky,
+    info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
   }
 
   return {
-    onResize({ width, height }) {
+    onResize({ width, height, dpr }) {
+      viewport = { width, height, dpr: Number.isFinite(dpr) ? dpr : (globalThis.devicePixelRatio || 1) }
       camera.aspect = width / Math.max(1, height)
       camera.updateProjectionMatrix()
-      renderer.setSize(width, height, false)
+      applyResolution()
+      csm?.updateFrustums()
     },
 
     onState(state) {
@@ -848,23 +892,40 @@ export function createRenderer(ctx) {
         ? Number(captureMeta.renderNowMs)
         : undefined
       const obs = stateBuffer.interpolated(renderNowMs) || obsState
+      const now = performance.now()
       const dt = Number.isFinite(captureMeta?.dt)
         ? Math.max(0, Number(captureMeta.dt))
-        : Math.min(clock.getDelta(), 0.05)
-      updateClouds(clouds, dt)
-      updateScene(obs, dt)
-      renderer.render(scene, camera)
+        : Math.min((now - lastStateMs) / 1000, 0.05)
+      lastStateMs = now
+      draw(obs, dt)
+    },
+
+    // Between states, keep animating (the sea, clouds and walk cycle) from the interpolated snapshots.
+    onFrame({ dt }) {
+      if (!latestObs) return
+      lastStateMs = performance.now()
+      draw(stateBuffer.interpolated() || latestObs, Math.min(Math.max(dt, 0), 0.05))
     },
 
     unmount() {
       if (ctx.runtime?.internal?.remove) ctx.runtime.internal.remove('camera')
       if (cameraModes?.dispose) cameraModes.dispose()
-      for (const obj of entityObjects.values()) scene.remove(obj)
+      for (const record of records.values()) release(record)
+      records.clear()
       for (const obj of colliderDebugObjects.values()) scene.remove(obj)
-      entityObjects.clear()
       colliderDebugObjects.clear()
-      modelController.clear()
+      instancer.clear()
       characters.clear()
+      models.dispose()
+      kit.dispose()
+      sky.dispose()
+      sea.dispose()
+      clouds.dispose()
+      terrain.dispose()
+      csm?.remove()
+      csm?.dispose()
+      stats?.dispose()
+      delete globalThis.__godlingRenderer
       renderer.dispose()
     },
   }
