@@ -18,7 +18,7 @@ from .world import CUBE
 
 CELL = CUBE  # a block's width: the grid
 LAYER = CUBE  # a block's height
-PIECE_PREFIXES = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Brick_", "Log_", "Boulder_")
+PIECE_PREFIXES = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Brick_", "Log_", "Boulder_")
 
 
 def pieces_of(snap):

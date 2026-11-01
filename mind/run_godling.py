@@ -59,6 +59,11 @@ def main():
                     help="plan 1-4 projects at a time and think while moving (ADR-002 D2); --no-agenda is the m-003 loop")
     ap.add_argument("--walk-speed", type=float, default=5,
                     help="humanoid walk speed (Mesa default 16; 8 in ADR-002 D3b; 5, a person's walk, in ADR-003 O2)")
+    ap.add_argument("--sky-test-minutes", type=float, default=0,
+                    help="drop a stone from the sky near Godling this often, announced by a shadow 40 s before it "
+                         "lands (a stand-in for viewer events, to measure reactions; 0 = off)")
+    ap.add_argument("--guest-panel", type=int, default=0, metavar="PORT",
+                    help="also serve the guest panel on this port: call down sky powers yourself (0 = off)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
                     help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
@@ -84,10 +89,10 @@ def main():
     # Under WSL the Windows PATH leaks in (Windows npx hangs on Linux paths); children get Linux tools only.
     clean_env = {**os.environ, "PATH": ":".join([str(home / ".local/bin"), str(home / ".cargo/bin")] + [
         p for p in os.environ.get("PATH", "").split(":") if p and not p.startswith("/mnt/")])}
-    server = hindsight = None
+    server = hindsight = panel = None
     try:
         if not args.attach:
-            world_dir = prepare_world(args.world, run, args.walk_speed)
+            world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes)
             server = subprocess.Popen(
                 [str(home / ".cargo/bin/clawblox"), "run", str(world_dir), "--port", str(args.port),
                  "--record", "--record-dir", str(run / "recordings")],
@@ -102,6 +107,7 @@ def main():
                         walk_speed=args.walk_speed)
         attention = Attention(memory, busy=lambda: skills.busy, log=log)
         skills.on_step = attention.on_step
+        skills.next_glance = attention.take_glance
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(server, hindsight)
@@ -112,10 +118,16 @@ def main():
     structures = StructureLog(run / "mind/structures.jsonl", log)
     try:
         world.wait_until_up()
+        spectator = None
         if server:
             spectator = wait_for_line(run / "world.log", r"Spectator frontend: (\S+)", 15)
             print(f"World is up. Watch it here: {spectator or f'http://localhost:{args.port}/'}", flush=True)
         world.join()
+        if args.guest_panel:
+            panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
+                                      "--world", f"http://localhost:{args.port}", "--port", str(args.guest_panel),
+                                      "--run-dir", str(run)] + (["--view", spectator] if spectator else []),
+                                     env=clean_env)
         time.sleep(3)  # the world drops its starting blocks from the sky: let them land before the first look
         print(f"{args.name} joined. Model: {args.model}, memory: {args.memory}, agenda: {args.agenda}, "
               f"walk speed: {args.walk_speed:g}. Logs: {run / 'mind/log.jsonl'}. Ctrl+C to stop.\n", flush=True)
@@ -134,7 +146,7 @@ def main():
             structures.record(world.observe())  # what stands at the end, while the world still runs
         except Exception as err:
             log(kind="error", message=f"structures at the end: {err!r}"[:200])
-        stop_children(server, hindsight)
+        stop_children(panel, server, hindsight)
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,
@@ -222,7 +234,8 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
                 plan_in_background(snap)
             waited = time.time()
             future, state["future"] = state["future"], None
-            thought = future.result()  # no idle behaviours: the body simply waits for its mind
+            watch_while_thinking(future, world, attention, skills)
+            thought = future.result()
             gap = time.time() - waited
             stats["waited_for_mind_s"] += gap
             log(kind="wait_for_mind", seconds=round(gap, 2))
@@ -274,6 +287,20 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
             survive(cycle)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+
+
+def watch_while_thinking(future, world, attention, skills):
+    """No idle behaviours: the body waits for its mind. But it keeps watching, so what happens meanwhile still
+    gets a glance, and the next plan hears of it."""
+    while not future.done():
+        try:
+            attention.on_step(world.observe())
+        except Interrupted:
+            pass  # nothing to interrupt while standing; the event waits for the next plan
+        except WorldError:
+            pass  # the plan on its way is worth more than one missed look
+        skills.glance()
+        time.sleep(0.25)
 
 
 class StructureLog:
@@ -378,8 +405,9 @@ def maybe_sleep(mind, memory, snap, args, log):
 
 # ---- setup ------------------------------------------------------------------------------
 
-def prepare_world(world, run, walk_speed):
-    """Run a frozen copy of the world in the run folder, with only WalkSpeed changed (Mesa walks at 16).
+def prepare_world(world, run, walk_speed, sky_test_minutes=0):
+    """Run a frozen copy of the world in the run folder, with only WalkSpeed (Mesa walks at 16) and the sky test
+    timer changed.
 
     The copy also records which version of the world a run used."""
     copy = run / "world"
@@ -387,12 +415,18 @@ def prepare_world(world, run, walk_speed):
         shutil.copytree(world, copy, ignore=shutil.ignore_patterns(".clawblox", ".build.lock", "node_modules"))
     script = copy / "main.lua"
     src = script.read_text()
-    wanted = f"humanoid.WalkSpeed = {walk_speed:g}"
-    if wanted not in src:
-        if src.count("humanoid.WalkSpeed = 16") != 1:
-            raise SystemExit("could not find Mesa's 'humanoid.WalkSpeed = 16' to change the walking pace")
-        script.write_text(src.replace("humanoid.WalkSpeed = 16", wanted))
+    src = _set_line(src, "humanoid.WalkSpeed = ", "16", f"{walk_speed:g}", "the walking pace")
+    src = _set_line(src, "local SKY_TEST_EVERY = ", "0", f"{sky_test_minutes * 60:g}", "the sky test timer")
+    script.write_text(src)
     return copy
+
+
+def _set_line(src, prefix, default, value, what):
+    if prefix + value in src:
+        return src
+    if src.count(prefix + default) != 1:
+        raise SystemExit(f"could not find '{prefix}{default}' in the world script to set {what}")
+    return src.replace(prefix + default, prefix + value)
 
 
 def make_memory(args, run, log):
@@ -448,6 +482,11 @@ def print_entry(entry):
               + (f", planned while doing '{entry['assumed']}'" if entry.get("assumed") else "") + ")", flush=True)
         for i, p in enumerate(entry["projects"], 1):
             print(f"[{stamp}]   plan {i}: {p['intention'] or p['goal']} ({len(p['steps'])} steps)", flush=True)
+        if entry.get("needs"):
+            print(f"[{stamp}] NEEDS  {entry['needs']}", flush=True)
+    elif kind == "glance":
+        print(f"[{stamp}] GLANCE {'turned ' + str(entry['degrees']) + '° towards' if entry['turned'] else 'saw'}: "
+              f"{entry['text']}", flush=True)
     elif kind == "project" and entry["phase"] == "start":
         print(f"[{stamp}] INTEND {entry['intention'] or entry['goal']}", flush=True)
     elif kind == "project":
