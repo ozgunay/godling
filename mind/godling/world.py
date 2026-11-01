@@ -30,8 +30,9 @@ FASTEN_SECONDS = 2.5  # main.lua FASTEN_COOLDOWN
 LADDER_HEIGHT = 3 * CUBE  # main.lua LADDER_SIZE.Y
 STEP = 0.45  # the highest step the legs take without a ladder
 MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Brick_", "Log_", "Boulder_", "Ring_", "Rock_",
-                 "Hammer_", "Axe_", "Ladder_")
-TOOL_KINDS = ("Hammer_", "Axe_")
+                 "Hammer_", "Axe_", "Ladder_", "Spear_", "Coconut_", "Catch_", "Volleyball")
+TOOL_KINDS = ("Hammer_", "Axe_", "Spear_")
+FOOD_KINDS = ("Coconut_", "Catch_")  # what can be eaten (main.lua FOOD)
 BUILDING_KINDS = ("Log_", "Boulder_")  # building pieces besides blocks
 # What "nearest_free" can look for: building pieces by kind (stones are cubes; bricks are long stones).
 PIECE_KINDS = {"cube": lambda e: e.is_cube, "stone": lambda e: e.name.startswith("Stone_"),
@@ -105,6 +106,46 @@ class Entity:
                 and abs(z - self.pos[2]) <= self.size[2] / 2 + margin)
 
 
+INDEX_CELL = 5.0  # bucket size for "what covers this point" lookups
+
+
+class BoxIndex:
+    """Footprint boxes (x, z, half x, half z, ...) bucketed on a coarse grid. The castaway island is hundreds of
+    terrain parts, and routing asks what covers a point thousands of times per walk (ADR-007)."""
+
+    def __init__(self, boxes):
+        self.buckets = {}
+        for box in boxes:
+            cx, cz, hx, hz = box[:4]
+            for i in range(math.floor((cx - hx) / INDEX_CELL), math.floor((cx + hx) / INDEX_CELL) + 1):
+                for k in range(math.floor((cz - hz) / INDEX_CELL), math.floor((cz + hz) / INDEX_CELL) + 1):
+                    self.buckets.setdefault((i, k), []).append(box)
+
+    def at(self, x, z, strict=False):
+        """The boxes whose footprint contains (x, z); `strict` leaves out those it only touches."""
+        bucket = self.buckets.get((math.floor(x / INDEX_CELL), math.floor(z / INDEX_CELL)), ())
+        if strict:
+            return [b for b in bucket if abs(x - b[0]) < b[2] and abs(z - b[1]) < b[3]]
+        return [b for b in bucket if abs(x - b[0]) <= b[2] and abs(z - b[1]) <= b[3]]
+
+
+class Feature:
+    """Terrain parts that make one landmark, such as the Peak's terraces, taken together."""
+
+    def __init__(self, name, parts):
+        lo = [min(p.pos[k] - p.size[k] / 2 for p in parts) for k in range(3)]
+        hi = [max(p.pos[k] + p.size[k] / 2 for p in parts) for k in range(3)]
+        self.name = name
+        self.parts = parts
+        self.size = tuple(hi[k] - lo[k] for k in range(3))
+        self.pos = tuple((hi[k] + lo[k]) / 2 for k in range(3))
+        self.top = hi[1]
+        self.role = parts[0].role
+
+    def footprint_contains(self, x, z, margin=0.0):
+        return any(p.footprint_contains(x, z, margin) for p in self.parts)
+
+
 class Snapshot:
     """One observation, with the lookups the skills and the mind need."""
 
@@ -115,11 +156,18 @@ class Snapshot:
         self.me = tuple(player.get("position") or (0, 0, 0))
         attrs = player.get("attributes") or {}
         self.last_result = attrs.get("LastActionResult", "")
+        self.hunger = attrs.get("Hunger")  # 100 full, 0 starving (main.lua SURVIVAL)
+        self.health = attrs.get("Health")
+        self.faints = attrs.get("Faints") or 0
         self.others = [(p.get("name", "?"), tuple(p.get("position", (0, 0, 0))))
                        for p in raw.get("other_players") or []]
         ents = ((raw.get("world") or {}).get("entities")) or []
         self.entities = {e.name: e for e in (Entity(r) for r in ents)}
         self.events = raw.get("events") or []
+        self._terrain = self._landmarks = self._index = None  # worked out once per snapshot, on first use
+        clock = self.entities.get("Clock")
+        self.time_of_day = clock.attrs.get("TimeOfDay") if clock else None  # hours, 0-24 (main.lua day and night)
+        self._held, self._held_known = None, False
 
     @property
     def has_world(self):
@@ -133,23 +181,47 @@ class Snapshot:
 
     def terrain(self):
         """Fixed ground the body stands on or must go around. A tree counts as terrain far too high to climb, so
-        routes keep clear of its trunk the way they keep clear of a mesa's walls."""
-        return [e for e in self.entities.values() if e.role in ("Mesa", "Ground", "Tree", "Quarry")]
+        routes keep clear of its trunk the way they keep clear of a mesa's walls; so does a stump, half a block high."""
+        if self._terrain is None:
+            self._terrain = [e for e in self.entities.values()
+                             if e.role in ("Mesa", "Ground", "Tree", "Quarry", "Stump", "Wreck")]
+        return self._terrain
 
     def landmarks(self):
-        return [e for e in self.entities.values() if e.role in ("Mesa", "Tree", "Quarry")]
+        """What the island has to see and go to. Terrain parts of one feature (the Peak's terraces) count as one."""
+        if self._landmarks is None:
+            single, groups = [], {}
+            for e in self.entities.values():
+                if e.role not in ("Mesa", "Tree", "Quarry", "Wreck"):
+                    continue
+                feature = e.attrs.get("Feature")
+                if feature:
+                    groups.setdefault(feature, []).append(e)
+                else:
+                    single.append(e)
+            self._landmarks = [Feature(name, parts) for name, parts in sorted(groups.items())] + single
+        return self._landmarks
 
     def held(self):
         """The object floating above our head, if any (holding is implicit in Mesa)."""
-        anchor = (self.me[0], self.me[1] + HOLD_OFFSET_Y, self.me[2])
-        for e in self.movables():
-            if math.dist(e.pos, anchor) < 0.8:
-                return e
-        return None
+        if not self._held_known:
+            anchor = (self.me[0], self.me[1] + HOLD_OFFSET_Y, self.me[2])
+            self._held = next((e for e in self.movables() if math.dist(e.pos, anchor) < 0.8), None)
+            self._held_known = True
+        return self._held
+
+    def _standable_index(self):
+        if self._index is None:
+            held = self.held()
+            terrain = self.terrain()
+            pieces = [m for m in self.movables() if m is not held and not m.name.startswith("Ladder_")]
+            self._index = BoxIndex([(e.pos[0], e.pos[2], e.size[0] / 2, e.size[2] / 2, e.top, e, is_terrain)
+                                    for group, is_terrain in ((terrain, True), (pieces, False)) for e in group])
+        return self._index
 
     def ground_top(self, x, z):
         """Height of the walkable surface at (x, z): the highest terrain part covering it."""
-        tops = [t.top for t in self.terrain() if t.footprint_contains(x, z)]
+        tops = [b[4] for b in self._standable_index().at(x, z) if b[6]]
         return max(tops) if tops else None  # None means open ocean
 
     def standables(self, below=None):
@@ -163,10 +235,11 @@ class Snapshot:
     def surface(self, x, z, below=None):
         """The highest thing to stand on at (x, z), as (top, entity); (None, None) over open sea."""
         best = (None, None)
-        if self.ground_top(x, z) is None:
+        covering = self._standable_index().at(x, z)
+        if not any(b[6] for b in covering):  # no terrain under it: open sea
             return best
-        for cx, cz, hx, hz, top, e in self.standables(below):
-            if abs(x - cx) <= hx and abs(z - cz) <= hz and (best[0] is None or top > best[0]):
+        for _, _, _, _, top, e, _ in covering:
+            if (below is None or top <= below) and (best[0] is None or top > best[0]):
                 best = (top, e)
         return best
 

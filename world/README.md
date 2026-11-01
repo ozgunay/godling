@@ -3,6 +3,11 @@
 A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `8be90a0`), changed for Godling. Runs copy this folder into their run directory (`run_godling.py`, `prepare_world`). The only per-run change is the walk speed.
 
 ## Changes from upstream
+- **The castaway island (your wish, after Cast Away; ADR-005).** The upstream island and its mesas are replaced.
+  - **Ground.** A sand beach all round, widest in the south, lies 0.1 below the grass inland (`Surface` "Sand" or "Grass" on `Ground` parts). There is a palm islet across a strait in the south-east.
+  - **The peak.** A rocky peak in the north-west: `PeakBase` 5, `PeakShoulder` 10, `PeakSummit` 15 and `PeakCrag` 20, each one ladder-climb apart. Low rocks are `WestSpur`, `FlatRock` and `Ridge`, all `Mesa` with `Surface` "Rock".
+  - **Quarry and trees.** The quarry is cut into the peak's south foot. Eight trees form a forest in the east. Ten coconut palms (`Palm_1`…`Palm_10`, `palm.glb`, quarter-turned to lean seaward) line the beaches and the islet; felled, they give logs.
+  - **Spawn.** Godling washes up on the west beach beside `Raft`, a busted yellow life raft (`RenderRole` "Wreck"; the body routes round it).
 - **Minecraft-scale blocks on a grid (ADR-005).**
   - `BLOCK_SIZE` is 2.5 (upstream 0.75): half the 5-tall body.
   - Placed blocks and logs snap to a grid of 2.5 cells (x and z).
@@ -22,25 +27,31 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Stones are heavy and grippy (density 2.6, friction 1.0). The quarry never runs out.
   - **Trees.** `Axe_1` lies by the grove.
     - `CHOPS_PER_TREE` (4) strikes with the axe fell a tree into two `Log_n` beams (light wood), lying along the fall. A stump is left.
-    - Logs are square beams. Round ones rolled off what they were set on.
+    - Logs are 7.5 x 2.5 x 2.5: square beams three blocks long and one thick, so they fit the cube grid. Round ones rolled off what they were set on.
+  - **Settling (ADR-005).** A block, stone or log that has come to rest lying on a face is squared into its grid cell and held there (anchored, attribute `Settled`), so the body cannot shove it. Lifting a piece wakes what rested on it; that falls until it settles again.
+  - **Touching is not overlap.** The placement probe is 0.1 smaller than the piece, because grid neighbours always touch.
     - The tree grows back after `TREE_REGROW_SECONDS` (600).
   - **Placing.** `Place` takes a rotation, as upstream. The body uses it to turn pieces a quarter round and to stand long pieces on end.
-  - **Fastening.** `Fasten {name}` holds a set-down piece in place, after a `FASTEN_COOLDOWN` (2.5 s) between fastenings.
-    - If the piece touches anything fixed (the ground, a mesa, or a piece already fastened in place), it is pinned there (`Anchored`).
-    - Otherwise it is welded to the loose pieces it touches (`WeldConstraint`, at most 6).
-    - It never welds to a fixed part. In the first night run, blocks welded to `GroundCenter` made the engine move the ground: the island sank 5 units and Godling fell into the sea.
-    - A fastened piece cannot be picked up. A hammer strike knocks it loose: unpinned, welds removed.
+  - **Fastening.** `Fasten {name}` fixes a set-down piece that touches something where it is (`Anchored`, `Fastened`), like mortar, after a `FASTEN_COOLDOWN` (2.5 s) between fastenings.
+    - Unlike a settled piece, a fastened one stays even when what it rests on is taken away.
+    - Nothing is welded. In the first night run, blocks welded to `GroundCenter` made the engine move the ground: the island sank 5 units and Godling fell into the sea.
+    - A fastened piece cannot be picked up. A hammer strike knocks it loose; it then settles, or falls if nothing holds it up.
   - **Ladder.** `Ladder_1` (1.0 x 4.5 x 0.3) is carried lying flat.
     - Set down, it always stands upright (only its facing turns) and is anchored.
     - `Climb {name}` from its foot moves the body up and steps it off onto the highest surface the ladder reaches, on either side. From up on something along its height, `Climb` moves the body back down.
     - The engine has no climbing, so the world moves the anchored root part, and the player attribute `Climbing` is true meanwhile.
   - **Boulders.** `Boulder_1` and `Boulder_2`: balls 1.6 across, stone-heavy. Carrying one halves the walking pace (`BaseWalkSpeed` / 2).
   - **Keepsakes.** Tools, the ladder and the boulders turn up again at home if lost in the sea.
-  - **Spawning.** New stones and logs appear at a free spot (`freeSpawn`), along the face or higher up so they drop onto the pile. They never appear inside another piece.
+  - **Stone yard (ADR-005).** A stone breaks off onto the free ground cell nearest the struck face, in the ring of cells around the quarry's foot (24 cells), never onto the body.
+    - When every yard cell holds a stone, `Strike` answers `StrikeYardFull` and the blow is not counted. Strewn stones once boxed Godling in (night run n2).
+    - `Hammer_1` lies just outside the ring, at (16, -34).
+  - **Spawning.** New logs appear at a free spot (`freeSpawn`), along the fall or higher up. They never appear inside another piece.
   - **Sky supply.** The cube supply from the sky (ADR-003 O7) is off (`SUPPLY_FROM_SKY = false`). The quarry replaces it; the code stays for viewer drops.
 - **Godling's look (art session; build scripts and previews in `art/`, details in `art/README.md`).**
   - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle, Walk, PickUp, Strike and Climb clips.
-  - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (1.4 x 7–9 x 1.4) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
+  - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (2.5 x 20 x 2.5, on grid cells about 10 apart) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
+    - A felled tree falls along the grid into two logs side by side, in the cells next to its stump (2.5 x 1.25 x 2.5, `RenderRole` "Stump"). The body walks round stumps as terrain.
+  - **Terrain on the block grid (ADR-005).** Mesa and quarry heights are whole blocks (2.5, 5, 7.5, 10, 20), and their faces lie on cell boundaries, so blocks set against them sit flush.
     - The mind treats trees and the quarry as terrain too high to climb (`godling/world.py`).
   - The `ART` table in `main.lua` maps objects to `assets/*.glb`: hammer, quarry, stone, brick, axe, log and ladder. Boulders have no model yet.
   - Player attributes for the renderer, with `LastActionResult` unchanged:

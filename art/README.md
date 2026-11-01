@@ -6,9 +6,19 @@ again.
 | Model | File | Built by |
 |---|---|---|
 | Godling, the mascot (clips: Idle, Walk, PickUp, Strike, Climb) | `world/assets/godling.glb` | `build_godling.py` |
-| Tree, stump, log, axe | `world/assets/tree.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
+| Tree, palm, stump, log, axe | `world/assets/tree.glb`, `palm.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
 | Quarrying: hammer, quarry outcrop, stone cube, stone brick, boulder | `hammer.glb`, `quarry.glb`, `stone.glb`, `brick.glb`, `boulder.glb` | `build_props.py` |
 | Ladder | `world/assets/ladder.glb` | `build_props.py` |
+| Castaway: raft, coconut, spear, fish (raw and cooked), volleyball | `raft.glb`, `coconut.glb`, `spear.glb`, `fish.glb`, `fish_cooked.glb`, `volleyball.glb` | `build_props.py` |
+
+The survival pieces, with the way each one lies in its part:
+- **Coconut:** a brown husk with three faint ridges, mottled with vertex colours, for a 0.9 ball part.
+- **Spear:** an eight-sided whittled shaft that wanders a little, with knots and a paler carved point. It is 4.5 long along the model's Z, with the point at the part's local −Z (its LookVector), like the axe and hammer heads.
+- **Fish:** a chubby reef fish, dark blue back to silver belly in vertex colours, with blue fins and eyes.
+  - It lies on its side like its 1.3 × 0.35 × 0.5 part: head at +X, back towards local −Z.
+  - A swimming fish rolls its part 90° about X, which puts the back up.
+  - `fish_cooked.glb` is the same fish browned, with grill marks.
+- **Volleyball:** a plain white ball with the classic crossing panels and soft seam grooves, for a 1.1 ball part. It has no face and no brand mark; Godling is to name it itself.
 
 ```powershell
 $blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
@@ -54,20 +64,56 @@ Being a god, it levitates what it carries above its head, which is how the world
 - The arms are 0.65× an adult's. At 0.5× a raised hand stayed hidden under the big head.
 
 ## Props
-- **Tree:** about 3.6 m, trunk with a root flare, and a canopy of five soft green blobs.
-- **Log:** lies along X, six times as long as thick (its part is a 3.0 × 0.5 × 0.5 cylinder), with bark sides and cut ends showing growth rings.
+- **Tree:** a trunk with a root flare and a canopy of five soft green blobs.
+  - The clear trunk is about 60% of the height, and the trunk is about a ninth as thick as the tree is tall.
+  - So a tree part 22–26 tall and 2.5 wide holds the two 7.5 × 2.5 logs it is felled into (Minecraft scale).
+- **Palm:** a coconut palm for the same 2.5 × 20 × 2.5 part as the trees. The style reference is Cast Away's island, as the user asked; it copies no artwork.
+  - A slim, faintly ringed, grey-brown trunk that leans out (+X) and curves back up near the top.
+  - A tuft of long arching fronds and coconuts.
+  - The trunk's foot is at the part's centre: see "fit by the whole outline" below. Rotating the part turns the lean, so a beach cluster can lean every which way.
+- **Log:** a squared timber beam along X, exactly 3 : 1 : 1 like its 7.5 × 2.5 × 2.5 block part (ADR-005: a full block thick and three long, since round logs rolled off what they were set on). It has four alike hewn faces, since a beam stood on end shows them all, rough bark left along the corners, and growth rings on both square ends.
 - **Stump:** what a felled tree leaves, 1.4 across its roots and 0.6 tall, with a ringed cut top.
 - **Axe:** lies on its side like its 0.4 × 0.4 × 1.0 part, handle along the model's Z and blade up. It has a wooden handle, coral grip, and a steel head with a bright edge.
 - **Boulder:** a heavy, lumpy rock with a few worn flat facets, round enough for its 1.6 ball part.
 - **Hammer:** a stonemason's sledge lying on its side, 1.2 long (the model's Z), with a dark iron head and bright striking faces.
 - **Quarry:** a rocky outcrop, 6 × 3.5 × 5, with pale freshly cut faces and a bench, and rubble and broken chunks at its foot.
 - **Stone and brick:** rough-cut granite, 0.75 cube and 1.5 × 0.75 × 0.75 (long along X), chiselled with dents only, so they never poke out of their part.
+  - The granite is mottled with vertex colours (`COLOR_0`), soft patches blended across each face, and is fully matte.
+  - A uniform pale blue-grey looked like frosted glass in game, a "ghost box". The faces were never flipped or transparent.
+- **Raft:** the busted yellow life raft Godling starts beside, after the castaway film the user referenced. It fits its {5, 1.25, 3.75} part exactly: the outline is pinned to the part's box.
+  - An inflatable ring, round at one end and collapsed flat and wrinkled at the other.
+  - A sagging floor, a canopy fallen in over the inflated end, and a slack grab line.
 - **Ladder:** two rails and 8 rungs along X, coral caps, standing upright. Its proportions are those of the 1.5 × 7.5 × 0.4 part (Minecraft scale, ADR-005).
 
 At Minecraft scale (ADR-005) every part grew evenly except the ladder's, so only the ladder was rebuilt. `brick.glb` is no longer used by the world.
 
 The world renderer fits each model to the *height* of the part carrying it (uniform scale) and centres it.
 So each model has to share its part's proportions and long axis; a part 3×8×3 makes an 8-unit tree.
+
+**Fit by the whole outline (`fit_bounds`).**
+- The runtime takes that height and centre from the model's *first mesh primitive* only, and a glTF mesh has one primitive per material.
+- Until this fix, models whose first material covered only part of them were drawn wrong in game:
+  - the axe about 5.2× too big and the hammer about 4.4×;
+  - the tree 1.44× too tall;
+  - the ladder centred on one rail.
+- Every prop now gets a first material, `bounds`, holding just two specks of triangles at the corners of its whole outline, too small to see.
+- For the tree and the palm, that outline is also made symmetric about the trunk's foot, so a leaning crown doesn't pull the trunk off its collider.
+- Godling uses its own controller in the renderer, which measures every part, so it needs none of this.
+
+**Triangle budget.**
+- Trees and palms are drawn many times a frame, shadows included, so keep them near 1.3k triangles each.
+- Blobs are 16 × 8 spheres by default, and small ones (coconuts, caps, roots, quarry pebbles) fewer.
+- Current counts, in triangles:
+
+| Model | Triangles |
+|---|---|
+| palm | 1,370 |
+| tree | 1,334 |
+| stump | 1,002 |
+| ladder | 1,050 |
+| raft | 3,150 |
+| quarry | 3,690 |
+| stone | 434 |
 
 The renderer uses filmic tone mapping, which darkens greys a lot. So the stone colours are set much lighter
 than they look right in these previews, otherwise they come out charcoal in the game. They were checked in
