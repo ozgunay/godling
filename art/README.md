@@ -32,7 +32,13 @@ Being a god, it levitates what it carries above its head, which is how the world
 - The Mixamo skeleton from `source/` (65 bones), shrunk to chibi proportions:
   - legs ×0.42, spine ×0.55, arms ×0.5;
   - bone directions and rolls are kept, so Mixamo clips still play.
-- Every body part is a rigid mesh riding one bone, like a toy. This is simple and robust, and needs no weight painting.
+- Every body part is rigid and moves with one bone, like a toy. This is simple and robust, and needs no weight painting.
+- The parts are joined into one mesh, each part fully weighted to its bone (`join_and_skin`). It moves exactly as before, but draws in one call per material (6) instead of one per part (23).
+
+**Budget** (it has to run in phone browsers): about 4.6k triangles, down from 52k.
+- Body parts are 16 × 10 spheres and limbs 12 × 8.
+- The head and screen are rounded boxes: a 4-segment bevel with hardened normals instead of an 8-segment bevel under level-2 subdivision.
+- At the size Godling is seen, the previews look the same as before.
 
 **Clips** (60 fps). The runtime model controller picks Walk and Idle by name:
 - **Walk:** `source/walking.fbx`, with its forward travel removed (the world moves the body). The bob and sway are kept and scaled to the shorter legs.
@@ -65,7 +71,11 @@ So each model has to share its part's proportions and long axis; a part 3×8×3 
 
 The renderer uses filmic tone mapping, which darkens greys a lot. So the stone colours are set much lighter
 than they look right in these previews, otherwise they come out charcoal in the game. They were checked in
-the game at the default camera.
+the game at the default camera. The sky renderer (ADR-006) keeps that light by day at the default sun, so
+these checks still hold.
+
+For phones, keep a prop to a few thousand triangles and a few materials. Each material in a model is one
+draw call per kind of prop, however many of that prop stand in the world.
 
 ## How the world uses them
 - **`world/main.lua`:**
@@ -73,7 +83,7 @@ the game at the default camera.
   - `noteReach` bumps the player's `Reaches` attribute on every pick-up and place.
   - Eight trees (`trees` table) are anchored parts, 1.4 wide and 7–9 tall, so they collide as their trunk only. They have `RenderRole = "Tree"` and `ModelUrl = asset://tree.glb`.
   - Cube deliveries keep clear of the trees.
-- **`world/renderer/src/index.js`:** Godling has its own model handling (`createCharacterController`):
+- **`world/renderer/src/models.js`:** Godling has its own model handling (`createCharacterController`). The props are drawn instanced, one draw call per mesh (`instances.js`).
   - it is sized from the bounds of all its parts (the runtime helper sizes a model by its first mesh only);
   - the walk is played at the body's real speed, so the feet don't slide;
   - PickUp plays in about 1.1 s whenever `Reaches` goes up.
