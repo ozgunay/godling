@@ -69,7 +69,12 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - The Ocean part only gives the sea level.
   - **Clouds** (`clouds.js`): Minecraft-style. A flat pixel layer on low, voxel puffs on medium and high.
   - **Drawing parts** (`instances.js`): all parts and static models are instanced, one draw call per kind of mesh.
+  - **The castaway island's looks** (set by the world script; read in `index.js`):
+    - `Ground` is drawn in the part's colour. With `Surface` "Sand" it is matte sand, where the sea draws its foam.
+    - `Mesa` with `Surface` "Rock" is grey volcanic stone in block-high strata, with a moss cap on every step. Other mesas keep the tan stripes.
+    - `Wreck` with no model is drawn as a deflated yellow life raft, from its part's size and colour. A `ModelUrl` (`raft.glb`) takes over when set.
   - **Models** (`models.js`): each loads once.
+    - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
     - Animated ones (Godling) get their own mixer. The clips follow the attributes above, and Walk plays at the body's real speed.
     - In a first-person capture, the body the camera sits in is hidden, so its own head no longer fills Godling's view.
   - **Terrain** (`terrain.js`): Clawblox voxel terrain, drawn as blocks, when the patched server sends it.
