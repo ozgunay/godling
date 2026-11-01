@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Blender backups
+*.blend1
+
+# Clawblox build state and renderer dependencies
+.clawblox/
+.build.lock
+node_modules/
+
+# Run output (runs live in ~/godling-runs; these only appear if a run points here)
+mind/log.jsonl
+mind/thinking.jsonl
+mind/structures.jsonl
+mind/terrain.json
+*.console
+
+# Secrets
+.env
+.env.*
+settings.json

@@ -1,0 +1,204 @@
+diff --git a/src/agent.rs b/src/agent.rs
+index 17354db..80cdf6b 100644
+--- a/src/agent.rs
++++ b/src/agent.rs
+@@ -1336,7 +1336,7 @@ fn write_claude_workspace_trust(_ctx: &AgentContext, layout: &SandboxLayout) ->
+ }
+ 
+ fn write_claude_sandbox_settings(ctx: &AgentContext) -> AgentResult<()> {
+-    let native_sandbox_enabled = env_value(ctx, "CLAWBLOX_CLAUDE_NATIVE_SANDBOX")
++    let native_sandbox_enabled = effective_env_value(ctx, "CLAWBLOX_CLAUDE_NATIVE_SANDBOX")
+         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+         .unwrap_or(true);
+     if !native_sandbox_enabled {
+diff --git a/src/agent_runner.rs b/src/agent_runner.rs
+index 3734403..ddb5d08 100644
+--- a/src/agent_runner.rs
++++ b/src/agent_runner.rs
+@@ -1456,6 +1456,109 @@ fn kill_tmux_target(tmux_session: &str, tmux_window: Option<&str>) {
+     let _ = command.status();
+ }
+ 
++/// Stop an agent like [`stop_agent`], then terminate every process its tmux pane had
++/// spawned. Processes that left the tmux session (`bwrap --new-session`, background jobs)
++/// would otherwise outlive the agent.
++pub fn stop_agent_and_descendants(options: AgentStopOptions) -> Result<StoppedAgent, String> {
++    let descendants = options
++        .tmux_session
++        .as_deref()
++        .map(|session| tmux_pane_descendants(session, options.tmux_window.as_deref()))
++        .unwrap_or_default();
++    let result = stop_agent(options);
++    terminate_processes(&descendants, Duration::from_secs(3));
++    result
++}
++
++fn tmux_pane_descendants(tmux_session: &str, tmux_window: Option<&str>) -> Vec<u32> {
++    let target = tmux_target(tmux_session, tmux_window);
++    let mut list_panes = Command::new("tmux");
++    list_panes.arg("list-panes");
++    if tmux_window.is_none() {
++        list_panes.arg("-s");
++    }
++    let Ok(panes) = list_panes.args(["-t", &target, "-F", "#{pane_pid}"]).output() else {
++        return Vec::new();
++    };
++    let mut stack: Vec<u32> = String::from_utf8_lossy(&panes.stdout)
++        .lines()
++        .filter_map(|line| line.trim().parse().ok())
++        .collect();
++    let Ok(ps) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "ppid="]).output() else {
++        return stack;
++    };
++    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
++    for line in String::from_utf8_lossy(&ps.stdout).lines() {
++        let mut fields = line.split_whitespace().filter_map(|field| field.parse::<u32>().ok());
++        if let (Some(pid), Some(ppid)) = (fields.next(), fields.next()) {
++            children.entry(ppid).or_default().push(pid);
++        }
++    }
++    let mut found = Vec::new();
++    while let Some(pid) = stack.pop() {
++        if found.contains(&pid) {
++            continue;
++        }
++        found.push(pid);
++        if let Some(kids) = children.get(&pid) {
++            stack.extend(kids.iter().copied());
++        }
++    }
++    found.extend(sandbox_namespace_members(&found));
++    found
++}
++
++/// Processes sharing a user namespace with any of `pids` other than our own: with
++/// `--sandbox`, that is every process inside the agent's bubblewrap, orphans included.
++#[cfg(target_os = "linux")]
++fn sandbox_namespace_members(pids: &[u32]) -> Vec<u32> {
++    let user_ns = |pid: &str| std::fs::read_link(format!("/proc/{pid}/ns/user")).ok();
++    let own = user_ns("self");
++    let sandboxes: Vec<_> = pids
++        .iter()
++        .filter_map(|pid| user_ns(&pid.to_string()))
++        .filter(|ns| Some(ns) != own.as_ref())
++        .collect();
++    if sandboxes.is_empty() {
++        return Vec::new();
++    }
++    let Ok(entries) = std::fs::read_dir("/proc") else {
++        return Vec::new();
++    };
++    entries
++        .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse::<u32>().ok())
++        .filter(|pid| !pids.contains(pid))
++        .filter(|pid| user_ns(&pid.to_string()).is_some_and(|ns| sandboxes.contains(&ns)))
++        .collect()
++}
++
++#[cfg(not(target_os = "linux"))]
++fn sandbox_namespace_members(_pids: &[u32]) -> Vec<u32> {
++    Vec::new()
++}
++
++#[cfg(unix)]
++fn terminate_processes(pids: &[u32], grace: Duration) {
++    let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) == 0 };
++    for &pid in pids.iter().rev() {
++        if alive(pid) {
++            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
++        }
++    }
++    let deadline = Instant::now() + grace;
++    while Instant::now() < deadline && pids.iter().any(|&pid| alive(pid)) {
++        std::thread::sleep(Duration::from_millis(100));
++    }
++    for &pid in pids {
++        if alive(pid) {
++            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
++        }
++    }
++}
++
++#[cfg(not(unix))]
++fn terminate_processes(_pids: &[u32], _grace: Duration) {}
++
+ #[cfg(test)]
+ fn write_command_file(path: &Path, shell_command: &str) -> std::io::Result<()> {
+     if let Some(parent) = path.parent() {
+diff --git a/src/bin/cli.rs b/src/bin/cli.rs
+index f0e2b7d..70c4f91 100644
+--- a/src/bin/cli.rs
++++ b/src/bin/cli.rs
+@@ -42,7 +42,10 @@ use include_dir::{include_dir, Dir};
+ use tower_http::services::ServeDir;
+ 
+ use clawblox::{
+-    agent_runner::{start_agent_tmux_for_local_world, AgentRunnerOptions},
++    agent_runner::{
++        start_agent_tmux_for_local_world, stop_agent_and_descendants, AgentRunnerOptions,
++        AgentStopOptions,
++    },
+     capture::{CaptureAttach, CaptureManager},
+     config::{PhysicsConfig, SpeechConfig, SpeechMode},
+     db,
+@@ -2460,12 +2463,16 @@ fn run_game(
+                 std::process::exit(1);
+             });
+ 
++        // Filled once the agent is up, so shutdown can stop it and everything it spawned.
++        let agent_to_stop: Arc<Mutex<Option<AgentStopOptions>>> = Arc::new(Mutex::new(None));
+         if let Some(agent_options) = agent_options.clone() {
+             let agent_world_dir = path.clone();
+             let agent_base_path = base_path.clone();
+             let agent_prompt = agent_skill_md.clone();
++            let agent_to_stop = agent_to_stop.clone();
+             tokio::spawn(async move {
+                 tokio::time::sleep(Duration::from_millis(200)).await;
++                let stop_template = agent_options.clone();
+                 match start_agent_tmux_for_local_world(
+                     &agent_world_dir,
+                     port,
+@@ -2479,6 +2486,25 @@ fn run_game(
+                         println!("Agent dir: {}", started.agent_dir.display());
+                         println!("Agent command: {}", started.command_file.display());
+                         println!("Agent events: {}", started.events_file.display());
++                        if let Ok(mut slot) = agent_to_stop.lock() {
++                            *slot = Some(AgentStopOptions {
++                                kind: started.kind.to_string(),
++                                name: started.name.clone(),
++                                binary: None,
++                                agent_dir: started.agent_dir.clone(),
++                                model: stop_template.model.unwrap_or_default(),
++                                permission_mode: stop_template.permission_mode,
++                                auto_continue_prompt: String::new(),
++                                tmux_session: Some(started.tmux_session.clone()),
++                                tmux_window: started.tmux_window.clone(),
++                                env: Vec::new(),
++                                extra_args: Vec::new(),
++                                sandbox: stop_template.sandbox,
++                                sandbox_config: stop_template.sandbox_config,
++                                bare: false,
++                                grace_seconds: 5,
++                            });
++                        }
+                     }
+                     Err(err) => {
+                         eprintln!("Error: {err}");
+@@ -2500,6 +2526,17 @@ fn run_game(
+                 eprintln!("Server error: {}", e);
+             });
+ 
++        let pending_agent = agent_to_stop.lock().ok().and_then(|mut slot| slot.take());
++        if let Some(stop_options) = pending_agent {
++            eprintln!("Stopping agent '{}'...", stop_options.name);
++            match tokio::task::spawn_blocking(move || stop_agent_and_descendants(stop_options)).await
++            {
++                Ok(Ok(_)) => eprintln!("Agent stopped."),
++                Ok(Err(err)) => eprintln!("Warning: failed to stop agent: {err}"),
++                Err(err) => eprintln!("Warning: agent stop task failed: {err}"),
++            }
++        }
++
+         // Finalize recording on shutdown
+         if let Some(shutdown_tx) = recording_shutdown_tx {
+             let _ = shutdown_tx.send(true);

@@ -1,0 +1,8 @@
+# Everything runs in WSL: keep LF on every checkout, even with Windows' core.autocrlf.
+* text=auto eol=lf
+
+*.glb binary
+*.fbx binary
+*.blend binary
+*.png binary
+*.jpg binary
