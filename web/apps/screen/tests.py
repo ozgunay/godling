@@ -168,6 +168,32 @@ class ScreenTests(TestCase):
         tasks.call_power(answer["pending"])  # the worker comes round at last: it calls nothing
         self.assertEqual([c for c in self.calls if c[1] == "/api/power"], [])
 
+    def test_powers_nobody_takes_are_refunded_without_the_viewer_looking(self):
+        """The reviewer's case: the page closed (or its answer was lost); the server gives the call up on its own."""
+        from django.conf import settings
+
+        user = self.viewer(credit=50)
+        with mock.patch.object(tasks.call_power, "delay"):  # queued, and its message lost
+            self.post("/api/power", {"power": "Stone"})
+        self.client.logout()
+        tasks.expire_stale_powers()
+        self.assertEqual(PowerCall.objects.get().status, PowerCall.QUEUED)  # not stale yet: it may still go
+        PowerCall.objects.update(created=timezone.now() - timedelta(minutes=5))
+        tasks.expire_stale_powers()
+        self.assertEqual(PowerCall.objects.get().status, PowerCall.EXPIRED)
+        self.assertEqual(credits.balance_of(user), 50)
+        self.assertEqual(settings.CELERY_BEAT_SCHEDULE["expire-stale-powers"]["task"], tasks.expire_stale_powers.name)
+
+    def test_a_late_worker_gives_up_the_call_it_skips(self):
+        user = self.viewer(credit=50)
+        with mock.patch.object(tasks.call_power, "delay"):
+            pending = self.post("/api/power", {"power": "Stone"}).json()["pending"]
+        PowerCall.objects.update(created=timezone.now() - timedelta(minutes=5))
+        tasks.call_power(pending)
+        self.assertEqual(PowerCall.objects.get().status, PowerCall.EXPIRED)
+        self.assertEqual(credits.balance_of(user), 50)
+        self.assertEqual([c for c in self.calls if c[1] == "/api/power"], [])
+
     def test_the_worker_settles_a_queued_power(self):
         self.viewer(credit=50)
         with mock.patch.object(tasks.call_power, "delay"):

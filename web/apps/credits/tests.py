@@ -115,6 +115,7 @@ class StripeTests(TestCase):
         event = {"type": "checkout.session.completed", "data": {"object": {"id": "cs_test_1", "payment_status": "paid"}}}
         self.assertEqual(self.webhook(event).status_code, 200)
         self.assertEqual(self.webhook(event).status_code, 200)  # Stripe retries: still credited once
+        self.assertEqual(self.webhook({**event, "id": "evt_other"}).status_code, 200)  # even as another event
         self.assertEqual(services.balance_of(self.user), 100)
 
     def test_an_unpaid_or_expired_checkout_credits_nothing(self):
@@ -137,14 +138,25 @@ class StripeTests(TestCase):
         self.assertContains(page, "100 credits are in your purse")
         self.assertEqual(services.balance_of(self.user), 100)
 
+    events = 0
+
+    def event(self, kind, thing, event_id=None):
+        """A Stripe event as the webhook receives it, each with its own id unless one is given (a redelivery)."""
+        StripeTests.events += 1
+        return self.webhook({"id": event_id or f"evt_{StripeTests.events}", "type": kind, "data": {"object": thing}})
+
+    def completed(self, event_id=None):
+        return self.event("checkout.session.completed",
+                          {"id": "cs_test_1", "payment_status": "paid", "payment_intent": "pi_1"}, event_id)
+
     def paid(self):
         self.buy()
-        self.webhook({"type": "checkout.session.completed",
-                      "data": {"object": {"id": "cs_test_1", "payment_status": "paid", "payment_intent": "pi_1"}}})
+        self.completed()
         return Payment.objects.get()
 
-    def charge(self, kind, **fields):
-        return self.webhook({"type": kind, "data": {"object": {"payment_intent": "pi_1", **fields}}})
+    def charge(self, kind, event_id=None, **fields):
+        thing = {"payment_intent": "pi_1", **({"id": "dp_1"} if kind.startswith("charge.dispute.") else {}), **fields}
+        return self.event(kind, thing, event_id)
 
     def test_a_refund_takes_its_share_of_the_credits_back(self):
         payment = self.paid()
@@ -179,9 +191,70 @@ class StripeTests(TestCase):
         self.charge("charge.dispute.closed", status="won")
         self.assertEqual(services.balance_of(self.user), 100)
         self.assertEqual(Payment.objects.get().status, Payment.PAID)
-        self.charge("charge.dispute.created", status="needs_response")
-        self.charge("charge.dispute.closed", status="lost")
+        self.charge("charge.dispute.created", status="needs_response", id="dp_2")  # another dispute, later
+        self.charge("charge.dispute.closed", status="lost", id="dp_2")
         self.assertEqual(services.balance_of(self.user), 0)
+
+    def test_a_repeated_or_late_dispute_event_never_reopens_a_decided_dispute(self):
+        """Stripe may send an event again, or out of order (the reviewer's 100 → 0 → 100 → 0)."""
+        self.paid()
+        self.charge("charge.dispute.created", event_id="evt_dp_created", status="needs_response")
+        self.charge("charge.dispute.closed", status="won")
+        self.charge("charge.dispute.created", event_id="evt_dp_created", status="needs_response")  # redelivered
+        self.charge("charge.dispute.updated", status="under_review")  # a late update about the same dispute
+        self.assertEqual(services.balance_of(self.user), 100)
+        self.assertEqual(Payment.objects.get().status, Payment.PAID)
+
+    def test_a_close_that_arrives_before_its_dispute_holds(self):
+        self.paid()
+        self.charge("charge.dispute.closed", status="won")
+        self.charge("charge.dispute.created", status="needs_response")
+        self.assertEqual(services.balance_of(self.user), 100)
+
+    def test_a_refund_that_arrives_before_the_checkout_is_kept(self):
+        """The reviewer's case: a full refund first, the checkout's own event after, and no spendable credits."""
+        self.buy()
+        listed = SimpleNamespace(data=[SimpleNamespace(id="cs_test_1")])
+        with mock.patch("stripe.checkout.Session.list", return_value=listed):
+            self.assertEqual(self.charge("charge.refunded", amount=500, amount_refunded=500).status_code, 200)
+        self.assertEqual(services.balance_of(self.user), 0)
+        self.completed()
+        payment = Payment.objects.get()
+        self.assertEqual((services.balance_of(self.user), payment.status, payment.granted), (0, Payment.REFUNDED, 0))
+
+    def test_a_partly_refunded_checkout_reported_late_grants_the_rest(self):
+        self.buy()
+        listed = SimpleNamespace(data=[SimpleNamespace(id="cs_test_1")])
+        with mock.patch("stripe.checkout.Session.list", return_value=listed):
+            self.charge("charge.refunded", amount=500, amount_refunded=250)
+        self.completed()
+        self.assertEqual(services.balance_of(self.user), 50)
+
+    def test_an_event_delivered_twice_is_applied_once(self):
+        self.paid()
+        services.spend(self.user, 30, "Meteor")
+        self.charge("charge.refunded", event_id="evt_refund", amount=500, amount_refunded=100)
+        self.charge("charge.refunded", event_id="evt_refund", amount=500, amount_refunded=100)
+        self.assertEqual(services.balance_of(self.user), 50)
+        self.assertEqual(Entry.objects.filter(user=self.user, kind=Entry.CLAWBACK).count(), 1)
+
+    def test_stripe_out_of_reach_asks_for_the_event_again(self):
+        """The reviewer's case: the lookup fails; the webhook says 503 so Stripe sends it again, and applies nothing."""
+        self.buy()
+        services.credit_payment("cs_test_1")  # its intent not kept yet: the refund needs Stripe to find it
+        with mock.patch("stripe.checkout.Session.list", side_effect=stripe.APIConnectionError("no route")):
+            answer = self.charge("charge.refunded", event_id="evt_retry", amount=500, amount_refunded=500)
+        self.assertEqual(answer.status_code, 503)
+        self.assertEqual(services.balance_of(self.user), 100)
+        listed = SimpleNamespace(data=[SimpleNamespace(id="cs_test_1")])
+        with mock.patch("stripe.checkout.Session.list", return_value=listed):
+            self.assertEqual(self.charge("charge.refunded", event_id="evt_retry", amount=500,
+                                         amount_refunded=500).status_code, 200)
+        self.assertEqual(services.balance_of(self.user), 0)
+
+    def test_an_event_about_someone_elses_payment_is_acknowledged(self):
+        with mock.patch("stripe.checkout.Session.list", return_value=SimpleNamespace(data=[])):
+            self.assertEqual(self.charge("charge.refunded", amount=500, amount_refunded=500).status_code, 200)
 
     def test_a_refund_during_a_dispute_is_not_given_back_when_the_dispute_is_won(self):
         self.paid()

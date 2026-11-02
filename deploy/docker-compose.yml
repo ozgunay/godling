@@ -72,12 +72,14 @@ services:
         condition: service_healthy
 
   # Takes powers to the island, one at a time as the island takes them (apps.screen.tasks), so no web request waits.
+  # Its clock (--beat; one worker, so one clock) gives up every minute the powers nobody will take, credits back.
   worker:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.site
     restart: unless-stopped
-    command: ["celery", "-A", "godling_web", "worker", "--concurrency", "1", "--loglevel", "info"]
+    command: ["celery", "-A", "godling_web", "worker", "--beat", "--schedule", "/tmp/celerybeat-schedule",
+              "--concurrency", "1", "--loglevel", "info"]
     environment: *site-env
     depends_on:
       postgres:

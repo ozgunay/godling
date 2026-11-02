@@ -114,6 +114,9 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+# The worker's own clock (deploy/: `worker --beat`): powers nobody will take are given up and refunded on the server,
+# not only when their viewer's page asks (apps.screen.tasks.expire_stale_powers).
+CELERY_BEAT_SCHEDULE = {"expire-stale-powers": {"task": "apps.screen.tasks.expire_stale_powers", "schedule": 60.0}}
 
 AUTH_USER_MODEL = "users.User"
 AUTH_PASSWORD_VALIDATORS = [

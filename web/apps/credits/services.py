@@ -93,77 +93,74 @@ def welcome(user):
     return True
 
 
+# Stripe's dispute states (docs.stripe.com/api/disputes/object). Open ones, and a lost one, hold back the pack's
+# credits; a won dispute, or an inquiry closed without a chargeback, gives them back. The last three are final.
+DISPUTE_OPEN = {"warning_needs_response", "warning_under_review", "needs_response", "under_review"}
+DISPUTE_FINAL = {"won", "lost", "warning_closed"}
+
+
+def due_credits(payment):
+    """What the pack should give the viewer now, from Stripe's facts kept on the payment: nothing until it is paid
+    or while a dispute holds it (or after one is lost), else its credits less the refunded share, rounded up."""
+    if payment.paid_at is None or payment.dispute_status in DISPUTE_OPEN | {"lost"}:
+        return 0
+    refunded = min(payment.amount_refunded, payment.amount_cents)
+    share = -(-payment.credits * refunded // payment.amount_cents) if payment.amount_cents else 0
+    return max(0, payment.credits - share)
+
+
+def reconcile(payment, why):
+    """Bring the viewer's purse in line with what the pack should give now: only the difference moves. Repeated,
+    late or reordered events therefore change nothing they should not. Call it inside the payment's row lock."""
+    due = due_credits(payment)
+    move = due - payment.granted
+    if move > 0:
+        kind = Entry.PURCHASE if why == "paid" else Entry.REFUND
+        change(payment.user, move, kind, f"{payment.pack}: {why} ({payment.session[:60]})")
+    elif move < 0:
+        take_back(payment.user, -move, f"{payment.pack}: {why} ({payment.session[:60]})")
+    payment.granted = due
+    if payment.paid_at is not None:
+        payment.status = (Payment.DISPUTED if payment.dispute_status in DISPUTE_OPEN | {"lost"}
+                          else Payment.REFUNDED if due == 0 else Payment.PAID)
+    payment.save(update_fields=["granted", "status", "amount_refunded", "dispute_id", "dispute_status",
+                                "payment_intent", "paid_at"])
+    return move
+
+
+def _locked(payment):
+    return Payment.objects.select_for_update().get(pk=payment.pk)
+
+
 @transaction.atomic
 def credit_payment(session, payment_intent=""):
-    """Mark a payment paid and credit its pack, once however often Stripe (or the return page) reports it."""
+    """Stripe (or the return page) says the checkout is paid: the pack's credits go to the viewer, less anything a
+    refund or dispute Stripe told of first. Once, however often it is reported. True if credits moved now."""
     payment = Payment.objects.select_for_update().filter(session=session).first()
     if payment is None:
         return False
-    if payment_intent and not payment.payment_intent:
-        payment.payment_intent = payment_intent
-        payment.save(update_fields=["payment_intent"])
-    if payment.status != Payment.OPEN:
-        return False
-    payment.status, payment.paid_at = Payment.PAID, timezone.now()
-    payment.save(update_fields=["status", "paid_at"])
-    change(payment.user, payment.credits, Entry.PURCHASE, f"{payment.pack} ({session[:60]})")
-    return True
-
-
-def _held(payment):
-    """Credits of this payment still in the viewer's hands: neither refunded nor held for a dispute."""
-    return payment.credits - payment.refund_taken - payment.dispute_taken
+    payment.payment_intent = payment.payment_intent or payment_intent
+    if payment.paid_at is None:
+        payment.paid_at = timezone.now()
+    return reconcile(payment, "paid") > 0
 
 
 @transaction.atomic
 def refunded(payment, amount_refunded):
-    """Stripe refunded `amount_refunded` cents of the payment so far (its running total): take back that share of
-    the pack's credits, rounded up, less what earlier refunds took. Returns the credits taken back now."""
-    payment = Payment.objects.select_for_update().get(pk=payment.pk)
-    if payment.status in (Payment.OPEN, Payment.EXPIRED) or not payment.amount_cents:
-        return 0
-    share = -(-payment.credits * min(amount_refunded, payment.amount_cents) // payment.amount_cents)
-    owed = max(0, share - payment.refund_taken)
-    # Credits a dispute holds back are already out of the viewer's hands: the refund's share comes from them first,
-    # so a dispute won later does not give back credits whose money was refunded.
-    held = _held(payment)
-    from_dispute = min(owed, payment.dispute_taken)
-    payment.dispute_taken -= from_dispute
-    due = min(owed - from_dispute, held)
-    if due:
-        take_back(payment.user, due, f"refund of {payment.pack} ({payment.session[:60]})")
-    payment.refund_taken += from_dispute + due
-    if payment.refund_taken >= payment.credits or amount_refunded >= payment.amount_cents:
-        payment.status = Payment.REFUNDED
-    payment.save(update_fields=["refund_taken", "dispute_taken", "status"])
-    return due
+    """Stripe refunded `amount_refunded` cents of the payment so far (its running total, which only grows). Kept even
+    before the checkout is reported paid, so credits granted later already leave the refunded share out."""
+    payment = _locked(payment)
+    payment.amount_refunded = max(payment.amount_refunded, int(amount_refunded or 0))
+    return reconcile(payment, "refunded")
 
 
 @transaction.atomic
-def disputed(payment):
-    """The buyer disputed the payment with their bank: hold back every credit of it until the dispute ends."""
-    payment = Payment.objects.select_for_update().get(pk=payment.pk)
-    if payment.status in (Payment.OPEN, Payment.EXPIRED):
+def dispute_changed(payment, dispute_id, status):
+    """A dispute on the payment moved to `status`. A final state stays final: a repeated or late "created" event
+    never reopens a dispute that was won or lost."""
+    payment = _locked(payment)
+    status = str(status or "")
+    if payment.dispute_status in DISPUTE_FINAL and payment.dispute_id == dispute_id and status not in DISPUTE_FINAL:
         return 0
-    due = _held(payment)
-    if due:
-        take_back(payment.user, due, f"dispute on {payment.pack} ({payment.session[:60]})")
-        payment.dispute_taken += due
-    payment.status = Payment.DISPUTED
-    payment.save(update_fields=["dispute_taken", "status"])
-    return due
-
-
-@transaction.atomic
-def dispute_closed(payment, won):
-    """The dispute ended. Won (the payment stands): the held credits come back. Lost: they stay taken."""
-    payment = Payment.objects.select_for_update().get(pk=payment.pk)
-    if payment.status != Payment.DISPUTED or not won:
-        return 0
-    back = payment.dispute_taken
-    if back:
-        change(payment.user, back, Entry.REFUND, f"dispute won on {payment.pack} ({payment.session[:60]})")
-    payment.dispute_taken = 0
-    payment.status = Payment.REFUNDED if payment.refund_taken >= payment.credits else Payment.PAID
-    payment.save(update_fields=["dispute_taken", "status"])
-    return back
+    payment.dispute_id, payment.dispute_status = dispute_id or payment.dispute_id, status
+    return reconcile(payment, f"dispute {status.replace('_', ' ')}")

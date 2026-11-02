@@ -34,8 +34,9 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014). Six services:
    ```
    Then sign in at `https://<domain>/accounts/login/`: confirm your email from the message that arrives, and set up two-factor sign-in with an authenticator app at `https://<domain>/accounts/2fa/`. Save the recovery codes. The admin, `https://<domain>/admin/`, opens only with two-factor sign-in, and its sign-in is the site's own.
 6. **Stripe:**
-   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`.
+   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated` and `charge.dispute.closed`.
    - A refund takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
+   - Events may arrive in any order or twice: each is applied once, and only the difference it makes moves credits. If Stripe cannot be reached for a lookup, the site answers 503 and Stripe sends the event again.
    - Put its signing secret in `GODLING_STRIPE_WEBHOOK_SECRET`.
    - Start with test keys (`sk_test_…`) and Stripe's test cards, then switch to live keys.
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.

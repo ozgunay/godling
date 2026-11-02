@@ -129,8 +129,12 @@ class PowerCall(models.Model):
 
 
 class Payment(models.Model):
-    """A credit pack bought through Stripe Checkout; credited once, when Stripe says it is paid, and taken back when
-    Stripe refunds it or the buyer disputes it (services.refunded, services.disputed)."""
+    """A credit pack bought through Stripe Checkout.
+
+    The payment keeps Stripe's facts as they arrive, in whatever order Stripe sends them: paid (paid_at), refunded so
+    far (amount_refunded), and the dispute's state. services.reconcile works out from them what the pack should
+    give the viewer now and moves only the difference, recorded in `granted`, so a late, repeated or reordered event
+    changes nothing it should not (ADR-014)."""
 
     OPEN, PAID, EXPIRED, REFUNDED, DISPUTED = "open", "paid", "expired", "refunded", "disputed"
 
@@ -145,8 +149,10 @@ class Payment(models.Model):
                                       help_text="Stripe's PaymentIntent: how its refunds and disputes find this.")
     status = models.CharField(max_length=8, default=OPEN, choices=[(OPEN, "Open"), (PAID, "Paid"), (EXPIRED, "Expired"),
                                                                    (REFUNDED, "Refunded"), (DISPUTED, "Disputed")])
-    refund_taken = models.PositiveIntegerField(default=0, help_text="Credits taken back for refunds.")
-    dispute_taken = models.PositiveIntegerField(default=0, help_text="Credits held back while a dispute is open.")
+    amount_refunded = models.PositiveIntegerField(default=0, help_text="Cents Stripe has refunded so far.")
+    dispute_id = models.CharField(max_length=255, blank=True)
+    dispute_status = models.CharField(max_length=32, blank=True, help_text="Stripe's word for the dispute, if any.")
+    granted = models.PositiveIntegerField(default=0, help_text="Credits the pack gives the viewer now.")
     created = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)
 
@@ -155,3 +161,14 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.user}: {self.credits} cr, {self.status}"
+
+
+class StripeEvent(models.Model):
+    """A Stripe event already applied: Stripe may deliver one more than once, and it is applied once."""
+
+    event_id = models.CharField(max_length=255, unique=True)
+    kind = models.CharField(max_length=80)
+    received = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.kind} {self.event_id}"

@@ -53,7 +53,7 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
     - a power is queued, its price taken;
     - the worker relays it once and settles it;
     - the screen asks `api/power/<id>` every half second.
-  - A call nobody took in 3 minutes is given up and refunded (long enough for a burst: the island takes about one power a second). The worker skips such a call, so nothing is called after its refund.
+  - A call nobody took in 3 minutes is given up and refunded (long enough for a burst: the island takes about one power a second). The worker's clock (`--beat`) does this every minute, whether or not the viewer's page is still open, so a closed page or a message lost with Redis still gets its credits back. A worker that meets such a call gives it up too, and calls nothing.
   - A queue out of reach refunds at once.
   - Notes, which the panel only queues, get 5 s.
 - **B5:**
@@ -63,7 +63,14 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
   - Reports come only from a viewer watching now, only on notes from the last 30 minutes, and at most 10 an hour (`reports_per_hour`). These are new site rules in the admin.
   - Hiding and the author's pause stay as you chose them (ADR-013).
 - **B6:**
-  - `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed` are handled.
+  - `charge.refunded` and every `charge.dispute.*` event are handled.
+  - **Stripe's facts, then the difference** (as Stripe advises: events come in any order, sometimes twice):
+    - each event records what it says on the payment: paid, the refunded total (which only grows), and the dispute's state;
+    - `services.reconcile` works out what the pack should give now, and moves only the difference from what it gives (`Payment.granted`);
+    - a refund that comes before the checkout's own event is kept, and the credits granted later leave its share out;
+    - a dispute that was won or lost stays decided: a repeated or late "created" does not reopen it.
+  - **Each event once:** `StripeEvent` records its id in the same transaction that applies it.
+  - **Stripe out of reach:** when a lookup fails, the webhook answers 503 and applies nothing, so Stripe sends the event again.
   - A payment keeps its PaymentIntent. An older payment is found through Stripe.
   - `Purse.owed` holds what could not be taken back. A `clawback` ledger entry records each taking.
 - **B7:**
@@ -71,6 +78,7 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
   - HSTS lasts a year, subdomains included.
   - **Two-factor sign-in** (allauth MFA, an authenticator app and recovery codes):
     - staff must set it up before the admin opens;
+    - the admin checks this session, not the account: the session must have given a code in the last 12 hours (allauth's record of how it signed in). A session that signed in with a password alone is asked for a code, even after the account sets up an authenticator elsewhere;
     - the admin's sign-in is the site's own, with its rate limits and the code;
     - viewers may turn it on for themselves.
   - The site's container runs as a user, not root.

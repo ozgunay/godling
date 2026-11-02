@@ -25,13 +25,19 @@ LOST = timedelta(minutes=4)
 REPLY_KEYS = ("ok", "text", "id", "kind", "name", "power", "time", "wait")
 
 
+NO_ANSWER = {"ok": False, "text": "The island did not answer in time; your credits are back."}
+
+
 @shared_task(ignore_result=True)
 def call_power(call_id):
     """Take a queued power to the island, once, and settle it with the world's answer."""
     claimed = PowerCall.objects.filter(pk=call_id, status=PowerCall.QUEUED,
                                        created__gt=timezone.now() - STALE).update(status=PowerCall.SENDING)
-    if not claimed:
-        return  # settled already, or waited too long and given up
+    if not claimed:  # settled already, or waited too long: then it is given up here, its credits back
+        late = PowerCall.objects.filter(pk=call_id).first()
+        if late:
+            give_up_if_stale(late)
+        return
     call = PowerCall.objects.select_related("user").get(pk=call_id)
     at = [call.at_x, call.at_z] if call.at_x is not None and call.at_z is not None else None
     answer = island.relay("POST", "/api/power", {"client": call.user.client_id, "name": call.user.username,
@@ -61,6 +67,17 @@ def give_up_if_stale(call):
     """A call the island never answered is given up (credits back), so a viewer is never left waiting forever."""
     late = timezone.now() - call.created
     if call.status == PowerCall.QUEUED and late > STALE or call.status == PowerCall.SENDING and late > LOST:
-        return settle(call.pk, {"ok": False, "text": "The island did not answer in time; your credits are back."},
-                      call.status, PowerCall.EXPIRED)
+        return settle(call.pk, NO_ANSWER, call.status, PowerCall.EXPIRED)
     return call
+
+
+@shared_task(ignore_result=True)
+def expire_stale_powers():
+    """Every minute (Celery beat, settings.CELERY_BEAT_SCHEDULE): give up the calls nobody will take, credits back,
+    whether or not their viewer is still looking: the page closed, the answer lost, or the queue's message gone with
+    a restart of Redis."""
+    now = timezone.now()
+    stale = (PowerCall.objects.filter(status=PowerCall.QUEUED, created__lte=now - STALE)
+             | PowerCall.objects.filter(status=PowerCall.SENDING, created__lte=now - LOST))
+    for call_id, status in stale.values_list("pk", "status")[:500]:
+        settle(call_id, NO_ANSWER, status, PowerCall.EXPIRED)
