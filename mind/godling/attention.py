@@ -46,8 +46,9 @@ def _sky_arrival(kind, pieces):
 
 
 class Attention:
-    def __init__(self, memory, busy=lambda: set(), log=None):
+    def __init__(self, memory, busy=lambda: set(), log=None, discovery=None):
         self.memory = memory
+        self.discovery = discovery  # what Godling has seen of the island grows with every look (ADR-008)
         self.busy = busy  # objects our own skills are handling right now: their movement is not news
         self.log = log or (lambda **kw: None)
         self.prev = None
@@ -59,6 +60,8 @@ class Attention:
         """Called by the skills on every observation; raises Interrupted for salient events."""
         if not snap.has_world:
             return
+        if self.discovery is not None:
+            self.discovery.see(snap)
         if self.prev is not None:
             for text, salience, entities, extra in self._diff(self.prev, snap):
                 event = {"text": text, "salience": salience, "entities": entities, "tick": snap.tick, **extra}
@@ -141,6 +144,13 @@ class Attention:
                 out.append((f"A dark shadow spreads on the ground at {_xz(e)}: something is falling from the sky "
                             "there" + (f", landing in about {lands:.0f}s" if lands else ""),
                             3, [e.name], {**_at(e.pos), **_sky(e, "warning")}))
+        if after.hurts > before.hurts:  # real damage, to the body itself
+            by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
+            out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
+                        f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+        if after.freed > before.freed:
+            out.append((f"You were caught inside a piece, too low over your head or pressed into you, and found "
+                        f"yourself pushed out of it to ({after.me[0]:.0f}, {after.me[2]:.0f})", 2, [], {}))
         before_names = {n for n, _ in before.others}
         for name, pos in after.others:
             if name not in before_names:

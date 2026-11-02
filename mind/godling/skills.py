@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from .world import (BODY_CENTRE_Y, BUILDING_KINDS, CUBE, FASTEN_SECONDS, LADDER_HEIGHT, LIFT_SECONDS, PICKUP_RANGE,
                     PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, STEP, STRIKE_RANGE, STRIKE_SECONDS,
-                    TOOL_KINDS, TURN_RATE, WALK_SPEED, WorldError, grid, hdist, turned_size)
+                    TOOL_KINDS, TURN_RATE, WALK_SPEED, BoxIndex, WorldError, grid, hdist, turned_size)
 
 # What the body can do. These know the body's own limits (reach, not walking through things)
 # but no strategy: how to stack, aim or build has to be learned by the mind.
@@ -34,10 +34,21 @@ PRIMITIVES = {
     "strike": ({"object": "what to strike, such as Quarry, Tree_2 or Brick_4"},
                "Walk within reach of it and strike it once with the tool in your hands. The world says what happened."),
     "fasten": ({"object": "a piece you have set down"},
-               "Walk within reach and fasten that piece to everything it touches, so they hold together. Takes a "
-               "few seconds; fastened pieces cannot be picked up."),
+               "Walk within reach and fasten that piece where it is, like mortar, so it stays even if what it rests on "
+               "is taken away. Takes a few seconds; fastened pieces cannot be picked up."),
     "climb": ({"object": "a ladder that stands upright, such as Ladder_1"},
               "Walk to the ladder and climb it: up to whatever its top reaches, or back down when you are at the top."),
+    "shake": ({"object": "a palm, such as Palm_3"}, "Walk to the palm and shake it. A ripe coconut may fall."),
+    "carve": ({"object": "a log, such as Log_2"},
+              "With the axe in your hands, carve that log into a spear. Takes a few strokes."),
+    "eat": ({}, "Eat what you hold, if it is food."),
+    "kindle": ({"object": "a log lying on the ground, such as Log_3"},
+               "Rub at that log to light a fire on it. It rarely catches at the first rub, but the wood warms as you "
+               "keep at it; a fire burns a while and uses the log up."),
+    "cook": ({}, "Cook the fish you hold over a fire beside you."),
+    "draw": ({"x": "number", "z": "number"},
+             "Drag your foot through the sand from where you stand to (x, z), at most 20 away, leaving a line in it. "
+             "Only open sand takes a line; lines can make shapes or letters."),
     "say": ({"text": "string"}, "Say something in the world chat; anyone nearby can read it."),
     "wait": ({"seconds": "number 1-30"}, "Stand still and watch the world."),
 }
@@ -52,6 +63,9 @@ CATALOG = {**PRIMITIVES, **GIFTED}
 
 
 MAX_DROP = 2.6  # the highest drop the body hops down from; higher needs a ladder
+BODY_HEIGHT = 5.0  # the engine's capsule: exactly two blocks
+PEN_CELLS = 1600  # half-unit cells: floor the body can reach smaller than this (20 x 20 units) is a pen
+LIFTABLE = SNAPPED_KINDS + ("Brick_", "Ladder_")  # what the body lifts aside to get out of a pen
 GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
 GLANCE_HOLD = 0.4  # seconds the body keeps looking before it goes on
 
@@ -77,6 +91,16 @@ def _orientation(turn, upright):
     return (", stood on end" if upright else "") + (", turned a quarter round" if turn else "")
 
 
+class _Box:
+    """Where a piece is about to lie: enough of an Entity for `_stand_point(avoid=...)`."""
+
+    def __init__(self, centre, size):
+        self.pos, self.size = centre, size
+
+    def footprint_contains(self, x, z, margin=0.0):
+        return abs(x - self.pos[0]) <= self.size[0] / 2 + margin and abs(z - self.pos[2]) <= self.size[2] / 2 + margin
+
+
 @dataclass
 class Result:
     ok: bool
@@ -88,6 +112,12 @@ class Result:
 
 class Interrupted(Exception):
     pass
+
+
+class Stuck(Interrupted):
+    """The body's own trouble (snagged, hemmed in, slipped into the sea): the step fails like any other. Only what
+    attention notices interrupts the plan; being stuck threw away the plan being thought up, and the body then
+    waited for a fresh one: 78 of the 85 minutes it waited in run n7."""
 
 
 class Skills:
@@ -103,6 +133,7 @@ class Skills:
         self.library = library  # skills the mind taught itself (learned.SkillLibrary)
         self.busy = set()  # objects the current skill is handling; attention ignores their movement
         self._depth = 0
+        self._lifting = False  # in the middle of lifting a way out of a pen (no second one inside it)
 
     # ---- entry point -------------------------------------------------------------------
     def run(self, skill, args):
@@ -118,6 +149,8 @@ class Skills:
         if self.library is not None and skill in self.library.skills:
             try:
                 return self.library.execute(self, skill, args)
+            except Stuck as why:
+                return Result(False, skill, str(why))
             except Interrupted as why:
                 return Result(False, skill, f"interrupted: {why}")
             except Exception as err:  # a broken self-taught skill must never take the body down
@@ -132,6 +165,8 @@ class Skills:
             self.busy.add(args["object"])
         try:
             result = fn(**args)
+        except Stuck as why:
+            result = Result(False, skill, str(why))
         except Interrupted as why:
             result = Result(False, skill, f"interrupted: {why}")
         except (TypeError, ValueError) as err:
@@ -190,17 +225,19 @@ class Skills:
         blocked = set(self.protected()) | set(exclude) | ({held.name} if held else set())
         below_top = {n for _, names in snap.stacks() for n in names[:-1]}
         return [p for p in snap.movables() if (p.is_cube or p.name.startswith(BUILDING_KINDS))
-                and p.name not in blocked | below_top and not p.attrs.get("Fastened")
+                and p.name not in blocked | below_top and not p.attrs.get("Fastened") and not p.attrs.get("Burning")
                 and snap.ground_top(p.pos[0], p.pos[2]) is not None]
 
     def _obstacles(self, snap, ignore=()):
         held = snap.held()
         return [e for e in snap.movables() if e.name not in ignore and e is not held]
 
-    def _in_the_way(self, snap, ignore=()):
-        """Loose things that stick up from the floor we stand on (what we stand on, or what lies below it, is not)."""
-        level = self._level(snap)
-        return [e for e in self._obstacles(snap, ignore) if e.top > level + STEP and e.pos[1] - e.size[1] / 2 < level + 3]
+    def _in_the_way(self, snap, ignore=(), level=None):
+        """Loose things that stick up from the floor we stand on (what we stand on, or what lies below it, is not),
+        and things overhead lower than the body is tall: a beam across two-block posts leaves no room under it."""
+        level = self._level(snap) if level is None else level
+        return [e for e in self._obstacles(snap, ignore)
+                if e.top > level + STEP and e.pos[1] - e.size[1] / 2 < level + BODY_HEIGHT + 0.1]
 
     def _level(self, snap):
         """Height of the surface we are standing on: the ground, a mesa, or pieces we built and climbed onto."""
@@ -208,36 +245,35 @@ class Skills:
         level = snap.surface(snap.me[0], snap.me[2], below=feet + STEP)[0]
         return 0.0 if level is None else level
 
-    def _walls(self, snap):
+    def _walls(self, snap, level=None):
         """Terrain higher than our level: we cannot climb it, so routes go around it."""
-        level = self._level(snap)
+        level = self._level(snap) if level is None else level
         return [t for t in snap.terrain() if t.top > level + 0.5]
 
-    def _blocked_fn(self, snap, ignore=()):
+    def _blocked_fn(self, snap, ignore=(), level=None):
         """Is the body unable to stand at (x, z)? Off our level, hugging a wall, or on a loose object.
 
         Walls get 1.6 units of clearance, not just the body's 1.0 radius: the character controller
-        snags when it slides along a wall it is touching.
+        snags when it slides along a wall it is touching. `level` asks about another floor than ours.
         """
-        level = self._level(snap)
-        walls = [(w.pos[0], w.pos[2], w.size[0] / 2 + 1.6, w.size[2] / 2 + 1.6) for w in self._walls(snap)]
+        level = self._level(snap) if level is None else level
+        walls = BoxIndex([(w.pos[0], w.pos[2], w.size[0] / 2 + 1.6, w.size[2] / 2 + 1.6) for w in self._walls(snap, level)])
         # Boxes, not circles: at block scale a circle clips a block's corners and the body snags on them.
-        things = [(o.pos[0], o.pos[2], o.size[0] / 2 + 1.2, o.size[2] / 2 + 1.2) for o in self._in_the_way(snap, ignore)]
-        floors = snap.standables(below=level + STEP)  # everything we could stand on from this level
+        things = BoxIndex([(o.pos[0], o.pos[2], o.size[0] / 2 + 1.2, o.size[2] / 2 + 1.2)
+                           for o in self._in_the_way(snap, ignore, level)])
 
         def blocked(x, z):
-            if snap.ground_top(x, z) is None:  # open sea
+            # Off our floor (open sea, a drop, a step too high), hugging a wall, or on a loose object.
+            ground = snap.surface(x, z, below=level + STEP)[0]  # the highest thing we could stand on from this level
+            if ground is None or abs(ground - level) > 0.3:
                 return True
-            ground = max((top for cx, cz, hx, hz, top, _ in floors if abs(x - cx) <= hx and abs(z - cz) <= hz), default=None)
-            if ground is None or abs(ground - level) > 0.3:  # off our floor: a drop, or a step too high
-                return True
-            if any(abs(x - wx) < hx and abs(z - wz) < hz for wx, wz, hx, hz in walls):
-                return True
-            return any(abs(x - ox) < hx and abs(z - oz) < hz for ox, oz, hx, hz in things)
+            return bool(walls.at(x, z, strict=True) or things.at(x, z, strict=True))
         return blocked
 
     def _route(self, snap, start, goal, ignore=(), escaped=False):
-        """Waypoints from start to goal (x, z): A* over 1-unit cells, then smoothed into straight legs."""
+        """Waypoints from start to goal (x, z), or None when no way round is known: A* over half-unit cells, then
+        smoothed into straight legs. Half units, because a one-block doorway between grid cells is only just wider
+        than the clearance the body keeps, and on whole units half the doorways fall between cells."""
         blocked = self._blocked_fn(snap, ignore)
 
         def clear(a, b):
@@ -249,38 +285,63 @@ class Skills:
             return [goal]
         if not escaped and blocked(*start):
             # Standing inside the clearance kept around walls and things (pressed against a wall, boxed in by a
-            # ladder): first step out to the nearest clear spot, then plan from there.
+            # ladder): first step out to the nearest clear spot, then plan from there. The step out must not run
+            # into anything, or deeper into what we already press against: picking the way out by its end alone
+            # walked the body into a ladder over and over (test run t1).
+            hard = [(o.pos[0], o.pos[2], o.size[0] / 2 + 0.9, o.size[2] / 2 + 0.9)
+                    for o in self._in_the_way(snap, ignore) + self._walls(snap)]
+
+            def depth(p, box):  # how far p is inside a box (0 or less: outside)
+                return min(box[2] - abs(p[0] - box[0]), box[3] - abs(p[1] - box[1]))
+
+            def open_line(a, b):
+                return not any(depth(p, box) > max(0.0, depth(a, box)) + 0.01 for box in hard
+                               for p in ((a[0] + (b[0] - a[0]) * i / 8, a[1] + (b[1] - a[1]) * i / 8) for i in range(1, 9)))
             for radius in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0):
                 out = [(start[0] + radius * math.cos(k * math.pi / 8), start[1] + radius * math.sin(k * math.pi / 8))
                        for k in range(16)]
-                out = [p for p in out if not blocked(*p)]
+                out = [p for p in out if not blocked(*p) and open_line(start, p)]
                 if out:
                     escape = min(out, key=lambda p: math.dist(p, goal))
-                    return [escape] + self._route(snap, escape, goal, ignore, escaped=True)
-        s, g = (round(start[0]), round(start[1])), (round(goal[0]), round(goal[1]))
+                    rest = self._route(snap, escape, goal, ignore, escaped=True)
+                    return None if rest is None else [escape] + rest
+        res = 0.5
+        s, g = (round(start[0] / res), round(start[1] / res)), (round(goal[0] / res), round(goal[1] / res))
+        known = {}
+
+        def free(cell):
+            if cell not in known:
+                known[cell] = not blocked(cell[0] * res, cell[1] * res)
+            return known[cell]
+        # A goal inside the clearance we keep (the foot of a ladder against a wall) is reached by walking its last
+        # stretch straight: stop the search once within 1.5 of it, instead of searching the whole island for it.
+        goal_free, reached = free(g), None
         frontier = [(math.dist(s, g), 0.0, s)]
         came, cost = {s: None}, {s: 0.0}
         while frontier:
             _, so_far, cell = heapq.heappop(frontier)
-            if cell == g or len(came) > 40000:
+            if cell == g or (not goal_free and math.dist(cell, g) * res <= 1.5):
+                reached = cell
+                break
+            if len(came) > 120000:
                 break
             if so_far > cost.get(cell, math.inf):
                 continue
             for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
                 nxt = (cell[0] + dx, cell[1] + dz)
-                if nxt != g and blocked(*nxt):
+                if nxt != g and not free(nxt):
                     continue
                 c = so_far + math.hypot(dx, dz)
                 if c < cost.get(nxt, math.inf):
                     cost[nxt], came[nxt] = c, cell
                     heapq.heappush(frontier, (c + math.dist(nxt, g), c, nxt))
-        if g not in came:
-            return [goal]  # no known way round; walk straight and let the stuck check report it
-        cells, cell = [], g
+        if reached is None:
+            return None
+        cells, cell = [], reached
         while cell is not None:
             cells.append(cell)
             cell = came[cell]
-        cells = [start] + [(float(x), float(z)) for x, z in reversed(cells[:-1])] + [goal]
+        cells = [start] + [(x * res, z * res) for x, z in reversed(cells[:-1])] + [goal]
         path, i = [], 0
         while i < len(cells) - 1:  # keep only the corners: jump to the farthest cell still in clear sight
             j = len(cells) - 1
@@ -292,11 +353,21 @@ class Skills:
 
     def _move(self, x, z, stop_within=0.6, ignore=(), replans=1):
         snap = self._observe()
+        route = self._route(snap, (snap.me[0], snap.me[2]), (x, z), ignore)
+        if route is None and not self._lifting:
+            pen = self._pen(snap, ignore)
+            if pen is not None and self._lift_through(snap, (x, z), ignore, pen):
+                snap = self._observe()
+                route = self._route(snap, (snap.me[0], snap.me[2]), (x, z), ignore)
         try:
-            for wx, wz in self._route(snap, (snap.me[0], snap.me[2]), (x, z), ignore):
-                snap = self._move_once(wx, wz, stop_within if (wx, wz) == (x, z) else 1.0)
-        except Interrupted as why:
-            if replans <= 0 or not str(why).startswith("stuck"):
+            for wx, wz in route or [(x, z)]:  # no way round known: walk straight, and the stuck check reports it
+                snap = self._move_once(wx, wz, stop_within if (wx, wz) == (x, z) else 1.0, ignore=ignore)
+        except Stuck as why:
+            if not str(why).startswith("stuck"):
+                raise
+            if replans <= 0:
+                if route is None:  # say what pens the body in, or closes off the goal, so the mind can clear a way
+                    raise Stuck(f"{why}; {self._closed_by(self._observe(), ignore, (x, z))}") from None
                 raise
             # Something moved or the body was pushed off its route: look again and find another way, once.
             self.log(kind="reflex", text=f"{why}; looking for another way")
@@ -304,49 +375,208 @@ class Skills:
             return self._move(x, z, stop_within, ignore, replans - 1)
         return snap
 
-    def _move_once(self, x, z, stop_within, retry=True):
+    def _pen(self, snap, ignore=()):
+        """The floor the body can walk to from where it stands, as half-unit cells, when that is a small closed pen;
+        None when it is open further than that. Run n7 told the mind "you are hemmed in" whenever a goal could not be
+        reached, also when only the goal was closed off (it lay inside a block) and the body stood in the open."""
+        blocked = self._blocked_fn(snap, ignore)
+        known = {}
+
+        def free(cell):
+            if cell not in known:
+                known[cell] = not blocked(cell[0] * 0.5, cell[1] * 0.5)
+            return known[cell]
+        ox, oz = round(snap.me[0] / 0.5), round(snap.me[2] / 0.5)
+        start = next((c for r in range(5) for k in range(16 if r else 1)  # pressed against something: just beside it
+                      for c in [(ox + round(r * math.cos(k * math.pi / 8)), oz + round(r * math.sin(k * math.pi / 8)))]
+                      if free(c)), None)
+        if start is None:
+            return set()  # no free floor around the body at all
+        seen, todo = {start}, [start]
+        while todo:
+            ix, iz = todo.pop()
+            for n in ((ix + 1, iz), (ix - 1, iz), (ix, iz + 1), (ix, iz - 1)):
+                if n not in seen and free(n):
+                    seen.add(n)
+                    if len(seen) > PEN_CELLS:
+                        return None
+                    todo.append(n)
+        return seen
+
+    def _pen_sides(self, snap, pen, ignore=()):
+        """What closes a pen: the pieces and walls whose edges its floor runs up against, nearest first."""
+        me = snap.me
+
+        def borders(e, clearance):
+            if not pen:
+                return e.footprint_contains(me[0], me[2], margin=clearance + 1.5)
+            hx, hz = e.size[0] / 2 + clearance + 0.6, e.size[2] / 2 + clearance + 0.6
+            return any(abs(ix * 0.5 - e.pos[0]) <= hx and abs(iz * 0.5 - e.pos[2]) <= hz for ix, iz in pen)
+        sides = [e for e in self._in_the_way(snap, ignore) if borders(e, 1.2)]
+        sides += [w for w in self._walls(snap) if borders(w, 1.6)]
+        return sorted(sides, key=lambda e: hdist(e.pos, me))
+
+    def _closed_by(self, snap, ignore=(), goal=None):
+        """Why no way round was found, in words: what pens the body in, or what closes off the place it goes to."""
+        pen = self._pen(snap, ignore)
+        if pen is not None:
+            names = [e.name for e in self._pen_sides(snap, pen, ignore)][:5]
+            return "no way round: you are penned in" + (f" by {', '.join(names)}" if names else "")
+        if goal is None:
+            return "no way round was found"
+        x, z = goal
+        level = self._level(snap)
+        floor = snap.surface(x, z, below=level + STEP)[0]
+        if floor is None or abs(floor - level) > 0.3:
+            return f"no way round: ({x:.1f}, {z:.1f}) is not on the floor you stand on"
+        around = self._in_the_way(snap, ignore) + self._walls(snap)
+        inside = [e for e in around if e.footprint_contains(x, z)]
+        if inside:
+            return f"no way round: ({x:.1f}, {z:.1f}) lies inside {inside[0].name}"
+        near = [e.name for e in sorted((e for e in around if e.footprint_contains(x, z, margin=3.0)),
+                                       key=lambda e: hdist(e.pos, (x, 0, z)))][:5]
+        return f"no way round: the way to ({x:.1f}, {z:.1f}) is closed off" + (f" by {', '.join(near)}" if near else "")
+
+    def _lift_through(self, snap, goal, ignore, pen):
+        """Reflex, as a person does: penned in by its own pieces, the body lifts one out of the way, steps out
+        through the gap and sets it back where it was. What it held it first rests on the pen's wall (or sets down
+        inside, if the pen has room), and takes back from outside when it can reach it."""
+        level = self._level(snap)
+        protected = set(self.protected())
+        movables = snap.movables()
+
+        def bare(e):  # nothing rests on it, so lifting it brings nothing down
+            return not any(o is not e and abs(o.pos[1] - o.size[1] / 2 - e.top) < 0.3
+                           and abs(o.pos[0] - e.pos[0]) < (o.size[0] + e.size[0]) / 2 - 0.1
+                           and abs(o.pos[2] - e.pos[2]) < (o.size[2] + e.size[2]) / 2 - 0.1 for o in movables)
+        sides = [e for e in self._pen_sides(snap, pen, ignore) if e.movable and e.name.startswith(LIFTABLE)
+                 and not e.attrs.get("Fastened") and not e.attrs.get("Burning")
+                 and abs(e.pos[1] - e.size[1] / 2 - level) < 0.3 and bare(e)]
+        sides.sort(key=lambda e: (e.name in protected, hdist(e.pos, snap.me)))  # what it decided to keep, last
+        for piece in sides[:6]:
+            path = self._route(snap, (snap.me[0], snap.me[2]), goal, set(ignore) | {piece.name})
+            out = self._past((snap.me[0], snap.me[2]), path, piece) if path else None
+            if out is None:
+                continue
+            held = snap.held()
+            self._lifting = True
+            try:
+                on_wall = None  # what it held, rested on the pen's wall while its hands lift the way out
+                if held and (len(pen) < 40 or self._set_down_nearby(snap, held, piece.pos) is None):
+                    on_wall = self._rest_on(snap, held, [e for e in sides if e is not piece])
+                    if on_wall is None:
+                        return False
+                if not self._lift(piece):
+                    return False
+                self._move(*out)
+                turn = 90 if piece.size[2] > piece.size[0] + 0.1 else 0
+                upright = piece.size[1] > max(piece.size[0], piece.size[2]) + 0.1
+                back = self.skill_place_at(piece.pos[0], piece.pos[1], piece.pos[2], turn, upright)
+                if not back.ok:  # it stays out of its place, but not in the hands
+                    snap = self._observe()
+                    if snap.held():
+                        self._set_down_nearby(snap, snap.held(), piece.pos)
+                if on_wall and self._observe().held() is None:
+                    self.skill_pick_up(on_wall)  # and take back what it rested on the wall, from outside
+                self.log(kind="reflex", text=f"penned in: lifted {piece.name} out of the way, stepped out "
+                                             + ("and set it back" if back.ok else f"(it could not go back: {back.summary})"))
+                return True
+            except Stuck:
+                return False
+            finally:
+                self._lifting = False
+        return False
+
+    def _lift(self, piece):
+        """Pick up a piece the body stands beside, without first looking for room around it: in a pen there is none."""
+        snap = self.world.act("Pickup", {"position": list(piece.pos)})
+        if snap.last_result == "PickupSuccess":
+            held = self._settle(LIFT_SECONDS + 0.2).held()
+            if held and held.name == piece.name:
+                return True
+        return self.skill_pick_up(piece.name).ok
+
+    def _rest_on(self, snap, held, walls):
+        """Rest what the hands hold on top of one of `walls` (bare pieces beside the body). Its name, or None."""
+        for wall in sorted(walls, key=lambda e: hdist(e.pos, snap.me)):
+            top = (wall.pos[0], wall.top + held.local_size[1] / 2 + 0.02, wall.pos[2])
+            if self.world.act("Place", {"position": list(top), "rotation": _rotation(0, False)}).last_result == "PlaceSuccess":
+                self._settle(PLACE_SECONDS + 0.4)
+                return held.name
+        return None
+
+    @staticmethod
+    def _past(start, path, piece):
+        """The first point along `path` clear beyond `piece`, once the path has gone through where it lies."""
+        through, prev = False, start
+        for wp in path:
+            steps = max(1, int(math.dist(prev, wp) / 0.5))
+            for i in range(1, steps + 1):
+                p = (prev[0] + (wp[0] - prev[0]) * i / steps, prev[1] + (wp[1] - prev[1]) * i / steps)
+                if piece.footprint_contains(*p, margin=1.2):
+                    through = True
+                elif through and not piece.footprint_contains(*p, margin=2.2):
+                    return p
+            prev = wp
+        return path[-1] if through else None
+
+    def _move_once(self, x, z, stop_within, retry=True, ignore=()):
         # The humanoid walks on whatever surface it is on; MoveTo just needs some y.
         snap = self.world.act("MoveTo", {"position": [x, BODY_CENTRE_Y, z]})
+        sent = time.time()
         dist = hdist(snap.me, (x, 0, z))
         deadline = time.time() + dist / self.walk_speed * 2.5 + 3
         best, last_progress = dist, time.time()
         while dist > stop_within:
             time.sleep(0.12)
+            if time.time() - sent > 6:  # the engine's MoveTo gives up after 8 s, as Roblox's does: renew it on long walks
+                self.world.act("MoveTo", {"position": [x, BODY_CENTRE_Y, z]})
+                sent = time.time()
             snap = self._observe()
             if snap.me[1] < 0.8:
                 self.world.act("Stop")
-                raise Interrupted("fell off the edge into the sea")
+                raise Stuck("fell off the edge into the sea")
             dist = hdist(snap.me, (x, 0, z))
             if dist < best - 0.05:
                 best, last_progress = dist, time.time()
             if time.time() - last_progress > 1.2 or time.time() > deadline:
                 self.world.act("Stop")
-                if retry and self._unstick(snap):
-                    return self._move_once(x, z, stop_within, retry=False)
-                raise Interrupted(f"stuck {dist:.1f} units short of ({x:.1f}, {z:.1f})")
+                if retry and self._unstick(snap, ignore):  # not away from what we are walking up to
+                    return self._move_once(x, z, stop_within, retry=False, ignore=ignore)
+                raise Stuck(f"stuck {dist:.1f} units short of ({x:.1f}, {z:.1f})")
         return self.world.act("Stop")
 
-    def _unstick(self, snap):
-        """Reflex: when snagged, step straight away from the nearest wall, then let the caller retry."""
-        walls = self._walls(snap)
+    def _unstick(self, snap, ignore=()):
+        """Reflex: when snagged, step straight away from what snags us (a wall, a piece, a ladder), then let the
+        caller retry. Squeezed between two things on opposite sides, slip out along the gap between them."""
+        walls = self._walls(snap) + self._in_the_way(snap, ignore)
         if not walls:
             return False
         me = snap.me
 
         def gap(w):
             return math.hypot(max(abs(me[0] - w.pos[0]) - w.size[0] / 2, 0), max(abs(me[2] - w.pos[2]) - w.size[2] / 2, 0))
+
+        def away(w):
+            dx = me[0] - min(max(me[0], w.pos[0] - w.size[0] / 2), w.pos[0] + w.size[0] / 2)
+            dz = me[2] - min(max(me[2], w.pos[2] - w.size[2] / 2), w.pos[2] + w.size[2] / 2)
+            if math.hypot(dx, dz) < 0.05:  # pressed into it: out through its nearest face
+                ox, oz = me[0] - w.pos[0], me[2] - w.pos[2]
+                hx, hz = w.size[0] / 2, w.size[2] / 2
+                _, (dx, dz) = min(((hx - ox, (1, 0)), (hx + ox, (-1, 0)), (hz - oz, (0, 1)), (hz + oz, (0, -1))))
+            norm = math.hypot(dx, dz) or 1.0
+            return dx / norm, dz / norm
         wall = min(walls, key=gap)
         if gap(wall) > 2.5:
             return False
-        dx = me[0] - min(max(me[0], wall.pos[0] - wall.size[0] / 2), wall.pos[0] + wall.size[0] / 2)
-        dz = me[2] - min(max(me[2], wall.pos[2] - wall.size[2] / 2), wall.pos[2] + wall.size[2] / 2)
-        if math.hypot(dx, dz) < 0.05:  # pressed into the wall: out through its nearest face
-            ox, oz = me[0] - wall.pos[0], me[2] - wall.pos[2]
-            hx, hz = wall.size[0] / 2, wall.size[2] / 2
-            _, (dx, dz) = min(((hx - ox, (1, 0)), (hx + ox, (-1, 0)), (hz - oz, (0, 1)), (hz + oz, (0, -1))))
+        touching = [w for w in walls if gap(w) <= 1.2] or [wall]
+        pushes = [away(w) for w in touching]
+        dx, dz = sum(p[0] for p in pushes), sum(p[1] for p in pushes)
+        if math.hypot(dx, dz) < 0.3:  # pushed equally from opposite sides: along the gap instead
+            dx, dz = -pushes[0][1], pushes[0][0]
         norm = math.hypot(dx, dz) or 1.0
         ex, ez = me[0] + dx / norm * 2.5, me[2] + dz / norm * 2.5
-        self.log(kind="reflex", text=f"snagged by {wall.name}; stepping away to ({ex:.1f}, {ez:.1f})")
+        self.log(kind="reflex", text=f"snagged by {', '.join(w.name for w in touching)}; stepping away to ({ex:.1f}, {ez:.1f})")
         self.world.act("MoveTo", {"position": [ex, BODY_CENTRE_Y, ez]})
         time.sleep(0.8)
         self.world.act("Stop")
@@ -478,14 +708,14 @@ class Skills:
             return self._hop_down(snap, x, z, level, floor)
         # The body never steps onto or against things: stop short of anything loose at the destination.
         note = ""
-        near = [e for e in self._in_the_way(snap) if math.hypot(e.pos[0] - x, e.pos[2] - z) < 1.3 + max(e.size[0], e.size[2]) / 2]
+        near = [e for e in self._in_the_way(snap) if e.footprint_contains(x, z, margin=1.3)]
         if near:
+            # Stop just outside it, on the side nearest the spot asked for: beside a long log, not a log's length away.
             e = min(near, key=lambda o: math.hypot(o.pos[0] - x, o.pos[2] - z))
-            gap = 1.3 + max(e.size[0], e.size[2]) / 2 + 0.2
-            dx, dz = snap.me[0] - e.pos[0], snap.me[2] - e.pos[2]
-            norm = math.hypot(dx, dz) or 1.0
-            x, z = e.pos[0] + dx / norm * gap, e.pos[2] + dz / norm * gap
-            note = f"; stopped {gap:.1f} away from {e.name} instead of walking into it"
+            hx, hz = e.size[0] / 2 + 1.5, e.size[2] / 2 + 1.5
+            exits = [(e.pos[0] + hx, z), (e.pos[0] - hx, z), (x, e.pos[2] + hz), (x, e.pos[2] - hz)]
+            x, z = min(exits, key=lambda p: (round(math.hypot(p[0] - x, p[1] - z), 1), hdist(snap.me, (p[0], 0, p[1]))))
+            note = f"; stopped beside {e.name} instead of walking into it"
         snap = self._move(x, z)
         return Result(True, "walk_to", f"walked to ({snap.me[0]:.1f}, {snap.me[2]:.1f}){note}")
 
@@ -495,8 +725,9 @@ class Skills:
         stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid)
         level = self._level(snap)
         if stand is None and level > 0.3 and target[1] < level + 1.0:
-            floor = snap.surface(target[0], target[2], below=level - 0.3)[0]
-            if floor is not None and level - floor <= MAX_DROP:
+            # The floor we would stand on down there: under the target, not the target's own top.
+            floor = snap.surface(target[0], target[2], below=min(level, target[1]) - 0.3)[0]
+            if floor is not None:  # hop down, or take a ladder down where the drop is too high
                 if self._hop_down(snap, target[0], target[2], level, floor, walk_on=False).ok:
                     snap = self._observe()
                     stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid)
@@ -510,34 +741,103 @@ class Skills:
         on = snap.surface(snap.me[0], snap.me[2], below=level + STEP)[1]
         return f"up here on {on.name if on else 'something'} (height {level:.1f})"
 
+    def _out_of_reach(self, snap, target, what, otherwise):
+        """Why `what` at `target` cannot be reached, when the plain reason is that we stand too high above it."""
+        level = self._level(snap)
+        floor = snap.surface(target[0], target[2], below=min(level, target[1]) - 0.3)[0] if level > 0.3 else None
+        if floor is not None and level - floor > MAX_DROP and target[1] < level:
+            return (f"{what} is below you, out of reach: you are {self._here(snap)}, {level - floor:.1f} above the "
+                    f"floor there, too high to hop down; climb down first")
+        return otherwise
+
+    def _ways_off(self, snap, goal, level):
+        """Ways to hop off the floor we stand on, best first: (edge spot, landing spot, landing height). The landing is
+        lower by no more than a hop and clear to stand on, and the step off runs into no wall and no standing thing
+        (a ladder set against the edge). Best: nearest to us, landing nearest the goal (x, z)."""
+        blocked_here = self._blocked_fn(snap)
+        mx, mz = snap.me[0], snap.me[2]
+        spots = [(mx + dx * 0.5, mz + dz * 0.5) for dx in range(-16, 17) for dz in range(-16, 17)]
+        spots = [p for p in spots if not blocked_here(*p)]
+        # Only what sticks up above our floor is in the way of stepping off. The block we stand on is our floor, not an
+        # obstacle (counting it left Godling with "no clear edge" on a block, test run t2); what lies lower we land on.
+        in_way = BoxIndex([(e.pos[0], e.pos[2], e.size[0] / 2 + 1.0, e.size[2] / 2 + 1.0) for e in self._walls(snap, level)]
+                          + [(o.pos[0], o.pos[2], o.size[0] / 2 + 1.0, o.size[2] / 2 + 1.0) for o in self._obstacles(snap)
+                             if o.top > level + STEP and o.pos[1] - o.size[1] / 2 < level + 4.5])
+        below_fns = {}
+        ways = []
+        for sx, sz in spots:
+            for k in range(8):
+                lx, lz = sx + 2.8 * math.cos(k * math.pi / 4), sz + 2.8 * math.sin(k * math.pi / 4)
+                below = snap.surface(lx, lz, below=level + STEP)[0]
+                if below is None or below > level - 0.5 or level - below > MAX_DROP:
+                    continue  # not an edge here, the sea, or too far down
+                key = round(below, 1)
+                if key not in below_fns:
+                    below_fns[key] = self._blocked_fn(snap, level=below)
+                if below_fns[key](lx, lz):
+                    continue
+                path = [(sx + (lx - sx) * i / 6, sz + (lz - sz) * i / 6) for i in range(1, 6)]
+                if any(in_way.at(px, pz, strict=True) for px, pz in path):
+                    continue
+                score = math.hypot(sx - mx, sz - mz) + math.hypot(lx - goal[0], lz - goal[1])
+                ways.append((score, (sx, sz), (lx, lz), below))
+        ways.sort(key=lambda w: w[0])
+        return [w[1:] for w in ways]
+
+    def _ladder_down(self, snap, level):
+        """The nearest ladder standing with its top at our level: the way down where a hop is too far."""
+        held, best = snap.held(), None
+        for e in snap.movables():
+            if not e.name.startswith("Ladder_") or e is held or e.size[1] < 5:  # set up, a ladder stands 7.5 tall
+                continue
+            bottom, top = e.pos[1] - e.size[1] / 2, e.pos[1] + e.size[1] / 2
+            if bottom + 0.9 < level <= top + 0.6 and (best is None or hdist(e.pos, snap.me) < hdist(best.pos, snap.me)):
+                best = e
+        return best
+
     def _hop_down(self, snap, x, z, level, floor, walk_on=True):
-        """From up on something, a drop a person would hop down: walk to the edge on the way, step off, land, walk on."""
+        """From up on something, a drop a person would hop down: walk to the edge on the way, step off, land, walk on.
+        Too high to hop, but with a ladder standing against what we are on, climb down it instead, as a person would
+        (in test run t3 Godling stood on its own piers while every plan that began on the ground failed at once)."""
         on = snap.surface(snap.me[0], snap.me[2], below=level + STEP)[1]
         on = on.name if on else "something"
         drop = level - floor
-        if drop > MAX_DROP:
-            return Result(False, "walk_to", f"you are up on {on} at height {level:.1f}, and ({x:.1f}, {z:.1f}) is "
-                                            f"{drop:.1f} lower: too far to hop down; you would have to climb down")
-        # Hop off from the clear spot on this floor nearest to where we are going (not into a ladder or a wall).
-        blocked = self._blocked_fn(snap)
-        mx, mz = snap.me[0], snap.me[2]
-        spots = [(mx + dx * 0.5, mz + dz * 0.5) for dx in range(-24, 25) for dz in range(-24, 25)]
-        spots = [p for p in spots if not blocked(*p)]
-        if not spots:
-            return Result(False, "walk_to", f"you are up on {on} at height {level:.1f} with no clear edge to hop down from")
-        edge = min(spots, key=lambda p: math.hypot(p[0] - x, p[1] - z))
-        if hdist(snap.me, (edge[0], 0, edge[1])) > 0.6:
-            snap = self._move(*edge)
-        ox, oz = x - snap.me[0], z - snap.me[2]
-        norm = math.hypot(ox, oz) or 1.0
-        beyond = (snap.me[0] + ox / norm * 2.5, snap.me[2] + oz / norm * 2.5)
-        self.world.act("MoveTo", {"position": [beyond[0], BODY_CENTRE_Y, beyond[1]]})  # step off the edge
-        landed = False
-        deadline = time.time() + 5
-        while time.time() < deadline and not landed:
-            time.sleep(0.15)
-            landed = self._observe().me[1] < level + BODY_CENTRE_Y - 0.5 * drop
-        self.world.act("Stop")
+        ways = self._ways_off(snap, (x, z), level) if drop <= MAX_DROP else []
+        if not ways:  # too high to hop, or no edge here to hop from: a ladder, if one stands up here
+            ladder = self._ladder_down(snap, level)
+            if ladder is None:
+                if drop > MAX_DROP:
+                    return Result(False, "walk_to", f"you are up on {on} at height {level:.1f}, and ({x:.1f}, {z:.1f}) "
+                                                    f"is {drop:.1f} lower: too far to hop down, and no ladder stands up here")
+                return Result(False, "walk_to", f"you are up on {on} at height {level:.1f} with no clear edge to hop down from")
+            self.log(kind="reflex", text=f"no way to hop down from {on}; climbing down {ladder.name} first")
+            climbed = self.skill_climb(ladder.name)
+            if not climbed.ok or climbed.facts.get("level", level) > level - 0.3:
+                return Result(False, "walk_to", f"you are up on {on} at height {level:.1f}, too high to hop down, and "
+                                                f"climbing down {ladder.name} failed: {climbed.summary}")
+            note = f"climbed down {ladder.name} from {on}"
+            if not walk_on:
+                return Result(True, "walk_to", note)
+            onward = self.skill_walk_to(x, z)
+            return Result(onward.ok, "walk_to", f"{note}; {onward.summary}", onward.facts)
+        landed, tried = False, []
+        for edge, land, below in ways:  # best first; a blocked step-off gets two other tries elsewhere on the edge
+            if len(tried) == 3 or landed:
+                break
+            if any(math.dist(edge, t) < 2.0 for t in tried):
+                continue
+            tried.append(edge)
+            try:
+                if hdist(self._observe().me, (edge[0], 0, edge[1])) > 0.6:
+                    self._move(*edge)
+            except Stuck:
+                continue
+            self.world.act("MoveTo", {"position": [land[0], BODY_CENTRE_Y, land[1]]})  # step off the edge
+            deadline = time.time() + 3
+            while time.time() < deadline and not landed:
+                time.sleep(0.15)
+                landed = self._observe().me[1] < level + BODY_CENTRE_Y - 0.5 * (level - below)
+            self.world.act("Stop")
         time.sleep(0.5)
         if not landed:
             return Result(False, "walk_to", f"you are up on {on} at height {level:.1f} and could not step off its edge")
@@ -552,7 +852,9 @@ class Skills:
         if obj is None or not obj.movable:
             return Result(False, "pick_up", f"there is no movable object called {object}")
         if obj.attrs.get("Fastened"):
-            return Result(False, "pick_up", f"{object} is fastened to what it touches; a hammer strike knocks it loose")
+            return Result(False, "pick_up", f"{object} is fastened in place; a hammer strike knocks it loose")
+        if obj.attrs.get("Burning"):  # a log on fire is the fire's now (run n7 kept reaching for them)
+            return Result(False, "pick_up", f"{object} is burning; it cannot be picked up until the fire is out")
         held = snap.held()
         if held and held.name == object:
             return Result(True, "pick_up", f"already holding {object}", {"holding": object})
@@ -570,8 +872,9 @@ class Skills:
         stand, snap = self._approach(snap, obj.pos, PICKUP_RANGE, 1.6 + min(obj.size[0], obj.size[2]) / 2,
                                      ignore={object}, avoid=obj)
         if stand is None:
-            return Result(False, "pick_up", f"no clear spot to reach {object} from {self._here(snap)} "
-                                            f"(it may be up on something){note}")
+            return Result(False, "pick_up", self._out_of_reach(
+                snap, obj.pos, object, f"no clear spot to reach {object} from {self._here(snap)} "
+                                       f"(it may be up on something)") + note)
         self._move(*stand, ignore={object})
         for attempt in range(2):
             snap = self._observe()
@@ -594,20 +897,28 @@ class Skills:
         return Result(False, "pick_up", f"pickup of {object} failed: {snap.last_result}{note}")
 
     def _set_down_nearby(self, snap, held, away_from):
-        """Reflex, as a person does: set what is in your hands on clear ground beside you before taking something else."""
+        """Reflex, as a person does: set what is in your hands on clear floor beside you before taking something else.
+        The floor we stand on, which may be a platform we built (looking only at the ground there failed, test run t3);
+        a long log may lie either way round."""
         level = self._level(snap)
         kept = [e for name, e in snap.entities.items() if name in set(self.protected())]
         spots = [(snap.me[0] + r * math.cos(k * math.pi / 4), snap.me[2] + r * math.sin(k * math.pi / 4))
-                 for r in (CUBE + 1.0, CUBE + 2.0, CUBE + 3.5) for k in range(8)]
+                 for r in (CUBE + 1.0, CUBE + 2.0, CUBE + 3.5, CUBE + 5.0) for k in range(8)]
+
+        def on_our_floor(x, z):
+            top = snap.surface(x, z, below=level + STEP)[0]
+            return top is not None and abs(top - level) < 0.3
         # Out of the way: not on what we came for, not against anything we decided to keep.
         spots = [(x, z) for x, z in spots
-                 if snap.ground_top(x, z) is not None and abs(snap.ground_top(x, z) - level) < 0.3
+                 if on_our_floor(x, z)
                  and hdist((x, 0, z), away_from) > CUBE + 0.5 and all(hdist((x, 0, z), e.pos) > CUBE for e in kept)]
-        for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))[:6]:
-            result = self.skill_put_down(x, z)
-            if result.ok:
-                self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
-                return result
+        long = max(held.local_size) > CUBE + 0.1 and not held.name.startswith("Ladder_")
+        for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))[:8]:
+            for turn in ((0, 90) if long else (0,)):
+                result = self.skill_put_down(x, z, turn)
+                if result.ok:
+                    self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
+                    return result
         return None
 
     def skill_put_down(self, x, z, turn=0, upright=False):
@@ -624,7 +935,7 @@ class Skills:
         if held.name.startswith(SNAPPED_KINDS):  # it will settle into the grid: plan for the cell it lands in
             x, z = grid(x), grid(z)
         size = turned_size(held.local_size, turn, upright and not ladder)
-        half = max(size[0], size[2]) / 2
+        hx, hz = size[0] / 2, size[2] / 2
         level = self._level(snap)
         floor = snap.surface(x, z, below=level + STEP)[0]  # the ground, or a floor we built at our own level
         floor = ground if floor is None else floor
@@ -633,16 +944,18 @@ class Skills:
             return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is inside the trunk of {covering.name}")
         if not ladder:  # a ladder is meant to stand against something
             for t in snap.terrain():  # a mesa wall or a trunk right beside the spot leaves no room for the object
-                if t.top > floor + 0.3 and abs(x - t.pos[0]) < t.size[0] / 2 + half and abs(z - t.pos[2]) < t.size[2] / 2 + half:
+                if t.top > floor + 0.3 and abs(x - t.pos[0]) < t.size[0] / 2 + hx and abs(z - t.pos[2]) < t.size[2] / 2 + hz:
                     return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is too close to {t.name} to set anything down")
-            for e in self._obstacles(snap, ignore={held.name}):
-                if (math.hypot(e.pos[0] - x, e.pos[2] - z) < half + max(e.size[0], e.size[2]) / 2 + 0.05
+            for e in self._obstacles(snap, ignore={held.name}):  # boxes: side by side in neighbouring cells is fine
+                if (abs(e.pos[0] - x) < hx + e.size[0] / 2 - 0.05 and abs(e.pos[2] - z) < hz + e.size[2] / 2 - 0.05
                         and e.top > floor + 0.05 and e.pos[1] - e.size[1] / 2 < floor + 3):
                     return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is occupied by {e.name}")
         target = (x, floor + size[1] / 2 + (0.02 if ladder else 0.12), z)
-        stand = self._stand_point(snap, target, PLACE_RANGE, 1.0 + half + 0.5, ignore={held.name})
+        stand, snap = self._approach(snap, target, PLACE_RANGE, 1.0 + min(hx, hz) + 0.5, ignore={held.name},
+                                     avoid=_Box(target, size))
         if stand is None:
-            return Result(False, "put_down", f"no clear spot to reach ({x:.1f}, {z:.1f}) from")
+            return Result(False, "put_down", self._out_of_reach(
+                snap, target, f"({x:.1f}, {z:.1f})", f"no clear spot to reach ({x:.1f}, {z:.1f}) from {self._here(snap)}"))
         self._move(*stand, ignore={held.name})
         snap = self.world.act("Place", {"position": list(target), "rotation": _rotation(turn, upright)})
         if snap.last_result != "PlaceSuccess":
@@ -744,12 +1057,15 @@ class Skills:
         if held.name.startswith(SNAPPED_KINDS):  # it will settle into the grid: plan for the cell it lands in
             target = (grid(target[0]), target[1], grid(target[2]))
         size = turned_size(held.local_size, turn, upright)
-        half = max(size[0], size[2]) / 2
+        spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
-        if math.dist(body, target) > PLACE_RANGE - 0.3 or hdist(body, target) < 1.0 + half + 0.3:
-            stand = self._stand_point(snap, target, PLACE_RANGE, 1.0 + half + 0.5, ignore={held.name})
+        if math.dist(body, target) > PLACE_RANGE - 0.3 or spot.footprint_contains(body[0], body[2], margin=1.3):
+            stand, snap = self._approach(snap, target, PLACE_RANGE, 1.0 + min(size[0], size[2]) / 2 + 0.5,
+                                         ignore={held.name}, avoid=spot)
             if stand is None:
-                return Result(False, "place_at", f"cannot get within reach of ({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})")
+                where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
+                return Result(False, "place_at", self._out_of_reach(
+                    snap, target, where, f"cannot get within reach of {where} from {self._here(snap)}"))
             snap = self._move(*stand, ignore={held.name})
         snap = self.world.act("Place", {"position": list(target), "rotation": _rotation(turn, upright)})
         sink = self._sink(snap, target, size, held.name) if snap.last_result == "PlaceFailed:Occupied" else None
@@ -806,17 +1122,27 @@ class Skills:
         if not held or not held.name.startswith(TOOL_KINDS):
             return Result(False, "strike", "your hands hold no tool to strike with" + (f" ({held.name} is not one)" if held else ""))
         self.busy.add(held.name)
-        # Aim at the nearest point of its surface, at body height, and stand within reach of it.
-        level = self._level(snap)
-        aim = tuple(min(max(c, p - s / 2), p + s / 2) for c, p, s in
-                    zip((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), target.pos, target.size))
-        if math.dist((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), aim) > STRIKE_RANGE - 0.5:
-            stand, snap = self._approach(snap, aim, STRIKE_RANGE, 2.2, ignore={held.name})
-            if stand is None:
-                return Result(False, "strike", f"no clear spot to stand within reach of {object} from {self._here(snap)}")
-            self._move(*stand, ignore={held.name})
-        snap = self.world.act("Strike", {"name": object})
-        outcome = snap.last_result or ""
+        moving = object.startswith("Fish_")  # a fish swims on: aim where it is now, and again if it slips out of reach
+        for _ in range(4 if moving else 1):
+            snap = self._observe()
+            target = snap.entities.get(object)
+            if target is None:
+                return Result(False, "strike", f"{object} is gone")
+            # Aim at the nearest point of its surface, at body height, and stand within reach of it.
+            level = self._level(snap)
+            aim = tuple(min(max(c, p - s / 2), p + s / 2) for c, p, s in
+                        zip((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), target.pos, target.size))
+            if math.dist((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), aim) > STRIKE_RANGE - 0.5:
+                stand, snap = self._approach(snap, aim, STRIKE_RANGE, 2.2, ignore={held.name})
+                if stand is None:
+                    if moving:
+                        return Result(False, "strike", f"{object} is too far out in the water to reach from the shore")
+                    return Result(False, "strike", f"no clear spot to stand within reach of {object} from {self._here(snap)}")
+                self._move(*stand, ignore={held.name})
+            snap = self.world.act("Strike", {"name": object})
+            outcome = snap.last_result or ""
+            if not (moving and outcome == "StrikeFailed:OutOfRange"):
+                break
         snap = self._settle(STRIKE_SECONDS)  # the swing
         kind, _, detail = outcome.partition(":")
         where = lambda name: (lambda p: f"({p.pos[0]:.1f}, {p.pos[2]:.1f})" if p else "somewhere nearby")(snap.entities.get(name))
@@ -835,6 +1161,20 @@ class Skills:
             return Result(True, "strike", f"struck {object}; it is knocked loose and no longer fastened", {"loosened": detail})
         if kind == "StrikeNoEffect":
             return Result(False, "strike", f"struck {object} with {held.name}; nothing came of it")
+        if kind == "StrikeCarving":
+            done, needed = (int(n) for n in detail.split("/"))
+            return Result(True, "strike", f"carved at {object} with {held.name} ({done} of {needed} strokes so far)",
+                          {"strokes": done})
+        if kind == "StrikeCarved":
+            return Result(True, "strike", f"{object} is carved into {detail}, which lies at {where(detail)}", {"made": detail})
+        if kind == "StrikeCaught":
+            return Result(True, "strike", f"speared {object}; the catch, {detail}, lies on the sand at {where(detail)}",
+                          {"made": detail})
+        if kind == "StrikeMissed":
+            return Result(False, "strike", f"missed {object}; it darted away")
+        if kind == "StrikeYardFull":
+            return Result(False, "strike", f"struck {object}, but no stone can come off: every spot round its foot "
+                                           f"already holds a loose stone; carry some away first")
         why = {"StrikeFailed:NoTool": "your hands hold no tool", "StrikeFailed:OutOfRange": f"{object} is out of reach",
                "StrikeFailed:TooSoon": "the last swing was too recent",
                "StrikeFailed:NoTarget": f"there is nothing called {object}"}.get(outcome, outcome or "nothing happened")
@@ -855,7 +1195,8 @@ class Skills:
             stand, snap = self._approach(snap, piece.pos, PLACE_RANGE, 1.6 + min(piece.size[0], piece.size[2]) / 2,
                                          ignore={object}, avoid=piece)
             if stand is None:
-                return Result(False, "fasten", f"no clear spot to reach {object} from {self._here(snap)}")
+                return Result(False, "fasten", self._out_of_reach(
+                    snap, piece.pos, object, f"no clear spot to reach {object} from {self._here(snap)}"))
             self._move(*stand, ignore={object})
         snap = self.world.act("Fasten", {"name": object})
         outcome = snap.last_result or ""
@@ -888,8 +1229,8 @@ class Skills:
             sides = [p for p in sides if not blocked(*p)] or sides
             spot = min(sides, key=lambda p: hdist(snap.me, (p[0], 0, p[1])))
             try:
-                self._move(*spot, stop_within=0.4, ignore={object})
-            except Interrupted:  # bumping the ladder itself is close enough to climb it
+                self._move(*spot, stop_within=0.7, ignore={object})
+            except Stuck:  # bumping the ladder itself is close enough to climb it
                 if hdist(self._observe().me, ladder.pos) > 2.6:
                     raise
         start = self._level(self._observe())
@@ -911,8 +1252,139 @@ class Skills:
                "ClimbFailed:NoLadder": f"{object} is not a ladder"}.get(outcome, outcome or "nothing happened")
         return Result(False, "climb", f"climb failed: {why}")
 
+    def skill_draw(self, x, z):
+        """A foot dragged through the sand: the world leaves the line at once; the body walks along it."""
+        x, z = float(x), float(z)
+        snap = self._observe()
+        start = (snap.me[0], snap.me[2])
+        snap = self.world.act("Draw", {"to": [x, z]})
+        outcome = snap.last_result or ""
+        if not outcome.startswith("DrawSuccess:"):
+            length = math.hypot(x - start[0], z - start[1])
+            why = {"DrawFailed:NotSand": "the line would cross something that is not open sand (grass, rock, a tree, "
+                                         "the sea); only the beach takes a line",
+                   "DrawFailed:Length": f"a line runs from 0.5 to 20 long, and ({x:.1f}, {z:.1f}) is {length:.1f} away",
+                   "DrawFailed:BeachFull": "the beach holds no more lines",
+                   "DrawFailed:BadTarget": "that is not a place"}.get(outcome, outcome or "nothing happened")
+            return Result(False, "draw", f"draw failed: {why}")
+        mark = outcome.split(":", 1)[1]
+        try:
+            self._move_once(x, z, 0.6)  # open beach: straight along the line, as the foot drags
+        except Stuck:
+            pass  # the line is drawn either way
+        return Result(True, "draw", f"drew a line in the sand from ({start[0]:.1f}, {start[1]:.1f}) to ({x:.1f}, {z:.1f})",
+                      {"mark": mark})
+
+    def skill_shake(self, object):
+        snap = self._observe()
+        palm = snap.entities.get(object)
+        if palm is None or not object.startswith("Palm_") or palm.role != "Tree":
+            return Result(False, "shake", f"there is no standing palm called {object}")
+        level = self._level(snap)
+        aim = tuple(min(max(c, p - s / 2), p + s / 2) for c, p, s in
+                    zip((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), palm.pos, palm.size))
+        if math.dist((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), aim) > STRIKE_RANGE - 0.5:
+            stand, snap = self._approach(snap, aim, STRIKE_RANGE, 2.2)
+            if stand is None:
+                return Result(False, "shake", f"no clear spot to stand at {object} from {self._here(snap)}")
+            self._move(*stand)
+        snap = self.world.act("Shake", {"name": object})
+        outcome = snap.last_result or ""
+        snap = self._settle(1.6)  # the coconut drops
+        if outcome.startswith("ShakeCoconut:"):
+            name = outcome.split(":", 1)[1]
+            nut = snap.entities.get(name)
+            where = f"({nut.pos[0]:.1f}, {nut.pos[2]:.1f})" if nut else "at its foot"
+            return Result(True, "shake", f"shook {object}; {name} fell and lies at {where}", {"made": name})
+        if outcome == "ShakeNothing":
+            return Result(False, "shake", f"shook {object}; it has no ripe coconut right now")
+        why = {"ShakeFailed:NotAPalm": f"{object} is not a palm",
+               "ShakeFailed:OutOfRange": f"{object} is out of reach"}.get(outcome, outcome or "nothing happened")
+        return Result(False, "shake", f"shake failed: {why}")
+
+    def skill_carve(self, object):
+        snap = self._observe()
+        if snap.entities.get(object) is None or not object.startswith("Log_"):
+            return Result(False, "carve", f"there is no log called {object}")
+        held = snap.held()
+        if not held or not held.name.startswith("Axe_"):
+            return Result(False, "carve", "carving needs the axe in your hands")
+        stroke = None
+        for _ in range(4):  # the world needs a few strokes
+            stroke = self.skill_strike(object)
+            if not stroke.ok or "made" in stroke.facts:
+                break
+        return Result(stroke.ok and "made" in stroke.facts, "carve", stroke.summary, stroke.facts)
+
+    def skill_kindle(self, object):
+        snap = self._observe()
+        log = snap.entities.get(object)
+        if log is None or not object.startswith("Log_"):
+            return Result(False, "kindle", f"there is no log called {object}")
+        if log.attrs.get("Burning"):  # what the mind wanted is there (run n7 failed this 11 times)
+            fire = next((e.name for e in snap.entities.values() if e.name.startswith("Fire_")
+                         and e.attrs.get("Fuel") == object), None)
+            return Result(True, "kindle", f"{object} is already burning" + (f": {fire} burns on it" if fire else ""),
+                          {"made": fire} if fire else {})
+        level = self._level(snap)
+        body = (snap.me[0], level + BODY_CENTRE_Y, snap.me[2])
+        if math.dist(body, log.pos) > PLACE_RANGE - 0.5:
+            stand, snap = self._approach(snap, log.pos, PLACE_RANGE, 1.6 + min(log.size[0], log.size[2]) / 2,
+                                         ignore={object}, avoid=log)
+            if stand is None:
+                return Result(False, "kindle", self._out_of_reach(snap, log.pos, object,
+                                                                  f"no clear spot to reach {object} from {self._here(snap)}"))
+            self._move(*stand, ignore={object})
+        tries = 0
+        for _ in range(18):  # patient rubbing, a few seconds a rub: the wood warms, and by the sixteenth it catches
+            snap = self.world.act("Kindle", {"name": object})
+            outcome = snap.last_result or ""
+            if outcome.startswith("KindleCaught:"):
+                fire = outcome.split(":", 1)[1]
+                return Result(True, "kindle", f"rubbed at {object} until it caught: {fire} burns on it", {"made": fire})
+            if outcome.startswith("KindleSmoke:"):
+                tries += 1
+                time.sleep(4.2)
+                continue
+            if outcome == "KindleFailed:TooSoon":
+                time.sleep(1.0)
+                continue
+            why = {"KindleFailed:NotALog": f"{object} is not a log", "KindleFailed:Burning": f"{object} is already burning",
+                   "KindleFailed:NotSetDown": f"{object} must lie on the ground, not be held",
+                   "KindleFailed:OutOfRange": f"{object} is out of reach"}.get(outcome, outcome or "nothing happened")
+            return Result(False, "kindle", f"kindle failed: {why}")
+        return Result(False, "kindle", f"rubbed at {object} {tries} times; only smoke so far, no flame")
+
+    def skill_cook(self):
+        held = self._observe().held()
+        if not held:
+            return Result(False, "cook", "your hands are empty")
+        snap = self.world.act("Cook", {})
+        outcome = snap.last_result or ""
+        if outcome.startswith("CookSuccess:"):
+            return Result(True, "cook", f"cooked {held.name} over the fire", {"cooked": held.name})
+        why = {"CookFailed:NotFish": f"{held.name} is not a fish to cook", "CookFailed:Cooked": f"{held.name} is cooked already",
+               "CookFailed:NoFire": "no fire burns beside you"}.get(outcome, outcome or "nothing happened")
+        return Result(False, "cook", f"cook failed: {why}")
+
+    def skill_eat(self):
+        held = self._observe().held()
+        if not held:
+            return Result(False, "eat", "your hands are empty")
+        snap = self.world.act("Eat", {})
+        outcome = snap.last_result or ""
+        if outcome.startswith("EatSuccess:"):
+            return Result(True, "eat", f"ate {held.name}; you are now {outcome.split(':')[1]}% fed", {"ate": held.name})
+        why = {"EatFailed:NotFood": f"{held.name} is not something you can eat",
+               "EatFailed:EmptyHands": "your hands are empty"}.get(outcome, outcome or "nothing happened")
+        return Result(False, "eat", f"eat failed: {why}")
+
     def skill_say(self, text):
         self.world.say(str(text))
+        try:
+            self.world.act("Talk", {})  # the body talks along (the renderer's Talk clip)
+        except WorldError:
+            pass  # an older world without Talk: the words are said all the same
         return Result(True, "say", "said it")
 
     def skill_wait(self, seconds):
