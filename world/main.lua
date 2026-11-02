@@ -1351,6 +1351,15 @@ local function noteReach(player)
     player:SetAttribute("Reaches", (player:GetAttribute("Reaches") or 0) + 1)
 end
 
+-- Which action the body just did, for the renderer to play its own clip (the art session's contract): the clip's
+-- name and a counter, set together. Reaches and Strikes keep counting, so a renderer without the clips still plays
+-- something. Clips: PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk,
+-- WakeUp.
+local function gesture(player, clip)
+    player:SetAttribute("Gesture", clip)
+    player:SetAttribute("Gestures", (player:GetAttribute("Gestures") or 0) + 1)
+end
+
 local function pickupBlock(player, inputData)
     if heldBlocksByPlayer[player] then
         player:SetAttribute("LastActionResult", "PickupFailed:AlreadyHolding")
@@ -1404,6 +1413,7 @@ local function pickupBlock(player, inputData)
 
     player:SetAttribute("LastActionResult", "PickupSuccess")
     noteReach(player)
+    gesture(player, "PickUp")
 end
 
 local function parseRotationDegrees(rotation)
@@ -1528,6 +1538,7 @@ local function placeBlock(player, inputData)
 
     player:SetAttribute("LastActionResult", "PlaceSuccess")
     noteReach(player)
+    gesture(player, "PutDown")
 end
 
 local function clamp(value, minValue, maxValue)
@@ -1603,6 +1614,7 @@ local function throwBlock(player, inputData)
         duration = THROW_COLLISION_GRACE_PERIOD,
     })
 
+    gesture(player, "Throw")
     player:SetAttribute("LastActionResult", "ThrowSuccess")
 end
 
@@ -1862,6 +1874,7 @@ local function faint(player, s)
     s.hunger, s.health = FAINT_HUNGER, FAINT_HEALTH
     player:SetAttribute("Faints", (player:GetAttribute("Faints") or 0) + 1)
     setVitals(player, s)
+    gesture(player, "WakeUp") -- getting up off its back by the raft
 end
 
 local function tickSurvival(dt)
@@ -1907,6 +1920,7 @@ local function eat(player)
     s.health = math.min(100, s.health + food / 4) -- a meal mends a little too
     setVitals(player, s)
     player:SetAttribute("Reaches", (player:GetAttribute("Reaches") or 0) + 1)
+    gesture(player, "Eat")
     player:SetAttribute("LastActionResult", string.format("EatSuccess:%d", math.floor(s.hunger + 0.5)))
 end
 
@@ -1923,6 +1937,7 @@ local function shakePalm(player, inputData)
         return
     end
     player:SetAttribute("Strikes", (player:GetAttribute("Strikes") or 0) + 1) -- arms up at the trunk
+    gesture(player, "Shake")
     if os.clock() - (palm:GetAttribute("CoconutAt") or -math.huge) < COCONUT_REGROW then
         player:SetAttribute("LastActionResult", "ShakeNothing")
         return
@@ -2134,6 +2149,7 @@ local function kindle(player, inputData)
     end
     lastKindleAt[player] = os.clock()
     player:SetAttribute("Strikes", (player:GetAttribute("Strikes") or 0) + 1) -- arms working at the wood
+    gesture(player, "Kindle")
     local tries = (log:GetAttribute("KindleTries") or 0) + 1
     log:SetAttribute("KindleTries", tries)
     if math.random() > KINDLE_CHANCE then
@@ -2189,6 +2205,7 @@ local function cook(player)
             held.Color = Color3.fromRGB(165, 104, 58)
             held:SetAttribute("ModelUrl", ART.FishCooked) -- browned, with grill marks
             player:SetAttribute("Reaches", (player:GetAttribute("Reaches") or 0) + 1)
+            gesture(player, "Cook")
             player:SetAttribute("LastActionResult", "CookSuccess:" .. held.Name)
             return
         end
@@ -2243,6 +2260,7 @@ local function strike(player, inputData)
     else
         result = "StrikeNoEffect:" .. tool
     end
+    gesture(player, tool == "Spear" and "Spear" or tool == "Hammer" and "Mine" or role == "Log" and "Carve" or "Chop")
     player:SetAttribute("LastActionResult", result)
 end
 
@@ -2418,6 +2436,7 @@ local function fasten(player, inputData)
     piece:SetAttribute("Settled", false)
     piece:SetAttribute("Fastened", true)
     player:SetAttribute("Reaches", (player:GetAttribute("Reaches") or 0) + 1)
+    gesture(player, "Fasten")
     player:SetAttribute("LastActionResult", "FastenSuccess:fixed")
 end
 
@@ -2579,6 +2598,7 @@ local function drawLine(player, inputData)
     mark:SetAttribute("RenderRole", "SandMark")
     mark:SetAttribute("Stroke", string.format("%.1f,%.1f,%.1f,%.1f", x1, z1, x2, z2))
     mark.Parent = Workspace
+    gesture(player, "Draw")
     player:SetAttribute("LastActionResult", "DrawSuccess:" .. mark.Name)
 end
 
@@ -2698,6 +2718,9 @@ if AgentInputService then
             eat(player)
         elseif inputType == "Kindle" then
             kindle(player, inputData)
+        elseif inputType == "Talk" then -- the mind spoke (world chat): the body talks along
+            gesture(player, "Talk")
+            player:SetAttribute("LastActionResult", "TalkSuccess")
         elseif inputType == "Cook" then
             cook(player)
         else

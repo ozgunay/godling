@@ -1219,6 +1219,10 @@ class Skills:
 
     def skill_say(self, text):
         self.world.say(str(text))
+        try:
+            self.world.act("Talk", {})  # the body talks along (the renderer's Talk clip)
+        except WorldError:
+            pass  # an older world without Talk: the words are said all the same
         return Result(True, "say", "said it")
 
     def skill_wait(self, seconds):
