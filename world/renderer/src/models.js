@@ -83,7 +83,7 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
 // - Climb loops while "Climbing" is true; Jump and Fall loop while the body jumps or falls, if the model has them.
 // - Walk plays at the body's real speed, Idle when nothing else does.
 // A new one-shot cuts the one in progress short.
-const WALK_STRIDE_SPEED = 0.655 // model metres per second the Walk clip covers at normal speed
+const WALK_STRIDE_SPEED = 0.667 // model metres per second the Walk clip covers at normal speed
 const ONE_SHOTS = [
   { attribute: 'Reaches', clip: 'PickUp', seconds: 1.1 }, // the world lifts a block in 1.0 s, lowers one in 1.2 s
   { attribute: 'Strikes', clip: 'Strike', seconds: 1.0 }, // a hammer blow on the quarry
