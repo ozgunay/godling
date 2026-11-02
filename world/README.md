@@ -64,8 +64,12 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Stone` and `Log` drop a piece from 12 up.
     - `Regrow` grows the stump nearest Godling back at once.
     - `Lightning` fells the tree nearest Godling into two logs, through the axe's `fellTree`.
-    - `Meteor` lays a `SkyShadow_n` on the ground; `SKY_WARN_SECONDS` (40) later a dark `Meteor_n` stone falls into it. It waits while anyone stands within 3 of the shadow's centre.
-  - Viewers choose what; the world chooses where. Drops land 8–16 from Godling, on open ground, at least 4 from any building piece.
+    - `Meteor` lays a 4-wide `SkyShadow_n` on whatever is there; `SKY_WARN_SECONDS` (40) later a dark `Meteor_n` stone (`asset://meteor.glb`) falls into it and blasts (`sky.meteor`, below). Aimed, it falls whoever stands there; unaimed, it waits while anyone stands within 3 of the shadow's centre.
+  - Viewers choose what, and may aim it (`inputData.at {x, z}`, `sky.aim`; the user's rule, ADR-011). Only the meteor lands on Godling or on what it built:
+    - A stone or log aimed within 4.5 of Godling lands at its feet, 3.5 from its centre (a log lies across that side). Aimed elsewhere, it goes to the nearest spot within 12 that is open land, at least 3 from any piece (a log, 4.5) and 3.5 from Godling.
+    - Lightning strikes the standing palm nearest the aim that is at least 9 from Godling, with no piece within 5 of its trunk (`NoSafePalm` otherwise). Regrow takes the stump nearest the aim.
+    - An aim more than 60 from Godling is refused (`TooFar`); a meteor aimed at the sea, too (`NotOnLand`).
+    - Unaimed, the world chooses as before: 8–16 from Godling, on open ground, at least 4 from any building piece.
   - Every piece a power leaves carries `SkyEvent` (its kind) and `SkyId`. The world log prints a `SKY <kind> #<id>` line for each.
   - Powers come only from the bodiless player `Sky` (`SKY_PLAYER`), which `tools/guest_panel.py` joins as. It is parked under the island, and the mind leaves it out of what it sees. `max_players` is 2 for it.
   - `SKY_TEST_EVERY` (seconds, 0 = off) drops a meteor near Godling on a timer, to measure reactions without the panel. `run_godling.py --sky-test-minutes` sets it.
@@ -85,7 +89,18 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - not while Godling's health is under 30, or within 15 minutes of a faint;
     - at least 15 settled pieces within reach.
   - **The world log** prints `SKY Earthquake #n rumbling / shaking / over: woke W, moved M, fell F`, and `QUAKE knocked … down`.
-- **One table for the sky's parts** (`local sky`: `turners`, `power`, `quake`, `pedestal`, `parkGuest`). The main chunk is at Luau's limit of 200 locals; one more stopped the world with "Out of local registers".
+- **The meteor's blast** (`sky.meteor`; the user's wish, ADR-011). The world carries the stone straight down at 25/s and it blasts where it first touches something: the ground, a wall top, or a head.
+  - Pieces within 2.5 of the contact point are smashed (removed). Fastenings within 5 break. Loose pieces within 7 are thrown out and up, up to 16/s out and 11/s up, less further out. Palms within 4 are felled into logs. Terrain and the quarry stay.
+  - Anyone within 6 loses 45 health and is knocked down (`Stagger`, then `GetUp` 2.5 s later, as in the earthquake).
+  - It leaves `Blast_n` (`RenderRole` "Blast", `Radius` 7) at the contact point for 3 s, for the renderer's explosion, and `Crater_n` (`RenderRole` "Crater", `asset://crater.glb`, 8 x 0.6 x 8, never touched) on the ground under it. The last 8 craters stay. The stone comes to rest in its crater, a building stone.
+  - The Clock carries the latest blast: `MeteorId`, `MeteorX`, `MeteorZ`, `MeteorSmashed`, `MeteorThrown`, `MeteorUnfastened`, `MeteorFelled`, `MeteorHurt`. The world log prints `SKY Meteor #n blasted at (x, y, z): smashed …`.
+  - A disaster: the mercy rule holds (`sky.quake.weak`), and 60 s pass between meteors in test mode.
+- **Notes from viewers** (ADR-011). A guest-panel power, `Note {text}`.
+  - A `SkyNote_n` paper glider (`RenderRole` "SkyNote", never touched) drifts down from 9 near Godling in 4 s, by the same spot rule as the drops, and lies there 4 minutes.
+  - The Clock carries the latest note: `NoteId`, `NoteText` (at most 160 characters, one line), `NoteX`, `NoteZ`. The world log prints `SKY Note #n drifted down at (x, z): text`.
+  - The panel filters a note before it reaches the world (`tools/guest_panel.py clean_note`). The mind reads it as a stranger's quoted words and decides for itself.
+- **What viewers see of Godling.** The guest panel's bodiless player cannot see other players, so every half second the world copies Godling's `Health`, `Hunger`, `Wet`, `Cold`, `Bracing` and `KnockedDown` onto the Clock as `GodlingHealth` and so on (`sky.mirrorGodling`). The Clock also carries `Day`, counted from the first morning.
+- **One table for the sky's parts** (`local sky`: `turners`, `power`, `quake`, `pedestal`, `parkGuest`, `mirrorGodling`, `notes`, `aim`, `meteor`). The main chunk is at Luau's limit of 200 locals; one more stopped the world with "Out of local registers".
 - **The guest panel's "Sky" body stays parked.** A character's body does not stay anchored. The parked Sky body fell out of the world and was put back on the spawn spot, on Godling's head (since PR #3; found by the renderer session). It now stands on an invisible `SkyPedestal` at (0, -40, 0) under the island, and is put back there every half second if it drifts.
 - **Weather (ADR-010).** Showers every 20–50 minutes, 4–10 long; the Clock carries `Rain` (0–1).
   - Out in the rain, a body walks at 0.65 of its pace and gets soaked (`Wet` 0–100).

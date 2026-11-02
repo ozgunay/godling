@@ -30,7 +30,7 @@ FASTEN_SECONDS = 2.5  # main.lua FASTEN_COOLDOWN
 LADDER_HEIGHT = 3 * CUBE  # main.lua LADDER_SIZE.Y
 TURN_RATE = 6.0  # main.lua TURN_RATE: radians per second when Face turns the body on the spot
 SKY_PLAYER = "Sky"  # main.lua SKY_PLAYER: the guest panel's bodiless player, which is not someone on the island
-SKY_MARKERS = ("SkyShadow", "SkyFlash")  # shadows and bolts of sky events: seen, never touched
+SKY_MARKERS = ("SkyShadow", "SkyFlash", "SkyNote", "Blast", "Crater")  # seen, never touched; a crater is walked over
 STEP = 0.45  # the highest step the legs take without a ladder
 MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Brick_", "Log_", "Boulder_", "Ring_",
                  "Rock_", "Hammer_", "Axe_", "Ladder_", "Spear_", "Coconut_", "Catch_", "Volleyball")
@@ -188,6 +188,15 @@ class Snapshot:
         self.quake_phase = (clock.attrs.get("QuakePhase") or "") if clock else ""
         self.quake_id = clock.attrs.get("QuakeId") if clock else None
         self.quake_fell = (clock.attrs.get("QuakeFell") or 0) if clock else 0
+        # The latest note from someone watching (main.lua sky.notes): its number, its text and where its glider landed.
+        self.note_id = clock.attrs.get("NoteId") if clock else None
+        self.note_text = " ".join(str(clock.attrs.get("NoteText") or "").replace('"', "'").split()) if clock else ""
+        self.note_at = (clock.attrs.get("NoteX") or 0, 0, clock.attrs.get("NoteZ") or 0) if clock else (0, 0, 0)
+        # The latest meteor's blast (main.lua sky.meteor): its number, where, and what it did.
+        a = clock.attrs if clock else {}
+        self.meteor_id = a.get("MeteorId")
+        self.meteor_at = (a.get("MeteorX") or 0, 0, a.get("MeteorZ") or 0)
+        self.meteor_did = {k: int(a.get("Meteor" + k) or 0) for k in ("Smashed", "Thrown", "Unfastened", "Felled", "Hurt")}
         self.bracing, self.knocked_down = bool(attrs.get("Bracing")), bool(attrs.get("KnockedDown"))
         self._held, self._held_known = None, False
 
