@@ -24,10 +24,10 @@ You found the first castaway island (ADR-005) wrong in every way. There was no s
 
 ## What was built
 **The island** (`tools/make_island.py` writes the `ISLAND` block in `world/main.lua`, a copy in `world/island.lua`, and `research/island-preview.png`):
-- **Shape.** 111 x 119 blocks: a ragged coast, sand all round, wider in the south, and a palm islet across a strait.
+- **Shape.** 111 x 119 blocks: a ragged coast, sand all round, wider in the south, and a palm islet across a strait. Since ADR-009 the same shape is 1.2 times larger, 134 x 142 blocks.
 - **Rock.** A lopsided peak 16 blocks (40 units) high in the north-west, cut in 2-block terraces, plus two hills.
 - **Parts.** Rock is grid-aligned columns (`Mesa`, `Surface` "Rock", `Feature` Peak, EastHill or SouthHill). Ground is sand under the whole outline, with grass 0.1 above it inland.
-- **Where things are.** The raft is on the west beach and Godling spawns beside it. The camp (starting blocks, ladder, axe) is about 12 blocks inland. The quarry is against the peak's foot. 70 palms lean out to sea on the beach and any way inland.
+- **Where things are.** The raft is on the west beach and Godling spawns beside it. The camp (starting blocks, ladder, axe) is about 12 blocks inland. The quarry is against the peak's foot. 70 palms lean out to sea on the beach and any way inland. Since ADR-009: 31 on the beach, and 63 inland in nine groves, with palm-free meadows at the camp, by the quarry and in the middle.
 - **Voxels.** Clawblox's voxel terrain was looked at and set aside: its voxels are 4 units, which don't fit our 2.5 grid, the ladder or the hop.
 
 **The body, for hundreds of terrain parts:**

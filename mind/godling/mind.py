@@ -8,6 +8,7 @@ A decision is split in three so the mind can think while the body moves (ADR-002
 """
 import json
 import time
+from dataclasses import dataclass
 
 from .learned import SkillError
 from .discovery import SIGHT
@@ -54,7 +55,7 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
 
 
-def island_map(snap, discovery=None, half=150, step=10):
+def island_map(snap, discovery=None, half=200, step=10):
     """A small map of the island for the mind (ADR-007): where the beach, the grass and the rock are. It knew only
     coordinates, and walked into the sea and drew lines across the grass looking for the beach (test run c1)."""
     rows = []
@@ -91,6 +92,14 @@ def _fmt_pos3(p):
     return f"({p[0]:.1f}, {p[1]:.2f}, {p[2]:.1f})"
 
 
+@dataclass
+class _Seen:
+    """A loose thing as the mind knows it: where it is, or where it was last seen (`old`)."""
+    name: str
+    pos: tuple
+    old: bool
+
+
 class Mind:
     def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None):
         self.llm = llm
@@ -110,6 +119,9 @@ class Mind:
 
     def _knows(self, thing):
         return self.discovery is None or self.discovery.knows(thing)
+
+    def _sees(self, thing):
+        return self.discovery is None or thing.name in self.discovery.visible
 
     # ---- prompts ----------------------------------------------------------------------
     def system_prompt(self, snap):
@@ -146,7 +158,8 @@ settles into a grid of cells 2.5 apart. Things you can build with: stone blocks,
 off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back); boulders,
 which are very heavy. The ladder is three blocks tall. Pieces you set down can be turned a quarter round
 or stood on end, and fastened in place, like mortar.
-Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. You eat what
+Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. Lightning, or a
+stone falling from the sky, hurts you if you are close when it strikes. Fed at least half full, you heal. You eat what
 you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Fire can be rubbed into a log, and
 cooked fish fills you far more than raw. Days turn into nights, and nights are dark.
 Everything else about the world, and how to build well, is yours to discover.
@@ -179,17 +192,25 @@ thought and in that project's intention."""
     def situation(self, snap, events, chat, doing=None):
         held = snap.held()
         protected = self.memory.protected_cubes()
-        stacked = {n for _, names in snap.stacks() for n in names}
-        loose = sorted((e for e in snap.movables() if e.name not in stacked and e is not held and self._knows(e)),
-                       key=lambda e: hdist(e.pos, snap.me))
-        loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" [kept]" if e.name in protected else "")
-                              for e in loose[:LOOSE_IN_VIEW])
+        seen = self.discovery.seen if self.discovery is not None else None
+        known_stacks = [(xz, names) for xz, names in snap.stacks() if seen is None or any(n in seen for n in names)]
+        stacked = {n for _, names in known_stacks for n in names}
+        if seen is None:
+            loose = [_Seen(e.name, e.pos, False) for e in snap.movables() if e.name not in stacked and e is not held]
+        else:  # what is in sight as it is now, the rest where it was last seen (ADR-008)
+            live = snap.entities
+            loose = [_Seen(n, live[n].pos if n in self.discovery.visible and n in live else p,
+                           n not in self.discovery.visible) for n, p in seen.items()
+                     if n not in stacked and not (held and n == held.name)]
+        loose.sort(key=lambda e: hdist(e.pos, snap.me))
+        loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" (last seen there)" if e.old else "")
+                              + (" [kept]" if e.name in protected else "") for e in loose[:LOOSE_IN_VIEW])
         if len(loose) > LOOSE_IN_VIEW:
             loose_txt += f", and {len(loose) - LOOSE_IN_VIEW} more further away"
-        stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in snap.stacks()) or "none"
+        stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in known_stacks) or "none"
         kept = "; ".join(f"{title} at {s['where']} ({len(s['cubes'])} cubes)" for title, s in self.memory.state["structures"].items()) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
-        cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in snap.stacks() for n in names[-1:]]
+        cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in known_stacks for n in names[-1:]]
         cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]
         cue_entities += [n for ev in events for n in ev.get("entities", [])]
         cue_text = self.last_outcome + " " + " ".join(p["goal"] for p in doing or [])
@@ -211,7 +232,7 @@ thought and in that project's intention."""
             part = ("night" if h < 5 or h >= 21 else "dawn" if h < 7 else "morning" if h < 11 else "midday" if h < 14
                     else "afternoon" if h < 18 else "evening")
             lines.insert(1, f"It is {int(h):02d}:{int((h % 1) * 60):02d}, {part}.")
-        fires = [e for e in snap.entities.values() if e.name.startswith("Fire_")]
+        fires = [e for e in snap.entities.values() if e.name.startswith("Fire_") and self._sees(e)]
         if fires:
             lines.insert(4, "Fires burning: " + ", ".join(f"{e.name} {_fmt_pos(e.pos)}" for e in fires) + ".")
         fish = sorted((e for e in snap.entities.values() if e.name.startswith("Fish_")), key=lambda e: hdist(e.pos, snap.me))

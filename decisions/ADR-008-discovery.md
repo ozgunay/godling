@@ -20,5 +20,4 @@ To show Godling where the beach was, the mind's prompt had been given a map of t
 - A reload from disk gave the same knowledge.
 
 ## Not done
-- Line of sight: the mountain does not hide what is behind it.
-- Things seen long ago are shown where they are now, not where they were last seen.
+Both done since, in ADR-009: rock now blocks the line of sight, and things are remembered where they were last seen.

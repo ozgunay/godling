@@ -20,13 +20,19 @@ ROOT = Path(__file__).resolve().parent.parent
 CELL = 2.5  # one block
 SEED = 20261102
 
-# The island: an ellipse of about 100 x 120 blocks with a ragged coast; the islet across a strait in the south-east.
-RX, RZ = 112.0, 138.0
-ISLET = (155.0, -128.0, 16.0)
-HALF = 76  # cells each way from the centre that the map covers
+# The island: an ellipse of about 110 x 130 blocks with a ragged coast; the islet across a strait in the south-east.
+# SCALE stretches the whole island (its shape stays the same): 1.2 since run n7 (the user's wish: a little bigger, with
+# room to build).
+SCALE = 1.2
+RX, RZ = 112.0 * SCALE, 138.0 * SCALE
+ISLET = (155.0 * SCALE, -128.0 * SCALE, 16.0 * SCALE)
+HALF = 92  # cells each way from the centre that the map covers
 # The mountain (Monuriki's peak, north-west) and two hills, in units: centre x, z, radius, height in blocks.
-MOUNTAIN = (-42.0, 72.0, 72.0, 16)
-HILLS = [(58.0, 52.0, 30.0, 5), (40.0, -78.0, 24.0, 3)]
+MOUNTAIN = (-42.0 * SCALE, 72.0 * SCALE, 72.0 * SCALE, 16)
+HILLS = [(58.0 * SCALE, 52.0 * SCALE, 30.0 * SCALE, 5), (40.0 * SCALE, -78.0 * SCALE, 24.0 * SCALE, 3)]
+# Open meadows where no palm grows, in cells: around the camp, by the quarry, and in the middle of the island.
+MEADOW_RADIUS = {"camp": 13, "quarry": 9, "middle": 14}
+GROVES, GROVE_RADIUS, PALMS_PER_GROVE = 9, 7, 7  # inland palms grow in groves, open grass between them
 
 
 def hash01(ix, iz, salt):
@@ -66,12 +72,14 @@ def make_land():
     for i, j in cells():
         x, z = i * CELL, j * CELL
         # Two scales of noise: lobes and bays, then a ragged edge; the south runs out into a long beach.
-        d = (math.hypot(x / RX, z / (RZ + (18 if z < 0 else 0))) + 0.42 * (fbm(x / 95, z / 95, 1) - 0.5)
+        x, z = x / SCALE, z / SCALE  # noise and shape at the original island's size
+        d = (math.hypot(x / (RX / SCALE), z / (RZ / SCALE + (18 if z < 0 else 0))) + 0.42 * (fbm(x / 95, z / 95, 1) - 0.5)
              + 0.12 * (fbm(x / 28, z / 28, 12) - 0.5))
+        x, z = x * SCALE, z * SCALE
         if d < 1.0:
             land.add((i, j))
         ix, iz, ir = ISLET
-        if math.hypot(x - ix, z - iz) + 6 * (fbm(x / 20, z / 20, 2) - 0.5) < ir:
+        if math.hypot(x - ix, z - iz) + 6 * SCALE * (fbm(x / 20 / SCALE, z / 20 / SCALE, 2) - 0.5) < ir:
             land.add((i, j))
     # Fill lakes: water the open sea cannot reach becomes land.
     sea, todo = set(), deque([(-HALF, -HALF)])
@@ -107,16 +115,17 @@ def make_heights(land, coast):
         mx, mz, mr, mh = MOUNTAIN
         # Lopsided like Monuriki's: steep to the sea in the north-west, a long shoulder inland to the south-east.
         u, v = (x - mx) * 0.80 + (z - mz) * 0.60, -(x - mx) * 0.60 + (z - mz) * 0.80
-        r = math.hypot(u / (mr * (1.25 if u > 0 else 0.8)), v / (mr * 0.85)) + 0.38 * (fbm(x / 34, z / 34, 3) - 0.5)
+        n = 1 / SCALE  # noise at the original island's size
+        r = math.hypot(u / (mr * (1.25 if u > 0 else 0.8)), v / (mr * 0.85)) + 0.38 * (fbm(x * n / 34, z * n / 34, 3) - 0.5)
         if r < 1:
             h = max(h, mh * (1 - r) ** 1.05)
         for hx, hz, hr, hh in HILLS:
-            r = math.hypot(x - hx, z - hz) / hr + 0.5 * (fbm(x / 22, z / 22, 5) - 0.5)
+            r = math.hypot(x - hx, z - hz) / hr + 0.5 * (fbm(x * n / 22, z * n / 22, 5) - 0.5)
             if r < 1:
                 h = max(h, hh * (1 - r ** 2))
-        beach = 4 + int(3 * fbm(x / 40, z / 40, 6)) + (3 if z < -90 else 0)
+        beach = beach_width(x, z)
         if coast[(i, j)] <= beach + 1:  # the beach stays flat; the mountain may come close on its own side only
-            h = 0 if not (z > 60 and x < -20) else min(h, max(0, coast[(i, j)] - 2))
+            h = 0 if not (z > 60 * SCALE and x < -20 * SCALE) else min(h, max(0, coast[(i, j)] - 2))
         h = 2 * int(h / 2)  # terraces two blocks tall: big, readable steps, and few parts
         if h >= 2:
             heights[(i, j)] = h
@@ -133,12 +142,16 @@ def make_heights(land, coast):
     return heights
 
 
+def beach_width(x, z):
+    """How many cells of sand run inland from the water here (wider on the long south beach)."""
+    return 4 + int(3 * fbm(x / SCALE / 40, z / SCALE / 40, 6)) + (3 if z < -90 * SCALE else 0)
+
+
 def beach_cells(land, coast):
     sand = set()
     for i, j in land:
         x, z = i * CELL, j * CELL
-        beach = 4 + int(3 * fbm(x / 40, z / 40, 6)) + (3 if z < -90 else 0)
-        if coast[(i, j)] <= beach or math.hypot(x - ISLET[0], z - ISLET[1]) < ISLET[2] + 8:
+        if coast[(i, j)] <= beach_width(x, z) or math.hypot(x - ISLET[0], z - ISLET[1]) < ISLET[2] + 8 * SCALE:
             sand.add((i, j))
     return sand
 
@@ -177,7 +190,7 @@ def place(land, sand, heights, coast):
         return i * CELL, j * CELL
 
     # The raft: on the west beach, a step from the water; Godling washes up beside it.
-    west = sorted((c for c in sand if coast[c] == 2 and -20 <= c[1] <= -4 and c[0] < 0), key=lambda c: c[0])
+    west = sorted((c for c in sand if coast[c] == 2 and -20 * SCALE <= c[1] <= -4 * SCALE and c[0] < 0), key=lambda c: c[0])
     raft = west[0]
     spawn = (raft[0] + 2, raft[1] - 2)
     # The camp: open grass about 12 blocks inland of the raft.
@@ -233,13 +246,25 @@ def place(land, sand, heights, coast):
             if len(chosen) == count:
                 break
         return chosen
-    # Trees: inland grass, mostly east of the camp, at least 4 blocks apart and clear of walls.
-    forest = {c for c in grass if coast[c] > 6 and all(n not in heights for n in neighbours4(*c))}
-    trees = scatter([c for c in forest if c[0] > camp[0] - 4], 44, 3.2, 7)  # a jungle, not a park
-    # Palms: on the beach, in loose clusters, leaning out to sea.
+    # Open meadows, where no palm grows: room to build by the camp and the quarry, and a wide one in the middle of the
+    # island. Palms scattered over all the inland grass left no space to build (the user, after run n7).
+    flat = [c for c in grass if coast[c] > 14 and all(n not in heights for n in neighbours4(*c))]
+    mid = (sum(c[0] for c in grass) / len(grass), sum(c[1] for c in grass) / len(grass))
+    middle = min(flat, key=lambda c: math.hypot(c[0] - mid[0], c[1] - mid[1]))
+    meadows = {"camp": (camp[0] + 4, camp[1] + 4), "quarry": (quarry[0] + 2, quarry[1] + 1), "middle": middle}
+
+    def in_meadow(c):
+        return any(math.hypot(c[0] - m[0], c[1] - m[1]) <= MEADOW_RADIUS[k] for k, m in meadows.items())
+    # Inland palms: in groves, with open grass between them; clear of walls.
+    forest = [c for c in grass if coast[c] > 6 and all(n not in heights for n in neighbours4(*c)) and not in_meadow(c)]
+    trees = []
+    for k, grove in enumerate(scatter(forest, GROVES, 2.6 * GROVE_RADIUS, 7)):
+        trees += scatter([c for c in forest if math.dist(c, grove) <= GROVE_RADIUS], PALMS_PER_GROVE, 2.6, 20 + k)
+        taken |= set(trees)
+    # Palms on the beach, in loose clusters, leaning out to sea.
     palm_pool = [c for c in sand if 2 <= coast[c] <= 4]
-    palms = scatter(palm_pool, 26, 3.2, 9)
-    taken |= set(trees) | set(palms)
+    palms = scatter(palm_pool, round(26 * SCALE), 3.2, 9)
+    taken |= set(palms)
     rock = scatter(list(grass), 1, 1, 11)[0]
 
     def seaward_yaw(c):
@@ -253,7 +278,7 @@ def place(land, sand, heights, coast):
     return {
         "raft": raft, "spawn": spawn, "pile": pile, "ladder": ladder, "axe": axe, "quarry": quarry,
         "hammer": hammer, "boulders": boulders, "trees": [], "palms": palms_out,
-        "rock": rock, "at": at,
+        "rock": rock, "at": at, "meadows": meadows,
     }
 
 

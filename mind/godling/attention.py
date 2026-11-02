@@ -144,6 +144,13 @@ class Attention:
                 out.append((f"A dark shadow spreads on the ground at {_xz(e)}: something is falling from the sky "
                             "there" + (f", landing in about {lands:.0f}s" if lands else ""),
                             3, [e.name], {**_at(e.pos), **_sky(e, "warning")}))
+        if after.hurts > before.hurts:  # real damage, to the body itself
+            by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
+            out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
+                        f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+        if after.freed > before.freed:
+            out.append((f"You were caught inside a piece, too low over your head or pressed into you, and found "
+                        f"yourself pushed out of it to ({after.me[0]:.0f}, {after.me[2]:.0f})", 2, [], {}))
         before_names = {n for n, _ in before.others}
         for name, pos in after.others:
             if name not in before_names:

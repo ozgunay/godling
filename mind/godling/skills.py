@@ -43,8 +43,8 @@ PRIMITIVES = {
               "With the axe in your hands, carve that log into a spear. Takes a few strokes."),
     "eat": ({}, "Eat what you hold, if it is food."),
     "kindle": ({"object": "a log lying on the ground, such as Log_3"},
-               "Rub at that log to light a fire on it. It rarely catches at the first try; a fire burns a while and "
-               "uses the log up."),
+               "Rub at that log to light a fire on it. It rarely catches at the first rub, but the wood warms as you "
+               "keep at it; a fire burns a while and uses the log up."),
     "cook": ({}, "Cook the fish you hold over a fire beside you."),
     "draw": ({"x": "number", "z": "number"},
              "Drag your foot through the sand from where you stand to (x, z), at most 20 away, leaving a line in it. "
@@ -63,6 +63,9 @@ CATALOG = {**PRIMITIVES, **GIFTED}
 
 
 MAX_DROP = 2.6  # the highest drop the body hops down from; higher needs a ladder
+BODY_HEIGHT = 5.0  # the engine's capsule: exactly two blocks
+PEN_CELLS = 1600  # half-unit cells: floor the body can reach smaller than this (20 x 20 units) is a pen
+LIFTABLE = SNAPPED_KINDS + ("Brick_", "Ladder_")  # what the body lifts aside to get out of a pen
 GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
 GLANCE_HOLD = 0.4  # seconds the body keeps looking before it goes on
 
@@ -111,6 +114,12 @@ class Interrupted(Exception):
     pass
 
 
+class Stuck(Interrupted):
+    """The body's own trouble (snagged, hemmed in, slipped into the sea): the step fails like any other. Only what
+    attention notices interrupts the plan; being stuck threw away the plan being thought up, and the body then
+    waited for a fresh one: 78 of the 85 minutes it waited in run n7."""
+
+
 class Skills:
     def __init__(self, world, protected=lambda: set(), on_step=None, log=None, gifted=False, library=None,
                  walk_speed=WALK_SPEED):
@@ -124,6 +133,7 @@ class Skills:
         self.library = library  # skills the mind taught itself (learned.SkillLibrary)
         self.busy = set()  # objects the current skill is handling; attention ignores their movement
         self._depth = 0
+        self._lifting = False  # in the middle of lifting a way out of a pen (no second one inside it)
 
     # ---- entry point -------------------------------------------------------------------
     def run(self, skill, args):
@@ -139,6 +149,8 @@ class Skills:
         if self.library is not None and skill in self.library.skills:
             try:
                 return self.library.execute(self, skill, args)
+            except Stuck as why:
+                return Result(False, skill, str(why))
             except Interrupted as why:
                 return Result(False, skill, f"interrupted: {why}")
             except Exception as err:  # a broken self-taught skill must never take the body down
@@ -153,6 +165,8 @@ class Skills:
             self.busy.add(args["object"])
         try:
             result = fn(**args)
+        except Stuck as why:
+            result = Result(False, skill, str(why))
         except Interrupted as why:
             result = Result(False, skill, f"interrupted: {why}")
         except (TypeError, ValueError) as err:
@@ -219,9 +233,11 @@ class Skills:
         return [e for e in snap.movables() if e.name not in ignore and e is not held]
 
     def _in_the_way(self, snap, ignore=(), level=None):
-        """Loose things that stick up from the floor we stand on (what we stand on, or what lies below it, is not)."""
+        """Loose things that stick up from the floor we stand on (what we stand on, or what lies below it, is not),
+        and things overhead lower than the body is tall: a beam across two-block posts leaves no room under it."""
         level = self._level(snap) if level is None else level
-        return [e for e in self._obstacles(snap, ignore) if e.top > level + STEP and e.pos[1] - e.size[1] / 2 < level + 3]
+        return [e for e in self._obstacles(snap, ignore)
+                if e.top > level + STEP and e.pos[1] - e.size[1] / 2 < level + BODY_HEIGHT + 0.1]
 
     def _level(self, snap):
         """Height of the surface we are standing on: the ground, a mesa, or pieces we built and climbed onto."""
@@ -338,15 +354,20 @@ class Skills:
     def _move(self, x, z, stop_within=0.6, ignore=(), replans=1):
         snap = self._observe()
         route = self._route(snap, (snap.me[0], snap.me[2]), (x, z), ignore)
+        if route is None and not self._lifting:
+            pen = self._pen(snap, ignore)
+            if pen is not None and self._lift_through(snap, (x, z), ignore, pen):
+                snap = self._observe()
+                route = self._route(snap, (snap.me[0], snap.me[2]), (x, z), ignore)
         try:
             for wx, wz in route or [(x, z)]:  # no way round known: walk straight, and the stuck check reports it
                 snap = self._move_once(wx, wz, stop_within if (wx, wz) == (x, z) else 1.0, ignore=ignore)
-        except Interrupted as why:
+        except Stuck as why:
             if not str(why).startswith("stuck"):
                 raise
             if replans <= 0:
-                if route is None:  # say what hems the body in, so the mind can clear a way
-                    raise Interrupted(f"{why}; {self._closed_by(self._observe(), ignore)}") from None
+                if route is None:  # say what pens the body in, or closes off the goal, so the mind can clear a way
+                    raise Stuck(f"{why}; {self._closed_by(self._observe(), ignore, (x, z))}") from None
                 raise
             # Something moved or the body was pushed off its route: look again and find another way, once.
             self.log(kind="reflex", text=f"{why}; looking for another way")
@@ -354,12 +375,150 @@ class Skills:
             return self._move(x, z, stop_within, ignore, replans - 1)
         return snap
 
-    def _closed_by(self, snap, ignore=()):
-        """Why no way round was found, in words: what hems the body in."""
+    def _pen(self, snap, ignore=()):
+        """The floor the body can walk to from where it stands, as half-unit cells, when that is a small closed pen;
+        None when it is open further than that. Run n7 told the mind "you are hemmed in" whenever a goal could not be
+        reached, also when only the goal was closed off (it lay inside a block) and the body stood in the open."""
+        blocked = self._blocked_fn(snap, ignore)
+        known = {}
+
+        def free(cell):
+            if cell not in known:
+                known[cell] = not blocked(cell[0] * 0.5, cell[1] * 0.5)
+            return known[cell]
+        ox, oz = round(snap.me[0] / 0.5), round(snap.me[2] / 0.5)
+        start = next((c for r in range(5) for k in range(16 if r else 1)  # pressed against something: just beside it
+                      for c in [(ox + round(r * math.cos(k * math.pi / 8)), oz + round(r * math.sin(k * math.pi / 8)))]
+                      if free(c)), None)
+        if start is None:
+            return set()  # no free floor around the body at all
+        seen, todo = {start}, [start]
+        while todo:
+            ix, iz = todo.pop()
+            for n in ((ix + 1, iz), (ix - 1, iz), (ix, iz + 1), (ix, iz - 1)):
+                if n not in seen and free(n):
+                    seen.add(n)
+                    if len(seen) > PEN_CELLS:
+                        return None
+                    todo.append(n)
+        return seen
+
+    def _pen_sides(self, snap, pen, ignore=()):
+        """What closes a pen: the pieces and walls whose edges its floor runs up against, nearest first."""
         me = snap.me
-        near = [e for e in self._in_the_way(snap, ignore) + self._walls(snap) if e.footprint_contains(me[0], me[2], margin=4.0)]
-        names = [e.name for e in sorted(near, key=lambda e: hdist(e.pos, me))][:5]
-        return f"no way round: you are hemmed in by {', '.join(names)}" if names else "no way round was found"
+
+        def borders(e, clearance):
+            if not pen:
+                return e.footprint_contains(me[0], me[2], margin=clearance + 1.5)
+            hx, hz = e.size[0] / 2 + clearance + 0.6, e.size[2] / 2 + clearance + 0.6
+            return any(abs(ix * 0.5 - e.pos[0]) <= hx and abs(iz * 0.5 - e.pos[2]) <= hz for ix, iz in pen)
+        sides = [e for e in self._in_the_way(snap, ignore) if borders(e, 1.2)]
+        sides += [w for w in self._walls(snap) if borders(w, 1.6)]
+        return sorted(sides, key=lambda e: hdist(e.pos, me))
+
+    def _closed_by(self, snap, ignore=(), goal=None):
+        """Why no way round was found, in words: what pens the body in, or what closes off the place it goes to."""
+        pen = self._pen(snap, ignore)
+        if pen is not None:
+            names = [e.name for e in self._pen_sides(snap, pen, ignore)][:5]
+            return "no way round: you are penned in" + (f" by {', '.join(names)}" if names else "")
+        if goal is None:
+            return "no way round was found"
+        x, z = goal
+        level = self._level(snap)
+        floor = snap.surface(x, z, below=level + STEP)[0]
+        if floor is None or abs(floor - level) > 0.3:
+            return f"no way round: ({x:.1f}, {z:.1f}) is not on the floor you stand on"
+        around = self._in_the_way(snap, ignore) + self._walls(snap)
+        inside = [e for e in around if e.footprint_contains(x, z)]
+        if inside:
+            return f"no way round: ({x:.1f}, {z:.1f}) lies inside {inside[0].name}"
+        near = [e.name for e in sorted((e for e in around if e.footprint_contains(x, z, margin=3.0)),
+                                       key=lambda e: hdist(e.pos, (x, 0, z)))][:5]
+        return f"no way round: the way to ({x:.1f}, {z:.1f}) is closed off" + (f" by {', '.join(near)}" if near else "")
+
+    def _lift_through(self, snap, goal, ignore, pen):
+        """Reflex, as a person does: penned in by its own pieces, the body lifts one out of the way, steps out
+        through the gap and sets it back where it was. What it held it first rests on the pen's wall (or sets down
+        inside, if the pen has room), and takes back from outside when it can reach it."""
+        level = self._level(snap)
+        protected = set(self.protected())
+        movables = snap.movables()
+
+        def bare(e):  # nothing rests on it, so lifting it brings nothing down
+            return not any(o is not e and abs(o.pos[1] - o.size[1] / 2 - e.top) < 0.3
+                           and abs(o.pos[0] - e.pos[0]) < (o.size[0] + e.size[0]) / 2 - 0.1
+                           and abs(o.pos[2] - e.pos[2]) < (o.size[2] + e.size[2]) / 2 - 0.1 for o in movables)
+        sides = [e for e in self._pen_sides(snap, pen, ignore) if e.movable and e.name.startswith(LIFTABLE)
+                 and not e.attrs.get("Fastened") and not e.attrs.get("Burning")
+                 and abs(e.pos[1] - e.size[1] / 2 - level) < 0.3 and bare(e)]
+        sides.sort(key=lambda e: (e.name in protected, hdist(e.pos, snap.me)))  # what it decided to keep, last
+        for piece in sides[:6]:
+            path = self._route(snap, (snap.me[0], snap.me[2]), goal, set(ignore) | {piece.name})
+            out = self._past((snap.me[0], snap.me[2]), path, piece) if path else None
+            if out is None:
+                continue
+            held = snap.held()
+            self._lifting = True
+            try:
+                on_wall = None  # what it held, rested on the pen's wall while its hands lift the way out
+                if held and (len(pen) < 40 or self._set_down_nearby(snap, held, piece.pos) is None):
+                    on_wall = self._rest_on(snap, held, [e for e in sides if e is not piece])
+                    if on_wall is None:
+                        return False
+                if not self._lift(piece):
+                    return False
+                self._move(*out)
+                turn = 90 if piece.size[2] > piece.size[0] + 0.1 else 0
+                upright = piece.size[1] > max(piece.size[0], piece.size[2]) + 0.1
+                back = self.skill_place_at(piece.pos[0], piece.pos[1], piece.pos[2], turn, upright)
+                if not back.ok:  # it stays out of its place, but not in the hands
+                    snap = self._observe()
+                    if snap.held():
+                        self._set_down_nearby(snap, snap.held(), piece.pos)
+                if on_wall and self._observe().held() is None:
+                    self.skill_pick_up(on_wall)  # and take back what it rested on the wall, from outside
+                self.log(kind="reflex", text=f"penned in: lifted {piece.name} out of the way, stepped out "
+                                             + ("and set it back" if back.ok else f"(it could not go back: {back.summary})"))
+                return True
+            except Stuck:
+                return False
+            finally:
+                self._lifting = False
+        return False
+
+    def _lift(self, piece):
+        """Pick up a piece the body stands beside, without first looking for room around it: in a pen there is none."""
+        snap = self.world.act("Pickup", {"position": list(piece.pos)})
+        if snap.last_result == "PickupSuccess":
+            held = self._settle(LIFT_SECONDS + 0.2).held()
+            if held and held.name == piece.name:
+                return True
+        return self.skill_pick_up(piece.name).ok
+
+    def _rest_on(self, snap, held, walls):
+        """Rest what the hands hold on top of one of `walls` (bare pieces beside the body). Its name, or None."""
+        for wall in sorted(walls, key=lambda e: hdist(e.pos, snap.me)):
+            top = (wall.pos[0], wall.top + held.local_size[1] / 2 + 0.02, wall.pos[2])
+            if self.world.act("Place", {"position": list(top), "rotation": _rotation(0, False)}).last_result == "PlaceSuccess":
+                self._settle(PLACE_SECONDS + 0.4)
+                return held.name
+        return None
+
+    @staticmethod
+    def _past(start, path, piece):
+        """The first point along `path` clear beyond `piece`, once the path has gone through where it lies."""
+        through, prev = False, start
+        for wp in path:
+            steps = max(1, int(math.dist(prev, wp) / 0.5))
+            for i in range(1, steps + 1):
+                p = (prev[0] + (wp[0] - prev[0]) * i / steps, prev[1] + (wp[1] - prev[1]) * i / steps)
+                if piece.footprint_contains(*p, margin=1.2):
+                    through = True
+                elif through and not piece.footprint_contains(*p, margin=2.2):
+                    return p
+            prev = wp
+        return path[-1] if through else None
 
     def _move_once(self, x, z, stop_within, retry=True, ignore=()):
         # The humanoid walks on whatever surface it is on; MoveTo just needs some y.
@@ -376,7 +535,7 @@ class Skills:
             snap = self._observe()
             if snap.me[1] < 0.8:
                 self.world.act("Stop")
-                raise Interrupted("fell off the edge into the sea")
+                raise Stuck("fell off the edge into the sea")
             dist = hdist(snap.me, (x, 0, z))
             if dist < best - 0.05:
                 best, last_progress = dist, time.time()
@@ -384,7 +543,7 @@ class Skills:
                 self.world.act("Stop")
                 if retry and self._unstick(snap, ignore):  # not away from what we are walking up to
                     return self._move_once(x, z, stop_within, retry=False, ignore=ignore)
-                raise Interrupted(f"stuck {dist:.1f} units short of ({x:.1f}, {z:.1f})")
+                raise Stuck(f"stuck {dist:.1f} units short of ({x:.1f}, {z:.1f})")
         return self.world.act("Stop")
 
     def _unstick(self, snap, ignore=()):
@@ -671,7 +830,7 @@ class Skills:
             try:
                 if hdist(self._observe().me, (edge[0], 0, edge[1])) > 0.6:
                     self._move(*edge)
-            except Interrupted:
+            except Stuck:
                 continue
             self.world.act("MoveTo", {"position": [land[0], BODY_CENTRE_Y, land[1]]})  # step off the edge
             deadline = time.time() + 3
@@ -1071,7 +1230,7 @@ class Skills:
             spot = min(sides, key=lambda p: hdist(snap.me, (p[0], 0, p[1])))
             try:
                 self._move(*spot, stop_within=0.7, ignore={object})
-            except Interrupted:  # bumping the ladder itself is close enough to climb it
+            except Stuck:  # bumping the ladder itself is close enough to climb it
                 if hdist(self._observe().me, ladder.pos) > 2.6:
                     raise
         start = self._level(self._observe())
@@ -1111,7 +1270,7 @@ class Skills:
         mark = outcome.split(":", 1)[1]
         try:
             self._move_once(x, z, 0.6)  # open beach: straight along the line, as the foot drags
-        except Interrupted:
+        except Stuck:
             pass  # the line is drawn either way
         return Result(True, "draw", f"drew a line in the sand from ({start[0]:.1f}, {start[1]:.1f}) to ({x:.1f}, {z:.1f})",
                       {"mark": mark})
@@ -1162,8 +1321,11 @@ class Skills:
         log = snap.entities.get(object)
         if log is None or not object.startswith("Log_"):
             return Result(False, "kindle", f"there is no log called {object}")
-        if log.attrs.get("Burning"):
-            return Result(False, "kindle", f"{object} is already burning")
+        if log.attrs.get("Burning"):  # what the mind wanted is there (run n7 failed this 11 times)
+            fire = next((e.name for e in snap.entities.values() if e.name.startswith("Fire_")
+                         and e.attrs.get("Fuel") == object), None)
+            return Result(True, "kindle", f"{object} is already burning" + (f": {fire} burns on it" if fire else ""),
+                          {"made": fire} if fire else {})
         level = self._level(snap)
         body = (snap.me[0], level + BODY_CENTRE_Y, snap.me[2])
         if math.dist(body, log.pos) > PLACE_RANGE - 0.5:
@@ -1174,7 +1336,7 @@ class Skills:
                                                                   f"no clear spot to reach {object} from {self._here(snap)}"))
             self._move(*stand, ignore={object})
         tries = 0
-        for _ in range(6):  # patient rubbing; each try takes a few seconds
+        for _ in range(18):  # patient rubbing, a few seconds a rub: the wood warms, and by the sixteenth it catches
             snap = self.world.act("Kindle", {"name": object})
             outcome = snap.last_result or ""
             if outcome.startswith("KindleCaught:"):

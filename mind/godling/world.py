@@ -163,6 +163,8 @@ class Snapshot:
         self.hunger = attrs.get("Hunger")  # 100 full, 0 starving (main.lua SURVIVAL)
         self.health = attrs.get("Health")
         self.faints = attrs.get("Faints") or 0
+        self.hurts, self.hurt_by = attrs.get("Hurts") or 0, attrs.get("Hurt")  # what the sky did to the body last
+        self.freed = attrs.get("Freed") or 0  # times the world moved the body out from inside a piece
         fx, fz = attrs.get("ViewForwardX"), attrs.get("ViewForwardZ")  # which way the body faces
         self.facing = (fx, fz) if isinstance(fx, (int, float)) and isinstance(fz, (int, float)) else None
         self.others = [(p.get("name", "?"), tuple(p.get("position", (0, 0, 0))))

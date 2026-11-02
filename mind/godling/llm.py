@@ -83,6 +83,29 @@ class LLM:
                 body["messages"].append({"role": "user", "content": "That was not valid JSON. Reply with the JSON object only."})
         raise RuntimeError(f"LLM call failed after {retries + 1} attempts: {last_error}")
 
+    def quick_json(self, system, user, purpose, max_tokens=80):
+        """One short JSON reply without reasoning: under a second, for small readings beside the mind (the thought
+        bubble), never for the mind's own decisions."""
+        body = {"model": self.model, "max_tokens": max_tokens, "temperature": 0.7, "thinking": {"type": "disabled"},
+                "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        started = time.time()
+        req = urllib.request.Request(self.base + "/chat/completions", data=json.dumps(body).encode(), method="POST",
+                                     headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        usage = data.get("usage") or {}
+        hit = usage.get("prompt_cache_hit_tokens", 0)
+        miss = usage.get("prompt_cache_miss_tokens", usage.get("prompt_tokens", 0) - hit)
+        out = usage.get("completion_tokens", 0)
+        prices = PRICES.get(self.model, PRICES["deepseek-flash"])
+        cost = (hit * prices[0] + miss * prices[1] + out * prices[2]) / 1e6 * peak_multiplier()
+        self.calls += 1
+        self.cost += cost
+        self.log(kind="llm", purpose=purpose, model=data.get("model", self.model), latency=round(time.time() - started, 2),
+                 cache_hit=hit, cache_miss=miss, output=out, reasoning=0, cost=round(cost, 6))
+        return json.loads((data.get("choices") or [{}])[0].get("message", {}).get("content") or "{}")
+
     @staticmethod
     def _read_stream(resp, on_reasoning=None):
         """Collect a streamed reply into the shape of a non-streamed one; pass the reasoning on as it arrives."""

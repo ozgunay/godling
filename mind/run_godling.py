@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from godling.attention import Attention  # noqa: E402
+from godling.bubble import Bubble  # noqa: E402
 from godling.learned import SkillLibrary  # noqa: E402
 from godling.llm import LLM, load_api_key  # noqa: E402
 from godling.discovery import Discovery  # noqa: E402
@@ -63,6 +64,8 @@ def main():
     ap.add_argument("--sky-test-minutes", type=float, default=0,
                     help="drop a stone from the sky near Godling this often, announced by a shadow 40 s before it "
                          "lands (a stand-in for viewer events, to measure reactions; 0 = off)")
+    ap.add_argument("--bubble", action=argparse.BooleanOptionalAction, default=True,
+                    help="show a Sims-style thought bubble over Godling, read from its thoughts by a small model call")
     ap.add_argument("--guest-panel", type=int, default=0, metavar="PORT",
                     help="also serve the guest panel on this port: call down sky powers yourself (0 = off)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
@@ -77,6 +80,7 @@ def main():
     (run / "mind").mkdir(parents=True, exist_ok=True)
     log_file = (run / "mind/log.jsonl").open("a")
     log_lock = threading.Lock()  # the planner thread logs too
+    bubble = None  # the thought bubble hears what happens (ADR-009)
 
     def log(**entry):
         entry = {"time": round(time.time(), 3), **entry}
@@ -84,6 +88,13 @@ def main():
             log_file.write(json.dumps(entry) + "\n")
             log_file.flush()
             print_entry(entry)
+        if bubble is not None:
+            if entry.get("kind") == "event":
+                bubble.happens(entry.get("text", ""))
+            elif entry.get("kind") == "skill":
+                bubble.happens(f"{entry.get('skill')}: {str(entry.get('summary', ''))[:160]}")
+            elif entry.get("kind") == "project" and entry.get("phase") == "start":
+                bubble.does(entry.get("intention") or entry.get("goal"))
 
     (run / "config.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=2))
     home = Path.home()
@@ -126,6 +137,9 @@ def main():
             spectator = wait_for_line(run / "world.log", r"Spectator frontend: (\S+)", 15)
             print(f"World is up. Watch it here: {spectator or f'http://localhost:{args.port}/'}", flush=True)
         world.join()
+        if args.bubble:
+            bubble = Bubble(world, llm, log=log).start()
+            mind.on_reasoning = bubble.thought
         if args.guest_panel:
             panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
                                       "--world", f"http://localhost:{args.port}", "--port", str(args.guest_panel),
@@ -143,6 +157,8 @@ def main():
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # also when the run ends on its own
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if bubble is not None:
+            bubble.stop()
         memory.save()
         memory.flush()
         try:
@@ -210,7 +226,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
     state = {"agenda": deque(), "future": None, "future_warned": False, "chat_after": None, "agenda_busy": 0.0,
              "last_think": 0.0}
     survive = Survive(log)
-    thinking = ThinkingLog(args.run_dir.expanduser().resolve() / "mind/thinking.jsonl")
+    thinking = ThinkingLog(args.run_dir.expanduser().resolve() / "mind/thinking.jsonl", getattr(mind, "on_reasoning", None))
 
     def heard():
         msgs = [m for m in world.chat_since(state["chat_after"]) if m.get("agent_name") != args.name]
@@ -344,10 +360,11 @@ class ThinkingLog:
     Plans that were dropped keep their reasoning too.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, also=None):
         self.file = path.open("a")
         self.lock = threading.Lock()
         self.plans = 0
+        self.also = also  # someone else reading along: the thought bubble
 
     def new_plan(self):
         with self.lock:
@@ -358,6 +375,8 @@ class ThinkingLog:
         with self.lock:
             self.file.write(json.dumps({"time": round(time.time(), 3), "plan": plan, "text": text}) + "\n")
             self.file.flush()
+        if self.also:
+            self.also(text)
 
 
 def single_loop(world, attention, memory, mind, skills, args, log, started, stats, structures):
@@ -503,6 +522,9 @@ def print_entry(entry):
         print(f"[{stamp}] REPLAN next plan discarded: {entry['reason']}", flush=True)
     elif kind == "plan_kept":
         print(f"[{stamp}] CARRY  keeping the next plan although {entry['reason']}", flush=True)
+    elif kind == "bubble":
+        print(f"[{stamp}] BUBBLE " + (f"{entry['thing']}, {entry['feeling']}" if entry["ok"] else f"unreadable: {entry['reply']}"),
+              flush=True)
     elif kind in ("forget", "forget_refused"):
         print(f"[{stamp}] {'FORGET' if kind == 'forget' else 'KEEP  '} skill {entry['name']}", flush=True)
     elif kind == "learn":
