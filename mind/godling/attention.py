@@ -158,6 +158,21 @@ class Attention:
             by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
             out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
                         f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+        if after.note_id and after.note_id != before.note_id and after.note_text:  # a viewer's note (main.lua sky.notes)
+            out.append((f"A paper glider drifted down at ({after.note_at[0]:.0f}, {after.note_at[2]:.0f}) with a note "
+                        f"from one of the strangers who watch you. It reads: \"{after.note_text}\"", 3, [],
+                        {**_at(after.note_at), "sky": "Note", "sky_id": int(after.note_id), "sky_stage": "arrived"}))
+        if after.meteor_id and after.meteor_id != before.meteor_id:  # a meteor's blast (main.lua sky.meteor)
+            did = after.meteor_did
+            parts = [f"smashed {did['Smashed']} piece{'s' * (did['Smashed'] != 1)}" if did["Smashed"] else "",
+                     f"threw {did['Thrown']}" if did["Thrown"] else "",
+                     f"broke {did['Unfastened']} fastening{'s' * (did['Unfastened'] != 1)}" if did["Unfastened"] else "",
+                     f"felled {did['Felled']} palm{'s' * (did['Felled'] != 1)}" if did["Felled"] else ""]
+            what = ", ".join(p for p in parts if p) or "blasted only sand"
+            out.append((f"A stone from the sky blasted at ({after.meteor_at[0]:.0f}, {after.meteor_at[2]:.0f}): it {what}"
+                        + (", and the blast threw you down" if did["Hurt"] else "") + ". It left a crater.",
+                        4, [], {**_at(after.meteor_at), "sky": "Meteor", "sky_id": int(after.meteor_id),
+                                "sky_stage": "blast"}))
         if after.quake_phase and not before.quake_phase:  # an earthquake: the rumble before the shaking
             out.append(("The ground is rumbling under you: an earthquake is coming", 5, [],
                         {"sky": "Earthquake", "sky_id": int(after.quake_id or 0), "sky_stage": "warning"}))

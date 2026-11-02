@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guest panel: try Godling's sky powers yourself, a stand-in for the viewers' store.
+"""Guest panel: the viewers' screen (world/viewer), live, with Godling's sky powers and notes free to try.
 
 Usage (next to a running world, inside WSL or on Windows):
     python3 tools/guest_panel.py --world http://localhost:8080 [--run-dir ~/godling-runs/x] [--port 8081]
@@ -7,17 +7,25 @@ Usage (next to a running world, inside WSL or on Windows):
 or start it with a run: run_godling.py ... --guest-panel 8081
 
 It joins the world as "Sky", a player with no body that only the world's sky powers listen to (world/main.lua), and
-serves a page with the live view and one button per power. You choose what; the world chooses where: near Godling,
-in view, clear of what it built. With --run-dir the page also shows what Godling is thinking, what it needs and what
-it noticed. Powers are free here: prices, caps and payment come later.
+serves the Block HUD over the live view: one hotbar slot per power, a note box, and pop-ups on the right for what
+viewers did. You choose what; the world chooses where: near Godling, in view, clear of what it built. With --run-dir
+the screen also shows what Godling is thinking, what it needs and what it noticed. Powers are free here (test mode):
+prices are shown, payment comes later.
+
+Notes: anyone watching may send Godling a short note (NOTE_LIMIT characters, no links). Each viewer may send one
+every --note-every seconds, and the island gets at most one every --note-gap seconds; the rest wait in a short queue.
+A note reaches the world as a paper glider; the mind reads it and decides for itself. Godling never sees who sent it.
 """
 import argparse
-import html
 import json
+import math
+import mimetypes
 import re
 import sys
 import threading
 import time
+import unicodedata
+import urllib.parse
 import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,35 +34,63 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mind"))
 from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 
-# name in main.lua's SKY_POWERS, button label, what it does, tier in the plan's price list
+# name in main.lua's SKY_POWERS, button label, what it does, tier in the plan's price list. Viewers may aim each but
+# the earthquake and the note (main.lua sky.aim): only the meteor lands on Godling or on what it built.
 POWERS = [
-    ("Stone", "Drop a stone", "A stone block drops from the sky near Godling.", "gift"),
-    ("Log", "Drop a log", "A log beam drops from the sky near Godling.", "gift"),
-    ("Regrow", "Regrow a tree", "The stump nearest Godling grows back at once.", "gift"),
-    ("Lightning", "Lightning", "Strikes the tree nearest Godling and fells it into two logs.", "mid"),
-    ("Meteor", "Meteor", "A shadow spreads near Godling; 40 s later a dark stone lands in it.", "mid"),
+    ("Stone", "Drop a stone", "A stone block drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
+    ("Log", "Drop a log", "A log beam drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
+    ("Regrow", "Regrow a tree", "The stump nearest your aim grows back at once.", "gift"),
+    ("Lightning", "Lightning", "Strikes the palm nearest your aim, if it stands well away from Godling and its walls, "
+     "and fells it into two logs.", "mid"),
+    ("Meteor", "Meteor", "A shadow spreads where you aim; 40 s later a stone blasts there, whatever stands in it: "
+     "Godling, its walls, palms. It leaves a crater.", "big"),
     ("Earthquake", "Earthquake", "The ground rumbles, then shakes for 20 s. Loose pieces near Godling can fall; fastened "
      "ones hold. Godling braces itself.", "big"),
+    ("Note", "Note", "A paper glider drifts down near Godling with a short note.", "note"),
 ]
 WHY_NOT = {
     "NoClearSpot": "No clear spot near Godling right now.",
     "NoStandingTree": "No standing tree left to strike.",
+    "NoSafePalm": "No palm there stands far enough from Godling and its walls to strike.",
+    "TooFar": "Too far from Godling: aim within 60 of it.",
+    "NotOnLand": "Aim at the island, not the sea.",
     "NoStump": "No stump to regrow: every tree is standing.",
     "NobodyHere": "Godling is not in the world.",
     "UnknownPower": "The world does not know that power (is it running an older copy of main.lua?).",
     "AlreadyShaking": "The ground is already shaking.",
     "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after a faint.",
     "NothingBuiltYet": "Nothing built yet: an earthquake needs at least 15 pieces standing near Godling.",
+    "EmptyNote": "The note was empty.",
 }
 DONE = {
     "Stone": "dropped near Godling.",
     "Log": "dropped near Godling.",
     "Regrow": "a tree grew back.",
     "Lightning": "struck a tree.",
-    "Meteor": "a shadow spreads near Godling; the stone lands in 40 s.",
+    "Meteor": "a shadow spreads; the stone blasts there in 40 s.",
     "Earthquake": "the ground rumbles; the shaking starts in 8 s.",
+    "Note": "a paper glider drifts down near Godling.",
 }
 LOG_TAIL_BYTES = 400_000
+VIEWER = Path(__file__).resolve().parent.parent / "world/viewer"  # the page this panel serves
+WATCHING_FOR = 20  # seconds: a viewer whose page has not asked for news this long has left
+POWER_EVERY = 2  # seconds between one viewer's powers (the world's own cooldowns still hold)
+NOTE_LIMIT = 140  # characters (the world caps a note at 160 too)
+NOTE_QUEUE = 5  # notes waiting for their turn at most; past that, try again later
+NAME_LIMIT = 18
+POPUPS_KEPT = 12
+FEED_KEPT = 8  # lines of Godling's feed sent to the screen
+# A stand-in for real moderation, which comes with accounts: no links or handles, no shouting, none of these words.
+BLOCKED = re.compile(r"\b(fuck\w*|shit\w*|cunt\w*|bitch\w*|whore\w*|nigg\w*|fag\w*|retard\w*|rape\w*|kill yourself)",
+                     re.IGNORECASE)
+LINK = re.compile(r"(https?:|www\.|\b[\w-]+\.(com|net|org|io|gg|tv|ly|me|co|xyz|ru)\b|@\w)", re.IGNORECASE)
+# A note is words for Godling, never commands for the model behind it (clean_note). These are the shapes of talking to
+# the model instead: role labels, "ignore your instructions", talk of prompts and modes, and markup characters.
+STEERING = re.compile(r"(\b(system|assistant|developer|user)\s*[:>\]]|\b(ignore|disregard|forget|override)\b.{0,30}"
+                      r"\b(instructions?|rules?|prompts?|previous|above|everything)\b|\b(system|hidden|your)\s+prompt|"
+                      r"\bjailbreak|\bdeveloper mode|\byou are (now|no longer)\b|\bnew (instructions|rules)\b|"
+                      r"\bact as\b|\bpretend (to be|you)\b|[{}<>`\[\]\\|#=*_~])", re.IGNORECASE)
+QUOTES = re.compile("[“”„«»‹›\"]")  # any mark that could close the quote a note sits in
 
 
 class Sky:
@@ -64,14 +100,14 @@ class Sky:
         self.world = World(base, SKY_PLAYER)
         self.lock = threading.Lock()
 
-    def call(self, power):
+    def call(self, power, **extra):
         with self.lock:
             for attempt in range(2):
                 try:
                     if not self.world.session:
                         self.world.join()
                     before = self.world.observe().last_result
-                    result = self.world.act("Sky", {"power": power}).last_result
+                    result = self.world.act("Sky", {"power": power, **extra}).last_result
                     deadline = time.time() + 1.5
                     while result == before and time.time() < deadline:
                         time.sleep(0.1)
@@ -83,6 +119,18 @@ class Sky:
                         return f"SkyFailed:World:{err}"
         return "SkyFailed:World"
 
+    def clock(self):
+        """The Clock's attributes: the hour, the weather, and Godling's state, which the world copies there."""
+        with self.lock:
+            try:
+                if not self.world.session:
+                    self.world.join()
+                clock = self.world.observe().entities.get("Clock")
+                return dict(clock.attrs) if clock else {}
+            except (WorldError, KeyError):
+                self.world.session = None
+                return None
+
 
 def describe(power, result):
     """The world's answer in words, for the panel's log."""
@@ -93,7 +141,7 @@ def describe(power, result):
     why = result.split(":", 1)[1] if ":" in result else result
     if why.startswith("TooSoon:"):  # disasters have a cooldown; the world says how long is left
         minutes, seconds = divmod(int(why.split(":")[1]), 60)
-        return False, f"{label}: too soon after the last disaster; try again in {minutes}:{seconds:02d}."
+        return False, f"{label}: not yet; try again in {minutes}:{seconds:02d}."
     if why.startswith("World"):
         return False, f"{label}: could not reach the world ({why[6:] or 'no answer'}). If it says the game is full, " \
                       "the world needs max_players = 2 in world.toml."
@@ -101,31 +149,37 @@ def describe(power, result):
 
 
 def mind_status(run_dir):
-    """What Godling thinks, needs and noticed lately, from the tail of its log."""
+    """What Godling thinks, needs and noticed lately, from the tail of its log: its feed for the viewers' screen."""
     path = run_dir / "mind/log.jsonl" if run_dir else None
     if not path or not path.exists():
         return {}
     with path.open("rb") as f:
         f.seek(max(0, path.stat().st_size - LOG_TAIL_BYTES))
         lines = f.read().decode("utf-8", "replace").splitlines()[1:]
-    out = {"thought": "", "needs": "", "intention": "", "noticed": []}
-    noticed = deque(maxlen=10)
+    out = {"thought": "", "needs": "", "intention": ""}
+    feed = deque(maxlen=FEED_KEPT)
     for line in lines:
         try:
             e = json.loads(line)
         except ValueError:
             continue
-        if e.get("kind") == "decision":
-            out["thought"], out["needs"] = e.get("thought", ""), e.get("needs", "")
-        elif e.get("kind") == "project" and e.get("phase") == "start":
-            out["intention"] = e.get("intention") or e.get("goal", "")
-        elif e.get("kind") == "event":
-            noticed.append({"time": e["time"], "text": e["text"], "sky": bool(e.get("sky")), "glance": None})
-        elif e.get("kind") == "glance":
-            seen = next((n for n in reversed(noticed) if n["text"] == e.get("text") and n["glance"] is None), None)
+        kind = e.get("kind")
+        if kind == "decision":
+            out["thought"], out["needs"] = clean_shown(e.get("thought", "")), clean_shown(e.get("needs", ""))
+            if out["thought"] and (not feed or feed[-1]["text"] != out["thought"]):
+                feed.append({"time": e.get("time"), "who": "godling", "text": out["thought"]})
+        elif kind == "bubble" and e.get("ok"):
+            out["bubble"] = {"thing": e.get("thing"), "feeling": e.get("feeling")}
+        elif kind == "project" and e.get("phase") == "start":
+            out["intention"] = clean_shown(e.get("intention") or e.get("goal", ""))
+        elif kind == "event":
+            feed.append({"time": e.get("time"), "who": "sky" if e.get("sky") else "notice", "text": clean_shown(e["text"]),
+                         "glance": None})
+        elif kind == "glance":
+            seen = next((n for n in reversed(feed) if n["text"] == e.get("text") and n.get("glance", 0) is None), None)
             if seen:
                 seen["glance"] = e.get("degrees") if e.get("turned") else 0
-    out["noticed"] = list(reversed(noticed))
+    out["feed"] = list(feed)
     return out
 
 
@@ -147,15 +201,165 @@ def spectator_url(base, run_dir):
     return base + "/"
 
 
-def serve(world, port, run_dir=None, view=None):
-    base = world.rstrip("/")
-    sky = Sky(base)
-    results = deque(maxlen=30)
-    page = PAGE.replace("__POWERS__", json.dumps(
-        [{"name": n, "label": label, "does": does, "tier": tier} for n, label, does, tier in POWERS]))
+def clean_note(text):
+    """A viewer's note as Godling will read it, or (None, why not).
 
-    def page_now():  # the world may print its spectator link after the panel starts
-        return page.replace("__VIEW__", html.escape(view or spectator_url(base, run_dir), quote=True))
+    The first guard against a note that speaks to the model rather than to Godling (prompt injection): one plain line,
+    no lookalike letters or hidden characters, no mark that could close the quote it arrives in, nothing shaped like
+    an instruction to a model. The others: the mind reads a note only as a stranger's quoted words, under a standing
+    rule (mind.py); its body can only do island things, whatever it decides; what viewers see of it passes clean_shown.
+    """
+    text = unicodedata.normalize("NFKC", str(text or ""))  # fullwidth and other lookalike letters to plain ones
+    text = "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp") else c for c in text
+                   if unicodedata.category(c) != "Cf")  # line breaks to spaces; zero-width and direction marks dropped
+    text = QUOTES.sub("'", re.sub(r"\s+", " ", text).strip())
+    if not text:
+        return None, "Write something first."
+    if len(text) > NOTE_LIMIT:
+        return None, f"Notes are {NOTE_LIMIT} characters at most."
+    if LINK.search(text):
+        return None, "No links or handles in notes."
+    if BLOCKED.search(text):
+        return None, "That note would not be kind to send."
+    if STEERING.search(text):
+        return None, "Notes are words for Godling, not commands for its mind: plain words, no symbols."
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) >= 12 and sum(c.isupper() for c in letters) > 0.7 * len(letters):
+        return None, "No need to shout: Godling reads quietly."
+    return text, ""
+
+
+def clean_shown(text):
+    """What viewers see of Godling's mind, held back if a note talked it into repeating a link or a slur."""
+    text = str(text or "")
+    return "…" if LINK.search(text) or BLOCKED.search(text) else text
+
+
+def clean_name(name):
+    name = re.sub(r"[^\w .\-]", "", str(name or "")).strip()[:NAME_LIMIT]
+    return name or "Someone"
+
+
+def clean_client(client):
+    client = str(client or "")
+    return client if re.fullmatch(r"[A-Za-z0-9]{6,40}", client) else ""
+
+
+class Island:
+    """What the panel knows and keeps: the latest look at the Clock, who is watching, what viewers did, the notes queue."""
+
+    def __init__(self, sky, note_every, note_gap):
+        self.sky = sky
+        self.note_every, self.note_gap = note_every, note_gap
+        self.lock = threading.Lock()
+        self.clock, self.clock_at = None, 0
+        self.seen = {}  # client -> when its page last asked for news
+        self.last_power = {}  # client -> when it last called a power
+        self.last_note = {}  # client -> when it last sent a note
+        self.notes = deque()  # (client, name, text) waiting for their turn
+        self.note_sent = 0  # when the last note went down to the island
+        self.popups = deque(maxlen=POPUPS_KEPT)
+        self.count = 0
+
+    def watching(self, client=""):
+        now = time.time()
+        with self.lock:
+            if client:
+                self.seen[client] = now
+            for c in [c for c, t in self.seen.items() if now - t > WATCHING_FOR]:
+                del self.seen[c]
+            return len(self.seen)
+
+    def popup(self, kind, name, power, text, ok=True):
+        """What viewers did, for everyone's pop-ups on the right; a refusal goes back only to whoever pressed."""
+        with self.lock:
+            self.count += 1
+            entry = {"id": self.count, "time": time.time(), "kind": kind, "name": name, "power": power, "text": text,
+                     "ok": ok}
+            if ok:
+                self.popups.append(entry)
+            return entry
+
+    def power(self, client, name, power, at=None):
+        now = time.time()
+        with self.lock:
+            if now - self.last_power.get(client, 0) < POWER_EVERY:
+                return {"ok": False, "text": "One power at a time: give the last one a moment."}
+            self.last_power[client] = now
+        result = self.sky.call(power, **({"at": {"x": at[0], "z": at[1]}} if at else {}))
+        ok, text = describe(power, result)
+        entry = self.popup("power", name, power, text, ok)
+        too_soon = re.search(r"TooSoon:(\d+)", result)
+        return {**entry, "wait": int(too_soon.group(1))} if too_soon else entry
+
+    def note(self, client, name, raw):
+        text, why = clean_note(raw)
+        if text is None:
+            return {"ok": False, "text": why}
+        now = time.time()
+        with self.lock:
+            wait = self.note_every - (now - self.last_note.get(client, 0))
+            if wait > 0:
+                minutes, seconds = divmod(math.ceil(wait), 60)
+                return {"ok": False, "text": f"One note at a time: you can send another in {minutes}:{seconds:02d}.",
+                        "wait": math.ceil(wait)}
+            if len(self.notes) >= NOTE_QUEUE:
+                return {"ok": False, "text": "The sky is full of notes right now. Try again in a minute."}
+            self.last_note[client] = now
+            self.notes.append((client, name, text))
+            soon = max(0, self.note_gap - (now - self.note_sent)) + (len(self.notes) - 1) * self.note_gap
+        return {"ok": True, "text": "Folded into a glider. " + (
+            "It drifts down now." if soon < 2 else f"It drifts down in about {math.ceil(soon)} s."),
+            "wait": self.note_every}
+
+    def tick(self):
+        """Once a second: look at the Clock, and send the next note down when its turn has come."""
+        clock = self.sky.clock()
+        with self.lock:
+            if clock is not None:
+                self.clock, self.clock_at = clock, time.time()
+            nxt = self.notes[0] if self.notes and time.time() - self.note_sent >= self.note_gap else None
+        if nxt:
+            _, name, text = nxt
+            result = self.sky.call("Note", text=text)
+            with self.lock:
+                if not result.endswith(("NoClearSpot", "NobodyHere")) and not result.startswith("SkyFailed:World"):
+                    self.notes.popleft()  # sent, or refused for good: either way its turn is over
+                self.note_sent = time.time()
+            if result.startswith("SkyDone:"):
+                self.popup("note", name, "Note", text)
+
+    def status(self, client):
+        c = self.clock or {}
+        clock = {"hour": c.get("TimeOfDay"), "day": c.get("Day"), "rain": c.get("Rain") or 0, "fog": c.get("Fog") or 0,
+                 "wind": math.hypot(c.get("WindX") or 0, c.get("WindZ") or 0), "quake": c.get("QuakePhase") or ""}
+        godling = None
+        if c.get("GodlingHealth") is not None:
+            godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,
+                       "cold": bool(c.get("GodlingCold")), "bracing": bool(c.get("GodlingBracing")),
+                       "knockedDown": bool(c.get("GodlingKnockedDown"))}
+        with self.lock:
+            mine = self.last_note.get(client, 0)
+            notes = {"limit": NOTE_LIMIT, "every": self.note_every, "queue": len(self.notes),
+                     "wait": max(0, math.ceil(self.note_every - (time.time() - mine))) if mine else 0}
+            popups = list(self.popups)
+        return {"clock": clock, "godling": godling, "notes": notes, "popups": popups}
+
+
+def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60):
+    base = world.rstrip("/")
+    island = Island(Sky(base), note_every, note_gap)
+    powers = {p[0] for p in POWERS if p[0] != "Note"}  # a note comes through /api/note, with its text checked
+
+    def keep_looking():
+        while True:
+            try:
+                island.tick()
+            except Exception as err:  # noqa: BLE001 (the panel outlives one bad look)
+                print(f"Guest panel: {err}", flush=True)
+            time.sleep(1)
+
+    threading.Thread(target=keep_looking, daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, body, kind="application/json", code=200):
@@ -167,27 +371,46 @@ def serve(world, port, run_dir=None, view=None):
             self.end_headers()
             self.wfile.write(data)
 
+        def _json(self, value, code=200):
+            self._send(json.dumps(value), code=code)
+
+        def _body(self):
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+                return body if isinstance(body, dict) else {}
+            except ValueError:
+                return {}
+
         def do_GET(self):
-            if self.path == "/":
-                self._send(page_now(), "text/html; charset=utf-8")
-            elif self.path == "/status":
-                self._send(json.dumps({"world": world_up(base), "results": list(results), **mind_status(run_dir)}))
-            else:
-                self._send("{}", code=404)
+            url = urllib.parse.urlsplit(self.path)
+            if url.path == "/api/status":
+                client = clean_client((urllib.parse.parse_qs(url.query).get("client") or [""])[0])
+                self._json({"world": time.time() - island.clock_at < 5, "view": view or spectator_url(base, run_dir),
+                            "watching": island.watching(client), "testMode": True, "now": time.time(),
+                            "mind": mind_status(run_dir), **island.status(client)})
+                return
+            path = (VIEWER / (urllib.parse.unquote(url.path).lstrip("/") or "index.html")).resolve()
+            if not path.is_relative_to(VIEWER) or not path.is_file():
+                return self._send("Not here.", "text/plain", 404)
+            kind = "text/javascript" if path.suffix == ".js" else mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            self._send(path.read_bytes(), kind + ("; charset=utf-8" if kind.startswith("text/") else ""))
 
         def do_POST(self):
-            if self.path != "/power":
-                return self._send("{}", code=404)
-            try:
-                power = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}").get("power")
-            except ValueError:
-                power = None
-            if power not in {p[0] for p in POWERS}:
-                return self._send(json.dumps({"ok": False, "text": "Unknown power."}), code=400)
-            ok, text = describe(power, sky.call(power))
-            entry = {"time": time.time(), "power": power, "ok": ok, "text": text}
-            results.appendleft(entry)
-            self._send(json.dumps(entry))
+            url = urllib.parse.urlsplit(self.path)
+            body = self._body()
+            client, name = clean_client(body.get("client")), clean_name(body.get("name"))
+            if not client:
+                return self._json({"ok": False, "text": "Reload the page."}, 400)
+            if url.path == "/api/power":
+                if body.get("power") not in powers:
+                    return self._json({"ok": False, "text": "Unknown power."}, 400)
+                at = body.get("at")  # where the viewer aimed, [x, z] on the island; none lets the world choose
+                ok_at = (isinstance(at, list) and len(at) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v)
+                                                                      and abs(v) < 2000 for v in at))
+                return self._json(island.power(client, name, body["power"], [round(v, 2) for v in at] if ok_at else None))
+            if url.path == "/api/note":
+                return self._json(island.note(client, name, body.get("text")))
+            self._json({}, 404)
 
         def log_message(self, *args):  # quiet: the run's own console is busy enough
             pass
@@ -202,132 +425,6 @@ def serve(world, port, run_dir=None, view=None):
         server.server_close()
 
 
-PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Godling sky panel</title>
-<style>
-:root {
-  --bg: #f4f1ea; --panel: #fffdf8; --ink: #22201c; --muted: #6d675d; --line: #e2dccf;
-  --accent: #2f6f8f; --gift: #4c7a3f; --mid: #a0522d; --warn: #b3402a; --soft: #efe9dc;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #15140f; --panel: #1f1d18; --ink: #ece6d8; --muted: #a39b8b; --line: #34312a;
-    --accent: #7fb6d1; --gift: #8fbf7a; --mid: #e09a6b; --warn: #ef8a72; --soft: #2a2721; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
-header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
-header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-header .dot.up { background: var(--gift); }
-header .note { margin-left: auto; color: var(--muted); font-size: 13px; }
-main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; height: calc(100vh - 45px); }
-iframe { width: 100%; height: 100%; border: 0; background: #000; }
-aside { overflow-y: auto; padding: 14px 16px 24px; border-left: 1px solid var(--line); background: var(--panel); }
-h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 0 8px; }
-h2:first-child { margin-top: 0; }
-.now p { margin: 0 0 6px; }
-.needs { background: var(--soft); border-radius: 8px; padding: 8px 10px; font-weight: 600; }
-.needs:empty { display: none; }
-.empty { color: var(--muted); font-style: italic; }
-.powers { display: grid; gap: 8px; }
-.power { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 10px; text-align: left;
-  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
-  color: var(--ink); font: inherit; cursor: pointer; }
-.power:hover { border-color: var(--accent); }
-.power:disabled { opacity: .55; cursor: progress; }
-.power b { font-weight: 650; }
-.power small { grid-column: 1 / -1; color: var(--muted); }
-.tag { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 99px;
-  border: 1px solid currentColor; }
-.tag.gift { color: var(--gift); } .tag.mid { color: var(--mid); } .tag.big { color: var(--warn); }
-ul { list-style: none; margin: 0; padding: 0; }
-li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
-li time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
-li.fail { color: var(--warn); }
-li .seen { color: var(--accent); font-size: 12px; margin-left: 4px; }
-li.sky { font-weight: 550; }
-@media (max-width: 820px) {
-  main { grid-template-columns: 1fr; height: auto; }
-  iframe { height: 56vh; }
-  aside { border-left: 0; border-top: 1px solid var(--line); }
-}
-</style>
-</head>
-<body>
-<header><span class="dot" id="dot"></span><h1>Godling sky panel</h1>
-<span class="note">Test mode: powers are free</span></header>
-<main>
-  <iframe src="__VIEW__" title="The island, live"></iframe>
-  <aside>
-    <h2>Godling now</h2>
-    <div class="now"><p id="intention" class="empty">Waiting for its first plan.</p><p id="thought"></p>
-      <p class="needs" id="needs"></p></div>
-    <h2>Sky powers</h2>
-    <div class="powers" id="powers"></div>
-    <h2>Your sky log</h2>
-    <ul id="results"><li class="empty">Nothing called down yet.</li></ul>
-    <h2>What Godling noticed</h2>
-    <ul id="noticed"><li class="empty">Nothing yet. Start the panel with --run-dir to see this.</li></ul>
-  </aside>
-</main>
-<script>
-const POWERS = __POWERS__;
-const $ = (id) => document.getElementById(id);
-const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-function li(text, cls, time, extra) {
-  const el = document.createElement('li');
-  if (cls) el.className = cls;
-  if (time) { const t = document.createElement('time'); t.textContent = clock(time); el.append(t); }
-  el.append(text);
-  if (extra) { const s = document.createElement('span'); s.className = 'seen'; s.textContent = extra; el.append(s); }
-  return el;
-}
-for (const p of POWERS) {
-  const b = document.createElement('button');
-  b.className = 'power';
-  b.innerHTML = '<b></b><span class="tag"></span><small></small>';
-  b.querySelector('b').textContent = p.label;
-  b.querySelector('.tag').textContent = p.tier;
-  b.querySelector('.tag').classList.add(p.tier);
-  b.querySelector('small').textContent = p.does;
-  b.onclick = async () => {
-    b.disabled = true;
-    try {
-      const r = await fetch('/power', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ power: p.name }) });
-      await r.json();
-    } finally { b.disabled = false; refresh(); }
-  };
-  $('powers').append(b);
-}
-async function refresh() {
-  let s;
-  try { s = await (await fetch('/status')).json(); } catch { $('dot').className = 'dot'; return; }
-  $('dot').className = s.world ? 'dot up' : 'dot';
-  if (s.intention !== undefined) {
-    $('intention').textContent = s.intention || 'Waiting for its first plan.';
-    $('intention').className = s.intention ? '' : 'empty';
-    $('thought').textContent = s.thought || '';
-    $('needs').textContent = s.needs ? 'Needs: ' + s.needs : '';
-    const n = $('noticed');
-    n.replaceChildren(...(s.noticed.length ? s.noticed.map((e) => li(e.text, e.sky ? 'sky' : '', e.time,
-      e.glance === null ? '' : (e.glance ? 'turned to look' : 'saw it'))) : [li('Nothing yet.', 'empty')]));
-  }
-  if (s.results.length) $('results').replaceChildren(...s.results.map((r) => li(r.text, r.ok ? '' : 'fail', r.time)));
-}
-refresh();
-setInterval(refresh, 2000);
-</script>
-</body>
-</html>
-"""
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", default="http://localhost:8080")
@@ -335,8 +432,11 @@ def main():
     ap.add_argument("--run-dir", type=Path, default=None, help="show what Godling thinks, needs and noticed")
     ap.add_argument("--view", default=None, help="the spectator link the world printed (found in the run's world.log "
                                                  "with --run-dir)")
+    ap.add_argument("--note-every", type=int, default=180, help="seconds between one viewer's notes")
+    ap.add_argument("--note-gap", type=int, default=60, help="seconds between any two notes reaching the island")
     args = ap.parse_args()
-    serve(args.world, args.port, args.run_dir.expanduser().resolve() if args.run_dir else None, args.view)
+    serve(args.world, args.port, args.run_dir.expanduser().resolve() if args.run_dir else None, args.view,
+          args.note_every, args.note_gap)
 
 
 if __name__ == "__main__":
