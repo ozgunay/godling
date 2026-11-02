@@ -8,6 +8,8 @@ export const TIERS = {
     name: 'low',
     fireLights: 1, // fires that light their surroundings at once (the nearest)
     smokePuffs: 28, // per fire
+    shake: 0.5, // how much of an earthquake's camera shake (none in the capture)
+    dustPuffs: 48, // dust puffs alive at once, where pieces land or slide
     pixelRatio: 1.25, // the most device pixels per CSS pixel
     antialias: false,
     shadowMapSize: 1024,
@@ -25,6 +27,8 @@ export const TIERS = {
     name: 'medium',
     fireLights: 2,
     smokePuffs: 56,
+    shake: 0.8,
+    dustPuffs: 96,
     pixelRatio: 1.5,
     antialias: true,
     shadowMapSize: 2048,
@@ -42,6 +46,8 @@ export const TIERS = {
     name: 'high',
     fireLights: 3,
     smokePuffs: 84,
+    shake: 1,
+    dustPuffs: 160,
     pixelRatio: 2,
     antialias: true,
     shadowMapSize: 2048,
