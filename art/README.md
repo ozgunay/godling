@@ -5,7 +5,7 @@ again.
 
 | Model | File | Built by |
 |---|---|---|
-| Godling, the mascot (clips: Idle, Walk, a gesture for each action, Jump, Fall, Climb, Strike) | `world/assets/godling.glb` | `build_godling.py` |
+| Godling, the mascot (clips: Idle, Walk, a gesture for each action, Jump, Fall, Climb, Brace, Strike) | `world/assets/godling.glb` | `build_godling.py` |
 | Tree, palm, stump, log, axe | `world/assets/tree.glb`, `palm.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
 | Quarrying: hammer, quarry outcrop, stone cube, stone brick, boulder | `hammer.glb`, `quarry.glb`, `stone.glb`, `brick.glb`, `boulder.glb` | `build_props.py` |
 | Ladder | `world/assets/ladder.glb` | `build_props.py` |
@@ -65,7 +65,7 @@ Being a god, it levitates what it carries above its head, which is how the world
 - Frames are chosen so each clip keeps just the action and the speed-up stays near 2x where the world allows; the lift and lowering must fit 1.0–1.2 s, so they run about 5x.
 - On every clip, `spread_arms` holds the arms a little out from the body. An adult's arm swing passes inside Godling's chubby torso, and a raised hand would vanish into the head.
 - A clip whose file is missing is left out (the build prints `SKIP`).
-- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 21 clips, `godling.glb` is about 750 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
+- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 25 clips, `godling.glb` is about 900 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
 - **Idle** is `happy_idle.fbx`. **Walk** is `happy_walk.fbx`, downloaded with "In Place". The build prints the walk's stride speed for the renderer's `WALK_STRIDE_SPEED`; Happy Walk's is 0.667.
 - **PickUp** is frames 40–370 of `picking_up.fbx`, retimed to 1.1 s, with its bend cut to 35%.
 - **Gestures**, each timed to the world (a strike at most every 0.8 s, a lift 1.0 s, a lowering 1.2 s, a rub for fire every 4 s or more). The Mixamo animation behind each:
@@ -74,8 +74,9 @@ Being a god, it levitates what it carries above its head, which is how the world
   - Shake: Pushing (an object forward), a shove at the trunk.
   - Kindle: Kneeling Inspecting. Cook: Kneel (warming hands over a campfire). Fasten: Pull Plant (kneeling). Draw: Dig And Plant Seeds.
   - Eat: Drinking. Talk: Talking (asking a question with two hands). WakeUp: Getting Up (from the back).
-- **Loops:** Jump is Jump (in place), its take-off played forth and back. Fall is Falling (in the air), stood upright: flailing. Climb is Climbing Ladder, downloaded with "In Place".
-- **How the world plays them:** at each action the world sets the player's `Gesture` (a clip name) and bumps `Gestures`. The renderer plays that clip once. If `godling.glb` has no such clip, it falls back to PickUp (`Reaches`) or Strike (`Strikes`). Jump and Fall loop while the body's humanoid state is Jumping or Freefall, and Climb while `Climbing` is true.
+  - For the earthquake: Stagger is Stumble Backwards (3 s, at its own speed): knocked back, it sits down hard and stays down until the world sends GetUp. GetUp is WakeUp from where it sits up, without easing in from standing, and turned to face forward. LookAround is Looking Around (the idle one), over the shoulder and back.
+- **Loops:** Jump is Jump (in place), its take-off played forth and back. Fall is Falling (in the air), stood upright: flailing. Climb is Climbing Ladder, downloaded with "In Place". Brace is Crouching Idle ("Low Crouching Idle"), a hand at the ground, its bend cut to 80% so Godling's face still shows.
+- **How the world plays them:** at each action the world sets the player's `Gesture` (a clip name) and bumps `Gestures`. The renderer plays that clip once. If `godling.glb` has no such clip, it falls back to PickUp (`Reaches`) or Strike (`Strikes`). Jump and Fall loop while the body's humanoid state is Jumping or Freefall, Climb while `Climbing` is true, and Brace while `Bracing` is true.
 - **Strike**, and **Climb** while there is no `climb.fbx`, are posed by hand (`posed_clip`), each pose aiming Godling's own bones in a direction:
   - **Strike** (1.0 s) is a two-handed swing: wind up wide and high, come down in front with a bow, recover.
   - The posed **Climb** (1.0 s, loops) is hand over hand, the opposite knee stepping up.
@@ -174,4 +175,4 @@ The log and the axe are not in the world yet; they wait for a way to fell trees.
 
 ## Sources
 `source/walking.fbx` and `source/picking_up.fbx` are Mixamo animations the user downloaded (skeleton only, no character mesh).
-The others were downloaded from Mixamo the same way, on the same character (CH02), as the `CLIPS` table names them: FBX Binary, Without Skin, 60 fps, no keyframe reduction, "In Place" for the walk and the ladder climb. The Mixamo animation behind each file is listed under Gestures above. To change a gesture, download another animation with these settings under the same file name and rebuild.
+The others were downloaded from Mixamo the same way, on the same character (CH02), as the `CLIPS` table names them: FBX Binary, Without Skin, 60 fps, no keyframe reduction, "In Place" for the walk, the ladder climb and the earthquake clips. The Mixamo animation behind each file is listed under Gestures above. To change a gesture, download another animation with these settings under the same file name and rebuild.

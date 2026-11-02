@@ -13,8 +13,9 @@ Budget (it has to run in phone browsers): about 5k triangles in all.
 
 Clips (60 fps), from the Mixamo sources (see CLIPS): Idle and Walk (in place: the world moves the body); a
 one-shot gesture for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake,
-Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp); loops for Jump, Fall and Climb. Strike (a two-handed overhead
-swing, 1.0 s) is posed by hand on the same rig, as is Climb when its source is missing.
+Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp) and for the earthquake (Stagger, GetUp, LookAround); loops for
+Jump, Fall, Climb and Brace. Strike (a two-handed overhead swing, 1.0 s) is posed by hand on the same rig, as is
+Climb when its source is missing.
 
 Writes world/assets/godling.glb and art/godling.blend.
 """
@@ -40,7 +41,7 @@ FPS = 60
 # Clips from Mixamo (art/source: skeleton only, 60 fps, all on the same character, so they share one skeleton).
 # Each: name, source file (the first that exists, of several), source frames to keep (None: all), length in game
 # in seconds (None: as it is), and options:
-#   loop   plays round and round (Idle, Walk, Climb, Jump, Fall)
+#   loop   plays round and round (Idle, Walk, Climb, Jump, Fall, Brace)
 #   bend   keeps only this much of the back's bend: an adult's deep bend is a face-plant with Godling's big head
 #   still  takes out the root's drift across the ground, so the clip ends where it began (the world moves the body)
 #   cut    leaves out source frames a..b (the middle of a long hold) and closes the gap
@@ -76,6 +77,10 @@ CLIPS = [
     ("Jump", ("jump.fbx",), (44, 72), None, dict(loop=True, still=True, settle=True, pingpong=True)),  # take-off
     ("Fall", ("fall.fbx",), (133, 205), None, dict(loop=True, still=True, upright=True, face=True)),  # flailing
     ("Climb", ("climb.fbx",), None, 1.0, dict(loop=True, still=True, settle=True, face=True)),  # a ladder, hand over hand
+    ("Stagger", ("stagger.fbx",), (1, 180), None, dict(still=True)),  # stumbles back, sits down hard, stays down
+    ("GetUp", ("wake_up.fbx",), (250, 390), 2.2, dict(still=True, face=True)),  # WakeUp from sitting, after Stagger
+    ("LookAround", ("look_around.fbx",), (1, 150), 2.0, dict(still=True)),  # over the shoulder and back
+    ("Brace", ("brace.fbx",), None, None, dict(loop=True, still=True, bend=0.8)),  # a low crouch, a hand to the ground
 ]
 
 # Mesh detail (segments, rings). Smooth shading hides the facets at the size Godling is seen.
