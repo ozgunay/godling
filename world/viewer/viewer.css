@@ -1,0 +1,287 @@
+/* Godling's viewer screen, live: the Block HUD (island stone with a moss lip, halo gold for what a viewer can press
+   and what the sky did, lagoon teal for what Godling noticed, white pixel type). Prototypes: prototypes/viewer.css. */
+
+:root {
+  --ink: #15191b;
+  --white: #ffffff;
+  --mist: #dfe6e8; /* secondary text on stone */
+  --fog: #b9c5c9; /* times and quiet labels */
+  --gold: #f6c945;
+  --gold-deep: #c9951c;
+  --gold-ink: #2a1d00;
+  --teal: #45d6cf;
+  --heart: #ec4b4f;
+  --heart-deep: #a52a2f;
+  --paper: #f6f3e8;
+  --paper-ink: #2d2a22;
+  --stone: #50585b;
+  --stone-panel: rgba(44, 49, 51, 0.92);
+  --glass: rgba(14, 17, 18, 0.62);
+  --moss: #63b544;
+  --moss-deep: #3f8a2c;
+  --bevel: 0.1875rem;
+  --pixel-shadow: 0.1rem 0.1rem 0 rgba(21, 25, 27, 0.9);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --speckle: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>");
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { font-size: clamp(11px, min(0.834vw, 1.482vh), 18px); }
+body { margin: 0; background: #0b0e10; color: var(--white); overflow: hidden; }
+::selection { background: var(--gold); color: var(--ink); }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+.px { display: block; image-rendering: pixelated; flex: none; }
+kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
+[hidden] { display: none !important; }
+
+/* The stage: the island fills it; the HUD floats over it and lets drags through to the camera */
+.stage { position: relative; width: 100vw; height: 100dvh; overflow: hidden; font-family: 'Tiny5', sans-serif; letter-spacing: 0.02em; }
+.island { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #0b0e10; }
+.stage > :not(.island) { pointer-events: none; }
+.stage button, .stage input, .stage textarea, .b-pop, .b-note, .tip { pointer-events: auto; }
+
+/* Island materials */
+.block {
+  background:
+    var(--speckle) 0 0 / 1.5rem,
+    linear-gradient(var(--moss) 0 0.375rem, var(--moss-deep) 0.375rem 0.5625rem, var(--stone) 0.5625rem);
+  border: var(--bevel) solid var(--ink);
+  box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3);
+}
+.stone {
+  background: var(--speckle) 0 0 / 1.5rem, var(--stone-panel);
+  border: var(--bevel) solid var(--ink);
+  box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.08), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.32);
+}
+.get {
+  padding: 0.55rem 0.85rem; border: var(--bevel) solid var(--ink); background: var(--gold); color: var(--gold-ink);
+  font: 500 1rem/1 'Tiny5', sans-serif; text-shadow: none;
+  box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.45), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 var(--gold-deep);
+}
+.get:hover:not(:disabled) { background: #ffd95e; }
+.get:active:not(:disabled) { box-shadow: inset var(--bevel) var(--bevel) 0 var(--gold-deep); }
+.get:disabled { background: #5c6366; color: var(--mist); cursor: default; box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.12); }
+
+/* ---- Live and watching: the loudest thing at the top, so a drop-in knows this is happening now ---- */
+.b-live {
+  position: absolute; top: 1.5rem; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.1rem 0.55rem 0.9rem;
+  font: 400 1.65rem/1 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow); white-space: nowrap;
+}
+.b-live .dot { width: 0.95rem; height: 0.95rem; background: var(--heart); border: var(--bevel) solid var(--heart-deep); animation: beat 1.6s steps(2, jump-none) infinite; }
+.b-live .word { font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; }
+.b-live .sep { width: var(--bevel); height: 1.5rem; background: rgba(0, 0, 0, 0.45); box-shadow: var(--bevel) 0 0 rgba(255, 255, 255, 0.08); }
+.b-live .n { font-size: 2.1rem; font-weight: 400; color: var(--gold); font-variant-numeric: tabular-nums; }
+.b-live .label { font-size: 1.15rem; color: var(--mist); }
+.b-live.down .dot { background: #5c6366; border-color: #3a3f41; animation: none; }
+.b-live.down .n, .b-live.down .label, .b-live.down .sep, .b-live.down .px { display: none; }
+@keyframes beat { 50% { opacity: 0.35; } }
+
+/* ---- Top-right: the day, the hour, the camera ---- */
+.b-status { position: absolute; top: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
+.b-clock { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 1rem; font: 400 1.5rem/1 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow); }
+.b-clock .time { color: var(--gold); font-variant-numeric: tabular-nums; }
+.b-clock .quake { display: flex; align-items: center; gap: 0.35rem; font-size: 1rem; color: var(--heart); }
+.camera { display: flex; gap: 0.4rem; }
+.cam {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.85rem 0.45rem;
+  font: 400 1.12rem/1 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow);
+  background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.3rem, var(--moss-deep) 0.3rem 0.45rem, var(--stone) 0.45rem);
+  border: var(--bevel) solid var(--ink); box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3);
+}
+.cam .keys { display: flex; gap: 0.15rem; }
+.cam kbd { display: inline-block; min-width: 1.1rem; padding: 0.2rem 0.25rem; text-align: center; background: var(--ink); color: var(--mist); border: 0.0625rem solid #5c6366; text-shadow: none; }
+.cam[aria-pressed='true'] { outline: 0.25rem solid var(--gold); outline-offset: 0.06rem; }
+.cam[aria-pressed='false'] { filter: saturate(0.6) brightness(0.85); }
+.cam[aria-pressed='false']:hover { filter: none; }
+.b-camhint {
+  position: absolute; top: 10.2rem; right: 1.5rem; margin: 0; padding: 0.4rem 0.7rem; background: var(--glass);
+  font: 400 0.95rem/1.2 'Tiny5', sans-serif; color: var(--mist); text-shadow: var(--pixel-shadow);
+  opacity: 0; transform: translateY(-0.4rem); transition: opacity 240ms var(--ease-out), transform 240ms var(--ease-out);
+}
+.free-camera .b-camhint { opacity: 1; transform: none; }
+
+/* ---- Top-left: what Godling thinks and notices ---- */
+.b-mind { position: absolute; left: 1.5rem; top: 1.5rem; width: min(36rem, calc(50vw - 12rem)); }
+.feed { list-style: none; margin: 0; padding: 0; }
+.b-feed .line {
+  display: grid; grid-template-columns: 2.6rem auto 1fr; align-items: start; gap: 0.55rem;
+  margin-bottom: 0.25rem; padding: 0.4rem 0.7rem; background: rgba(14, 17, 18, 0.74);
+  font: 400 1.3rem/1.3 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow);
+}
+/* Older lines fade, but only their words: the band behind them stays dark enough to read over a bright sky */
+.b-feed .line > * { opacity: max(0.62, calc(1 - var(--age, 0) * 0.1)); }
+.b-feed .text, .b-objective .what { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.b-feed time { font: 400 0.68rem/1.9 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
+.b-feed .px { margin-top: 0.2rem; }
+.b-feed .sky .text { color: var(--gold); }
+.b-feed .notice .text { color: var(--teal); }
+.b-feed .waiting .text { color: var(--mist); }
+.b-objective {
+  display: flex; align-items: center; gap: 0.65rem; width: max-content; max-width: 100%;
+  margin: 0.7rem 0 0; padding: 0.55rem 0.8rem; background: rgba(14, 17, 18, 0.75); border: var(--bevel) solid var(--ink);
+  font: 400 1.22rem/1.2 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow);
+}
+.b-objective b { color: var(--gold); font-weight: 500; }
+
+/* ---- Right: what viewers did, as it happens ---- */
+.b-popups { position: absolute; right: 1.5rem; top: 12.4rem; display: flex; flex-direction: column; gap: 0.5rem; width: 26rem; }
+.b-pop {
+  display: flex; align-items: center; gap: 0.85rem; padding: 0.6rem 0.9rem 0.6rem 0.6rem; text-shadow: var(--pixel-shadow);
+  opacity: 0; transform: translateX(2.5rem); filter: blur(0.25rem);
+  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out), filter 420ms var(--ease-out);
+}
+.b-pop.in { opacity: 1; transform: none; filter: none; }
+.b-pop.out { opacity: 0; transform: translateX(1.5rem); transition-duration: 380ms; }
+.b-pop .tile { display: grid; place-items: center; flex: none; width: 3.6rem; height: 3.6rem; padding-top: 0.5rem; }
+.b-pop .head { margin: 0; font: 400 1.25rem/1.2 'Tiny5', sans-serif; color: var(--mist); }
+.b-pop strong { font-weight: 400; color: var(--gold); }
+.b-pop small { display: block; margin-top: 0.2rem; font: 400 1rem/1.2 'Tiny5', sans-serif; color: var(--fog); }
+.b-pop.harm .tile { box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3), inset 0 -0.35rem 0 var(--heart-deep); }
+.b-pop .paper {
+  display: block; margin-top: 0.45rem; padding: 0.45rem 0.6rem; quotes: none;
+  background: var(--paper); color: var(--paper-ink); border: var(--bevel) solid var(--ink);
+  font: 400 1.1rem/1.3 'Tiny5', sans-serif; text-shadow: none; overflow-wrap: anywhere;
+  box-shadow: inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 #d9d3bf;
+}
+.b-pop.note { align-items: flex-start; }
+
+/* ---- Bottom: Godling's body above the hotbar ---- */
+.b-dock { position: absolute; left: 50%; bottom: 1.1rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 0.45rem; }
+.b-vitals { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0 0.4rem; gap: 1rem; min-height: 1.4rem; }
+.b-vitals .row { display: flex; gap: 0.12rem; }
+.b-vitals .states { display: flex; gap: 0.8rem; }
+.b-vitals .state { display: flex; align-items: center; gap: 0.35rem; font: 500 0.95rem/1 'Tiny5', sans-serif; color: #bfe8ff; text-shadow: var(--pixel-shadow); }
+.b-belt { display: flex; align-items: flex-end; gap: 1rem; }
+.b-hotbar { display: flex; gap: 0.375rem; padding: 0.375rem 0.375rem 2.1rem; background: rgba(14, 17, 18, 0.78); border: var(--bevel) solid var(--ink); }
+.slot { position: relative; display: grid; place-items: center; width: 5.6rem; height: 5.6rem; padding: 0.5rem 0 0; transition: transform 160ms var(--ease-out); }
+.slot kbd { position: absolute; top: 0.7rem; left: 0.45rem; color: #e3e9eb; text-shadow: var(--pixel-shadow); }
+.slot .n { position: absolute; z-index: 1; right: 0.4rem; bottom: 0.2rem; font: 500 0.95rem/1 'Tiny5', sans-serif; color: var(--teal); text-shadow: var(--pixel-shadow); }
+.slot .price { position: absolute; left: 50%; bottom: -1.75rem; transform: translateX(-50%); font: 500 1.05rem/1 'Tiny5', sans-serif; color: var(--gold); text-shadow: var(--pixel-shadow); white-space: nowrap; }
+.slot.note .price { color: var(--paper); }
+.slot:hover, .slot:focus-visible, .slot.open { transform: translateY(-0.4rem); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
+.slot:active, .slot.calling { transform: translateY(0.1rem); }
+.slot.calling .px { animation: lift 600ms var(--ease-out) infinite alternate; }
+@keyframes lift { to { transform: translateY(-0.35rem); } }
+.slot.harm::before { content: ''; position: absolute; top: 0.5625rem; right: 0; border-left: 0.75rem solid transparent; border-top: 0.75rem solid var(--heart); }
+.slot.cooling .px { filter: grayscale(0.85) brightness(0.65); }
+.slot.cooling::after { content: ''; position: absolute; inset: 0.5625rem 0 0; background: conic-gradient(rgba(10, 12, 13, 0.62) calc(var(--cd) * 360deg), transparent 0); }
+.b-purse { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.9rem; text-shadow: var(--pixel-shadow); }
+.b-purse span { font: 500 0.95rem/1.15 'Tiny5', sans-serif; }
+.b-purse b { font-size: 1.6rem; font-weight: 500; color: var(--gold); margin-right: 0.35rem; }
+.b-purse small { display: block; font-size: 0.95rem; color: var(--fog); white-space: nowrap; }
+
+/* Aiming: the picked slot stays lifted; the bar above the hotbar says what a click will do */
+.slot.aiming { transform: translateY(-0.4rem); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
+.b-aim { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem 0.5rem 0.8rem; text-shadow: var(--pixel-shadow); }
+.b-aim .words { display: flex; align-items: center; gap: 0.55rem; margin: 0 0.4rem 0 0; font: 400 1.2rem/1.2 'Tiny5', sans-serif; }
+.b-aim .harm { color: #ffb3b5; }
+.b-aim .feet { color: var(--teal); }
+.b-aim .cancel { padding: 0.5rem 0.7rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); font: 400 1rem/1 'Tiny5', sans-serif; }
+.b-aim .cancel:hover { background: rgba(14, 17, 18, 0.95); }
+
+/* A refusal or a nudge, said once just above the hotbar */
+.b-say {
+  margin: 0; max-width: 40rem; padding: 0.45rem 0.8rem; background: rgba(14, 17, 18, 0.85); border: var(--bevel) solid var(--ink);
+  font: 400 1.1rem/1.25 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow); text-align: center;
+  opacity: 0; transform: translateY(0.4rem); transition: opacity 240ms var(--ease-out), transform 240ms var(--ease-out);
+}
+.b-say.shown { opacity: 1; transform: none; }
+.b-say.no { color: #ffd0d1; }
+
+/* The note: a stone slab with a paper slip in it */
+.b-note { width: 34rem; padding: 0.8rem 0.9rem 0.75rem; margin-bottom: 0.3rem; text-shadow: var(--pixel-shadow); }
+.b-note .n-head { display: flex; align-items: center; gap: 0.6rem; }
+.b-note label { font: 400 1.3rem/1 'Tiny5', sans-serif; color: var(--gold); }
+.b-note .count { margin-left: auto; font: 400 0.75rem/1 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
+.b-note .count.full { color: var(--heart); }
+.b-note textarea {
+  display: block; width: 100%; margin: 0.55rem 0; padding: 0.55rem 0.65rem; resize: none;
+  background: var(--paper); color: var(--paper-ink); caret-color: var(--moss-deep);
+  border: var(--bevel) solid var(--ink); box-shadow: inset var(--bevel) var(--bevel) 0 #d9d3bf;
+  font: 400 1.2rem/1.3 'Tiny5', sans-serif; text-shadow: none;
+}
+.b-note textarea::placeholder { color: #6e6858; }
+.b-note .n-foot { display: flex; gap: 0.5rem; }
+.b-note input {
+  flex: 1; min-width: 0; padding: 0.45rem 0.6rem; background: rgba(14, 17, 18, 0.7); color: var(--white); caret-color: var(--gold);
+  border: var(--bevel) solid var(--ink); font: 400 1.05rem/1 'Tiny5', sans-serif;
+}
+.b-note input::placeholder { color: var(--fog); }
+.b-note .n-hint { margin: 0.55rem 0 0; font: 400 0.95rem/1.3 'Tiny5', sans-serif; color: var(--mist); }
+.b-note .n-hint.yes { color: var(--teal); }
+.b-note .n-hint.no { color: #ffd0d1; }
+
+/* The tooltip over a slot */
+.tip { position: absolute; z-index: 5; width: 23rem; padding: 0.9rem 1rem; text-shadow: var(--pixel-shadow); }
+.tip-head { display: flex; align-items: center; gap: 0.6rem; }
+.tip-head strong { font: 400 1.4rem/1 'Tiny5', sans-serif; color: var(--gold); }
+.tip-head em { margin-left: auto; font: 400 0.62rem/1 'Silkscreen', monospace; font-style: normal; padding: 0.25rem 0.4rem; background: #2c3335; text-shadow: none; }
+.tip-head em.harm { background: #7a1f22; }
+.tip p { margin: 0.55rem 0 0.7rem; font: 400 1.12rem/1.35 'Tiny5', sans-serif; color: #edf2f3; }
+.tip dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.9rem; margin: 0; }
+.tip dt { font: 400 0.6rem/1.7 'Silkscreen', monospace; color: #a8b6ba; }
+.tip dd { margin: 0; font: 500 0.95rem/1.3 'Tiny5', sans-serif; }
+.tip .free { display: block; color: var(--teal); }
+
+@media (prefers-reduced-motion: reduce) {
+  .b-live .dot, .slot.calling .px { animation: none; }
+  .b-pop, .b-pop.out, .b-say, .b-camhint, .slot { transition-duration: 1ms; filter: none; }
+}
+
+/* ---- Phones: the island stays in the middle; the HUD hugs the top and bottom edges ---- */
+@media (max-width: 760px) {
+  html { font-size: 13px; }
+  .tip { display: none; }
+  .cam span:not(.keys), .cam .keys { display: none; }
+  /* One top row: live and watching (the eye says watching), the hour, the camera */
+  .b-live { top: max(0.75rem, env(safe-area-inset-top)); left: 0.75rem; transform: none; height: 3.1rem; gap: 0.45rem; padding: 0 0.65rem; font-size: 1.15rem; }
+  .b-live .dot { width: 0.7rem; height: 0.7rem; }
+  .b-live .sep { height: 1.1rem; }
+  .b-live .px { width: 1.7rem; height: auto; }
+  .b-live .n { font-size: 1.6rem; }
+  .b-live .label { display: none; }
+  .b-status { top: max(0.75rem, env(safe-area-inset-top)); right: 0.75rem; flex-direction: row; align-items: center; gap: 0.35rem; }
+  .b-clock { height: 3.1rem; font-size: 1.1rem; padding: 0 0.55rem; gap: 0.4rem; }
+  .b-clock .px { width: 1.5rem; height: auto; }
+  .b-clock .day, .b-clock .quake { display: none; }
+  .cam { height: 3.1rem; padding: 0.3rem 0.5rem 0; }
+  .b-camhint { top: 4.1rem; right: 0.75rem; left: 0.75rem; text-align: center; font-size: 0.9rem; }
+  .b-mind { top: 4.4rem; left: 0.75rem; right: 0.75rem; width: auto; }
+  .b-feed .line { grid-template-columns: 2.4rem auto 1fr; font-size: 1rem; padding: 0.35rem 0.55rem; }
+  .b-feed .text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .b-objective { font-size: 0.98rem; }
+  /* One pop-up at a time, over the feed (hidden meanwhile), never over Godling */
+  .b-popups { top: 4.4rem; left: 0.75rem; right: 0.75rem; width: auto; }
+  .has-pop .b-mind { visibility: hidden; }
+  .b-pop small { display: none; }
+  .b-pop .paper { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .b-pop { padding: 0.45rem 0.7rem 0.45rem 0.45rem; gap: 0.6rem; }
+  .b-pop .tile { width: 2.9rem; height: 2.9rem; padding-top: 0.4rem; }
+  .b-pop .tile .px { width: 1.9rem; height: auto; }
+  .b-pop .head { font-size: 1.05rem; }
+  .b-pop small { font-size: 0.9rem; }
+  .b-pop .paper { font-size: 0.98rem; padding: 0.35rem 0.5rem; }
+  .b-dock { left: 0; right: 0; bottom: max(0.6rem, env(safe-area-inset-bottom)); transform: none; padding: 0 0.6rem; }
+  .b-vitals { padding: 0; }
+  .b-belt { flex-direction: column-reverse; align-items: stretch; gap: 0.45rem; width: 100%; }
+  .b-hotbar { margin-bottom: 0; padding-bottom: 1.9rem; gap: 0.3rem; }
+  .slot { flex: 1 1 0; min-width: 0; width: auto; height: auto; aspect-ratio: 1; }
+  .slot .px { width: 62%; height: auto; }
+  .slot kbd { display: none; }
+  .slot .price { bottom: -1.6rem; font-size: 0.85rem; }
+  .slot:hover, .slot:focus-visible, .slot.open { transform: none; }
+  .b-purse { margin-bottom: 0; padding: 0.25rem 0.6rem; justify-content: flex-start; gap: 0.5rem; }
+  .b-purse .px { width: 1.3rem; height: auto; }
+  .b-purse b { font-size: 1.1rem; }
+  .b-purse small { display: inline; margin-left: 0.4rem; }
+  .b-note { width: 100%; }
+  .b-aim { flex-wrap: wrap; width: 100%; }
+  .b-aim .words { flex: 1 1 100%; font-size: 1.05rem; }
+  .slot.aiming { transform: none; }
+  .b-note textarea, .b-note input { font-size: 16px; } /* under 16px, iOS zooms the page on focus */
+  .b-say { max-width: 100%; }
+}

@@ -14,6 +14,8 @@ import { createRain } from './rain.js'
 import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
 import { createWind, swayMaterial } from './wind.js'
+import { createFreeCamera } from './freecam.js'
+import { createAim } from './aim.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -537,6 +539,34 @@ export function createRenderer(ctx) {
   if (cameraModes?.api && ctx.runtime?.internal?.expose) {
     ctx.runtime.internal.expose('camera', cameraModes.api)
   }
+  // With nobody followed, our own free camera flies (freecam.js). Inside the viewer screen (?embed=1, world/viewer)
+  // the page around the island is hidden and the screen picks the camera: follow Godling, or fly free with the keys
+  // it forwards.
+  const freeCam = createFreeCamera(THREE, camera, ctx.canvas)
+  const embedded = params.get('embed') === '1' && globalThis.parent !== globalThis
+  let cameraWish = embedded ? 'follow' : null
+  // Aiming a sky power (aim.js): the screen says which power; the ring follows the pointer; the spot goes back.
+  const godlingAt = new THREE.Vector3()
+  let godlingSeen = false
+  const tellScreen = (message) => globalThis.parent.postMessage({ source: 'godling-renderer', ...message }, '*')
+  const aim = embedded ? createAim(THREE, scene, camera, ctx.canvas, {
+    godling: () => (godlingSeen ? godlingAt : null),
+    onHover: (spot) => tellScreen({ type: 'godling-aim-hover', ...spot }),
+    onAimed: (spot) => tellScreen({ type: 'godling-aimed', ...spot }),
+    onCancel: () => tellScreen({ type: 'godling-aim-cancel' }),
+  }) : null
+  if (embedded) {
+    const style = document.createElement('style')
+    style.textContent = 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }'
+    document.head.append(style)
+    addEventListener('message', (event) => {
+      const data = event.data
+      if (event.source !== globalThis.parent || data?.source !== 'godling-viewer') return
+      if (data.type === 'godling-camera') cameraWish = data.mode === 'free' ? 'free' : 'follow'
+      else if (data.type === 'godling-key') freeCam.key(String(data.code), Boolean(data.down))
+      else if (data.type === 'godling-aim') (data.power ? aim.start(String(data.power)) : aim.stop())
+    })
+  }
 
   // Entities whose look changes when a model arrives are rebuilt; the runtime's replay waits for tracked loads
   // (patched Clawblox exports trackAssetLoad; upstream keeps it private, and then models are simply untracked).
@@ -664,6 +694,17 @@ export function createRenderer(ctx) {
       }
       case 'SkyShadow':
         return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
+      case 'Blast': // a meteor's blast (main.lua sky.meteor): the explosion is drawn from it, not the part itself
+        return { kind: 'parts', parts: [] }
+      case 'SkyNote': { // a viewer's note folded into a paper glider (main.lua sky.notes): two wings in a shallow V
+        const [l, h, w] = size
+        return {
+          kind: 'parts',
+          parts: [-1, 1].map((side) => part('noteWing', kit.geometry('box'), kit.material('plain'),
+            new THREE.Matrix4().makeRotationX(side * 0.32).multiply(scaled(l, h * 0.35, w * 0.5)).setPosition(0, 0, side * w * 0.24),
+            { colored: true })),
+        }
+      }
       case 'PickupObject':
         return { kind: 'parts', parts: [part('block', kit.geometry('box'), kit.material('rock'), scaled(...size), { colored: true })] }
       // The castaway's life (ADR-007). A ModelUrl, once the art pipeline makes one, is drawn instead (above).
@@ -969,19 +1010,28 @@ export function createRenderer(ctx) {
     const selectedTarget = selectedId
       ? players.find((player) => String(player?.id || '') === selectedId)
       : null
-    const followTarget = selectedTarget || null
+    const godling = players.find((player) => player?.name === 'Godling') || players.find((player) => player?.name !== 'Sky')
+    godlingSeen = Array.isArray(godling?.position)
+    if (godlingSeen) godlingAt.set(godling.position[0], godling.position[1], godling.position[2])
+    const followTarget = cameraWish === 'free' ? null : cameraWish === 'follow' ? godling || null : selectedTarget || null
     const cameraTarget = followTarget && Array.isArray(followTarget.position)
       ? new THREE.Vector3(followTarget.position[0], followTarget.position[1], followTarget.position[2])
       : computeAnchorPosition(obs)
     const cameraMode = followTarget ? 'follow' : 'spectator'
 
     anchorPos.copy(cameraTarget)
-    cameraModes.update({
-      mode: cameraMode,
-      targetPosition: cameraTarget,
-      targetForward: tmpForward,
-      dt,
-    })
+    if (cameraMode === 'spectator') {
+      freeCam.enter(cameraTarget)
+      freeCam.update(dt)
+    } else {
+      freeCam.leave()
+      cameraModes.update({
+        mode: cameraMode,
+        targetPosition: cameraTarget,
+        targetForward: tmpForward,
+        dt,
+      })
+    }
 
     return { seaLevel, land, landKey: landKey.join(';'), cameraTarget, swimming }
   }

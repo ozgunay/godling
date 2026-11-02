@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T17:41:44.099Z",
+  "title": "Design System: Godling",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(21.0% 0.007 229.3)",
+        "tonalRamp": [
+          "oklch(15% 0.007 229.3)",
+          "oklch(26% 0.007 229.3)",
+          "oklch(37% 0.007 229.3)",
+          "oklch(48% 0.007 229.3)",
+          "oklch(59% 0.007 229.3)",
+          "oklch(70% 0.007 229.3)",
+          "oklch(82% 0.007 229.3)",
+          "oklch(95% 0.007 229.3)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White",
+        "canonical": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "oklch(15% 0.000 89.9)",
+          "oklch(26% 0.000 89.9)",
+          "oklch(37% 0.000 89.9)",
+          "oklch(48% 0.000 89.9)",
+          "oklch(59% 0.000 89.9)",
+          "oklch(70% 0.000 89.9)",
+          "oklch(82% 0.000 89.9)",
+          "oklch(95% 0.000 89.9)"
+        ]
+      },
+      "mist": {
+        "role": "neutral",
+        "displayName": "Mist",
+        "canonical": "oklch(92.0% 0.008 216.6)",
+        "tonalRamp": [
+          "oklch(15% 0.008 216.6)",
+          "oklch(26% 0.008 216.6)",
+          "oklch(37% 0.008 216.6)",
+          "oklch(48% 0.008 216.6)",
+          "oklch(59% 0.008 216.6)",
+          "oklch(70% 0.008 216.6)",
+          "oklch(82% 0.008 216.6)",
+          "oklch(95% 0.008 216.6)"
+        ]
+      },
+      "fog": {
+        "role": "neutral",
+        "displayName": "Fog",
+        "canonical": "oklch(81.5% 0.014 219.6)",
+        "tonalRamp": [
+          "oklch(15% 0.014 219.6)",
+          "oklch(26% 0.014 219.6)",
+          "oklch(37% 0.014 219.6)",
+          "oklch(48% 0.014 219.6)",
+          "oklch(59% 0.014 219.6)",
+          "oklch(70% 0.014 219.6)",
+          "oklch(82% 0.014 219.6)",
+          "oklch(95% 0.014 219.6)"
+        ]
+      },
+      "gold": {
+        "role": "primary",
+        "displayName": "Halo Gold",
+        "canonical": "oklch(85.3% 0.152 89.4)",
+        "tonalRamp": [
+          "oklch(15% 0.152 89.4)",
+          "oklch(26% 0.152 89.4)",
+          "oklch(37% 0.152 89.4)",
+          "oklch(48% 0.152 89.4)",
+          "oklch(59% 0.152 89.4)",
+          "oklch(70% 0.152 89.4)",
+          "oklch(82% 0.152 89.4)",
+          "oklch(95% 0.152 89.4)"
+        ]
+      },
+      "gold-deep": {
+        "role": "primary",
+        "displayName": "Gold Shadow",
+        "canonical": "oklch(70.1% 0.138 82.1)",
+        "tonalRamp": [
+          "oklch(15% 0.138 82.1)",
+          "oklch(26% 0.138 82.1)",
+          "oklch(37% 0.138 82.1)",
+          "oklch(48% 0.138 82.1)",
+          "oklch(59% 0.138 82.1)",
+          "oklch(70% 0.138 82.1)",
+          "oklch(82% 0.138 82.1)",
+          "oklch(95% 0.138 82.1)"
+        ]
+      },
+      "gold-ink": {
+        "role": "primary",
+        "displayName": "Gold Ink",
+        "canonical": "oklch(24.0% 0.049 84.9)",
+        "tonalRamp": [
+          "oklch(15% 0.049 84.9)",
+          "oklch(26% 0.049 84.9)",
+          "oklch(37% 0.049 84.9)",
+          "oklch(48% 0.049 84.9)",
+          "oklch(59% 0.049 84.9)",
+          "oklch(70% 0.049 84.9)",
+          "oklch(82% 0.049 84.9)",
+          "oklch(95% 0.049 84.9)"
+        ]
+      },
+      "teal": {
+        "role": "secondary",
+        "displayName": "Lagoon Teal",
+        "canonical": "oklch(79.9% 0.121 190.3)",
+        "tonalRamp": [
+          "oklch(15% 0.121 190.3)",
+          "oklch(26% 0.121 190.3)",
+          "oklch(37% 0.121 190.3)",
+          "oklch(48% 0.121 190.3)",
+          "oklch(59% 0.121 190.3)",
+          "oklch(70% 0.121 190.3)",
+          "oklch(82% 0.121 190.3)",
+          "oklch(95% 0.121 190.3)"
+        ]
+      },
+      "heart": {
+        "role": "tertiary",
+        "displayName": "Heart Red",
+        "canonical": "oklch(64.0% 0.197 23.4)",
+        "tonalRamp": [
+          "oklch(15% 0.160 23.4)",
+          "oklch(26% 0.160 23.4)",
+          "oklch(37% 0.160 23.4)",
+          "oklch(48% 0.160 23.4)",
+          "oklch(59% 0.160 23.4)",
+          "oklch(70% 0.160 23.4)",
+          "oklch(82% 0.160 23.4)",
+          "oklch(95% 0.160 23.4)"
+        ]
+      },
+      "heart-deep": {
+        "role": "tertiary",
+        "displayName": "Heart Shadow",
+        "canonical": "oklch(48.1% 0.159 23.5)",
+        "tonalRamp": [
+          "oklch(15% 0.159 23.5)",
+          "oklch(26% 0.159 23.5)",
+          "oklch(37% 0.159 23.5)",
+          "oklch(48% 0.159 23.5)",
+          "oklch(59% 0.159 23.5)",
+          "oklch(70% 0.159 23.5)",
+          "oklch(82% 0.159 23.5)",
+          "oklch(95% 0.159 23.5)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "oklch(96.3% 0.015 94.2)",
+        "tonalRamp": [
+          "oklch(15% 0.015 94.2)",
+          "oklch(26% 0.015 94.2)",
+          "oklch(37% 0.015 94.2)",
+          "oklch(48% 0.015 94.2)",
+          "oklch(59% 0.015 94.2)",
+          "oklch(70% 0.015 94.2)",
+          "oklch(82% 0.015 94.2)",
+          "oklch(95% 0.015 94.2)"
+        ]
+      },
+      "paper-ink": {
+        "role": "neutral",
+        "displayName": "Paper Ink",
+        "canonical": "oklch(28.5% 0.015 89.9)",
+        "tonalRamp": [
+          "oklch(15% 0.015 89.9)",
+          "oklch(26% 0.015 89.9)",
+          "oklch(37% 0.015 89.9)",
+          "oklch(48% 0.015 89.9)",
+          "oklch(59% 0.015 89.9)",
+          "oklch(70% 0.015 89.9)",
+          "oklch(82% 0.015 89.9)",
+          "oklch(95% 0.015 89.9)"
+        ]
+      },
+      "paper-shade": {
+        "role": "neutral",
+        "displayName": "Paper Shade",
+        "canonical": "oklch(86.6% 0.028 93.1)",
+        "tonalRamp": [
+          "oklch(15% 0.028 93.1)",
+          "oklch(26% 0.028 93.1)",
+          "oklch(37% 0.028 93.1)",
+          "oklch(48% 0.028 93.1)",
+          "oklch(59% 0.028 93.1)",
+          "oklch(70% 0.028 93.1)",
+          "oklch(82% 0.028 93.1)",
+          "oklch(95% 0.028 93.1)"
+        ]
+      },
+      "stone": {
+        "role": "neutral",
+        "displayName": "Island Stone",
+        "canonical": "oklch(45.4% 0.011 222.2)",
+        "tonalRamp": [
+          "oklch(15% 0.011 222.2)",
+          "oklch(26% 0.011 222.2)",
+          "oklch(37% 0.011 222.2)",
+          "oklch(48% 0.011 222.2)",
+          "oklch(59% 0.011 222.2)",
+          "oklch(70% 0.011 222.2)",
+          "oklch(82% 0.011 222.2)",
+          "oklch(95% 0.011 222.2)"
+        ]
+      },
+      "stone-panel": {
+        "role": "neutral",
+        "displayName": "Stone Panel",
+        "canonical": "oklch(30.9% 0.008 223.7)",
+        "tonalRamp": [
+          "oklch(15% 0.008 223.7)",
+          "oklch(26% 0.008 223.7)",
+          "oklch(37% 0.008 223.7)",
+          "oklch(48% 0.008 223.7)",
+          "oklch(59% 0.008 223.7)",
+          "oklch(70% 0.008 223.7)",
+          "oklch(82% 0.008 223.7)",
+          "oklch(95% 0.008 223.7)"
+        ]
+      },
+      "glass": {
+        "role": "neutral",
+        "displayName": "Dark Band",
+        "canonical": "oklch(17.5% 0.005 219.8)",
+        "tonalRamp": [
+          "oklch(15% 0.005 219.8)",
+          "oklch(26% 0.005 219.8)",
+          "oklch(37% 0.005 219.8)",
+          "oklch(48% 0.005 219.8)",
+          "oklch(59% 0.005 219.8)",
+          "oklch(70% 0.005 219.8)",
+          "oklch(82% 0.005 219.8)",
+          "oklch(95% 0.005 219.8)"
+        ]
+      },
+      "moss": {
+        "role": "neutral",
+        "displayName": "Moss",
+        "canonical": "oklch(69.7% 0.169 138.2)",
+        "tonalRamp": [
+          "oklch(15% 0.160 138.2)",
+          "oklch(26% 0.160 138.2)",
+          "oklch(37% 0.160 138.2)",
+          "oklch(48% 0.160 138.2)",
+          "oklch(59% 0.160 138.2)",
+          "oklch(70% 0.160 138.2)",
+          "oklch(82% 0.160 138.2)",
+          "oklch(95% 0.160 138.2)"
+        ]
+      },
+      "moss-deep": {
+        "role": "neutral",
+        "displayName": "Deep Moss",
+        "canonical": "oklch(56.5% 0.149 139.9)",
+        "tonalRamp": [
+          "oklch(15% 0.149 139.9)",
+          "oklch(26% 0.149 139.9)",
+          "oklch(37% 0.149 139.9)",
+          "oklch(48% 0.149 139.9)",
+          "oklch(59% 0.149 139.9)",
+          "oklch(70% 0.149 139.9)",
+          "oklch(82% 0.149 139.9)",
+          "oklch(95% 0.149 139.9)"
+        ]
+      },
+      "pip-empty": {
+        "role": "neutral",
+        "displayName": "Empty Pip",
+        "canonical": "oklch(49.5% 0.010 225.2)",
+        "tonalRamp": [
+          "oklch(15% 0.010 225.2)",
+          "oklch(26% 0.010 225.2)",
+          "oklch(37% 0.010 225.2)",
+          "oklch(48% 0.010 225.2)",
+          "oklch(59% 0.010 225.2)",
+          "oklch(70% 0.010 225.2)",
+          "oklch(82% 0.010 225.2)",
+          "oklch(95% 0.010 225.2)"
+        ]
+      },
+      "night-well": {
+        "role": "neutral",
+        "displayName": "Night Well",
+        "canonical": "oklch(16.1% 0.006 237.0)",
+        "tonalRamp": [
+          "oklch(15% 0.006 237.0)",
+          "oklch(26% 0.006 237.0)",
+          "oklch(37% 0.006 237.0)",
+          "oklch(48% 0.006 237.0)",
+          "oklch(59% 0.006 237.0)",
+          "oklch(70% 0.006 237.0)",
+          "oklch(82% 0.006 237.0)",
+          "oklch(95% 0.006 237.0)"
+        ]
+      },
+      "refusal-pink": {
+        "role": "tertiary",
+        "displayName": "Refusal Pink",
+        "canonical": "oklch(89.8% 0.053 16.8)",
+        "tonalRamp": [
+          "oklch(15% 0.053 16.8)",
+          "oklch(26% 0.053 16.8)",
+          "oklch(37% 0.053 16.8)",
+          "oklch(48% 0.053 16.8)",
+          "oklch(59% 0.053 16.8)",
+          "oklch(70% 0.053 16.8)",
+          "oklch(82% 0.053 16.8)",
+          "oklch(95% 0.053 16.8)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The watcher count, tabular, in gold."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The live bar and the clock."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Feed lines, needs, pop-up heads, the note label, tooltip titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Tooltip text, notes, paper slips, aim words, prices."
+      },
+      "body-small": {
+        "displayName": "Body small",
+        "purpose": "States, after-lines, hints, countdowns, purse print."
+      },
+      "label": {
+        "displayName": "Label (Silkscreen)",
+        "purpose": "Keys, island times, the note counter, tooltip terms, kind chips."
+      }
+    },
+    "shadows": [
+      {
+        "name": "stone-bevel",
+        "value": "inset var(--bevel) var(--bevel) 0 rgba(255,255,255,0.08), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0,0,0,0.32)",
+        "purpose": "Every stone slab."
+      },
+      {
+        "name": "block-bevel",
+        "value": "inset var(--bevel) 0 0 rgba(255,255,255,0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0,0,0,0.3)",
+        "purpose": "Slots, pop-up tiles and the camera switch, under the moss lip."
+      },
+      {
+        "name": "gold-bevel",
+        "value": "inset var(--bevel) var(--bevel) 0 rgba(255,255,255,0.45), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 var(--gold-deep)",
+        "purpose": "The gold button at rest."
+      },
+      {
+        "name": "gold-bevel-pressed",
+        "value": "inset var(--bevel) var(--bevel) 0 var(--gold-deep)",
+        "purpose": "The gold button pressed."
+      },
+      {
+        "name": "paper-bevel",
+        "value": "inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 #d9d3bf",
+        "purpose": "A paper slip sits proud; the textarea uses the positive offsets and sits sunk."
+      },
+      {
+        "name": "pixel-shadow",
+        "value": "0.1rem 0.1rem 0 rgba(21, 25, 27, 0.9)",
+        "purpose": "Text-shadow only: white pixel type over the island and on stone."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Every transition."
+      },
+      {
+        "name": "slot-lift",
+        "value": "160ms",
+        "purpose": "Slot lift on hover, focus, open and aiming."
+      },
+      {
+        "name": "hint",
+        "value": "240ms",
+        "purpose": "The said-once line and the camera hint, in and out."
+      },
+      {
+        "name": "pop-in",
+        "value": "420ms",
+        "purpose": "Pop-up slide-in from 2.5rem with unblur; out in 380ms."
+      },
+      {
+        "name": "live-beat",
+        "value": "1.6s steps(2, jump-none) infinite",
+        "purpose": "The live dot blink."
+      },
+      {
+        "name": "calling-bob",
+        "value": "600ms alternate infinite",
+        "purpose": "A slot icon while its call is in flight."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "760px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Gold Button",
+      "kind": "button",
+      "refersTo": "button-get",
+      "description": "The one filled button: Fold and send, Let the sky choose.",
+      "html": "<button class=\"ds-get\">Fold and send</button>",
+      "css": ".ds-get{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;padding:.55rem .85rem;border:var(--bevel) solid var(--ink);background:var(--gold);color:var(--gold-ink);font-size:1rem;line-height:1;border-radius:0;cursor:pointer;box-shadow:inset var(--bevel) var(--bevel) 0 rgba(255,255,255,.45),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 var(--gold-deep)}.ds-get:hover{background:#ffd95e}.ds-get:active{box-shadow:inset var(--bevel) var(--bevel) 0 var(--gold-deep)}.ds-get:disabled{background:#5c6366;color:var(--mist);cursor:default;box-shadow:inset var(--bevel) var(--bevel) 0 rgba(255,255,255,.12)}.ds-get:focus-visible{outline:.25rem solid var(--white);outline-offset:.125rem}"
+    },
+    {
+      "name": "Cancel Button",
+      "kind": "button",
+      "refersTo": "button-cancel",
+      "description": "The quiet dark-band button beside a gold one.",
+      "html": "<button class=\"ds-cancel\">Cancel</button>",
+      "css": ".ds-cancel{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;padding:.5rem .7rem;background:rgba(14,17,18,.7);color:var(--white);border:var(--bevel) solid var(--ink);font-size:1rem;line-height:1;border-radius:0;cursor:pointer;text-shadow:var(--pixel-shadow)}.ds-cancel:hover{background:rgba(14,17,18,.95)}.ds-cancel:focus-visible{outline:.25rem solid var(--white);outline-offset:.125rem}"
+    },
+    {
+      "name": "Hotbar Slot",
+      "kind": "custom",
+      "refersTo": "slot",
+      "description": "A power as an island block: key, icon, price; lifts with a gold outline when picked.",
+      "html": "<button class=\"ds-slot\"><kbd>1</kbd><svg width=\"48\" height=\"48\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><rect x=\"1\" y=\"2\" width=\"14\" height=\"13\" fill=\"#15191b\"/><rect x=\"2\" y=\"3\" width=\"12\" height=\"3\" fill=\"#63b544\"/><rect x=\"2\" y=\"6\" width=\"12\" height=\"7\" fill=\"#8f979a\"/><rect x=\"13\" y=\"6\" width=\"1\" height=\"8\" fill=\"#666e71\"/><rect x=\"2\" y=\"13\" width=\"12\" height=\"1\" fill=\"#666e71\"/><rect x=\"2\" y=\"5\" width=\"1\" height=\"1\" fill=\"#3f8a2c\"/><rect x=\"9\" y=\"5\" width=\"1\" height=\"1\" fill=\"#3f8a2c\"/><rect x=\"6\" y=\"6\" width=\"2\" height=\"1\" fill=\"#63b544\"/></svg><span class=\"ds-price\">4 cr</span></button>",
+      "css": ".ds-slot{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;position:relative;display:grid;place-items:center;width:5.6rem;height:5.6rem;padding:.5rem 0 0;margin-bottom:2rem;color:var(--white);border-radius:0;cursor:pointer;background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,linear-gradient(var(--moss) 0 .375rem,var(--moss-deep) .375rem .5625rem,var(--stone) .5625rem);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) 0 0 rgba(255,255,255,.13),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.3);transition:transform 160ms var(--ease-out)}.ds-slot svg{image-rendering:pixelated}.ds-slot kbd{position:absolute;top:.7rem;left:.45rem;font:400 .6rem/1 'Silkscreen',monospace;color:#e3e9eb;text-shadow:var(--pixel-shadow)}.ds-slot .ds-price{position:absolute;left:50%;bottom:-1.75rem;transform:translateX(-50%);font-size:1.05rem;color:var(--gold);text-shadow:var(--pixel-shadow);white-space:nowrap}.ds-slot:hover,.ds-slot:focus-visible{transform:translateY(-.4rem);outline:.25rem solid var(--gold);outline-offset:.1rem}.ds-slot:active{transform:translateY(.1rem)}@media (prefers-reduced-motion:reduce){.ds-slot{transition-duration:1ms}}"
+    },
+    {
+      "name": "Camera Switch",
+      "kind": "nav",
+      "refersTo": "camera-switch",
+      "description": "Follow Godling or Free camera; the pressed one wears a gold outline.",
+      "html": "<div class=\"ds-camera\"><button class=\"ds-cam\" aria-pressed=\"true\">Follow Godling</button><button class=\"ds-cam\" aria-pressed=\"false\">Free camera <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></button></div>",
+      "css": ".ds-camera{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);display:flex;gap:.4rem}.ds-cam{font-family:'Tiny5',sans-serif;letter-spacing:.02em;display:flex;align-items:center;gap:.25rem;padding:.55rem .85rem .45rem;font-size:1.12rem;line-height:1;color:var(--white);text-shadow:var(--pixel-shadow);border-radius:0;cursor:pointer;background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,linear-gradient(var(--moss) 0 .3rem,var(--moss-deep) .3rem .45rem,var(--stone) .45rem);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) 0 0 rgba(255,255,255,.13),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.3);}.ds-cam kbd{display:inline-block;min-width:1.1rem;padding:.2rem .25rem;text-align:center;font:400 .6rem/1 'Silkscreen',monospace;background:var(--ink);color:var(--mist);border:.0625rem solid #5c6366;text-shadow:none}.ds-cam[aria-pressed='true']{outline:.25rem solid var(--gold);outline-offset:.06rem}.ds-cam[aria-pressed='false']{filter:saturate(.6) brightness(.85)}.ds-cam[aria-pressed='false']:hover{filter:none}.ds-cam:focus-visible{outline:.25rem solid var(--white);outline-offset:.125rem}"
+    },
+    {
+      "name": "Viewer Pop-up with Note",
+      "kind": "card",
+      "refersTo": "panel-stone",
+      "description": "A stone slab: who did what, with a viewer note on a paper slip.",
+      "html": "<article class=\"ds-pop\"><span class=\"ds-tile\"><svg width=\"48\" height=\"48\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><rect x=\"1\" y=\"2\" width=\"14\" height=\"13\" fill=\"#15191b\"/><rect x=\"2\" y=\"3\" width=\"12\" height=\"3\" fill=\"#63b544\"/><rect x=\"2\" y=\"6\" width=\"12\" height=\"7\" fill=\"#8f979a\"/><rect x=\"13\" y=\"6\" width=\"1\" height=\"8\" fill=\"#666e71\"/><rect x=\"2\" y=\"13\" width=\"12\" height=\"1\" fill=\"#666e71\"/><rect x=\"2\" y=\"5\" width=\"1\" height=\"1\" fill=\"#3f8a2c\"/><rect x=\"9\" y=\"5\" width=\"1\" height=\"1\" fill=\"#3f8a2c\"/><rect x=\"6\" y=\"6\" width=\"2\" height=\"1\" fill=\"#63b544\"/></svg></span><div><p class=\"ds-head\"><strong>mara_k</strong> sent Godling a note</p><q class=\"ds-paper\">Build the roof before the rain comes</q></div></article>",
+      "css": ".ds-pop{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;display:flex;align-items:flex-start;gap:.85rem;width:26rem;padding:.6rem .9rem .6rem .6rem;color:var(--white);text-shadow:var(--pixel-shadow);background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,var(--stone-panel);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) var(--bevel) 0 rgba(255,255,255,.08),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.32);}.ds-tile{display:grid;place-items:center;flex:none;width:3.6rem;height:3.6rem;padding-top:.5rem;background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,linear-gradient(var(--moss) 0 .375rem,var(--moss-deep) .375rem .5625rem,var(--stone) .5625rem);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) 0 0 rgba(255,255,255,.13),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.3);}.ds-tile svg{image-rendering:pixelated}.ds-head{margin:0;font-size:1.25rem;line-height:1.2;color:var(--mist)}.ds-head strong{font-weight:400;color:var(--gold)}.ds-paper{display:block;margin-top:.45rem;padding:.45rem .6rem;quotes:none;background:var(--paper);color:var(--paper-ink);border:var(--bevel) solid var(--ink);font-size:1.1rem;line-height:1.3;text-shadow:none;box-shadow:inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 #d9d3bf}"
+    },
+    {
+      "name": "Feed Line",
+      "kind": "custom",
+      "refersTo": "feed-line",
+      "description": "A line of Godling's mind on a dark band: island time, speaker, words; gold for the sky, teal for a notice.",
+      "html": "<ol class=\"ds-feed\"><li class=\"ds-line\"><time>08:51</time><span class=\"ds-text ds-sky\">A stone dropped from the sky</span></li><li class=\"ds-line\"><time>08:53</time><span class=\"ds-text ds-notice\">A note drifted down</span></li><li class=\"ds-line\"><time>08:55</time><span class=\"ds-text\">“The stacks already show me the grid.”</span></li></ol>",
+      "css": ".ds-feed{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;list-style:none;margin:0;padding:0;width:36rem}.ds-line{display:grid;grid-template-columns:2.6rem 1fr;align-items:start;gap:.55rem;margin-bottom:.25rem;padding:.4rem .7rem;background:rgba(14,17,18,.74);color:var(--white);font-size:1.3rem;line-height:1.3;text-shadow:var(--pixel-shadow)}.ds-line time{font:400 .68rem/1.9 'Silkscreen',monospace;color:var(--fog);font-variant-numeric:tabular-nums}.ds-sky{color:var(--gold)}.ds-notice{color:var(--teal)}"
+    },
+    {
+      "name": "Note Composer Fields",
+      "kind": "input",
+      "refersTo": "paper-slip",
+      "description": "Paper textarea for the note; dark-band field for the name.",
+      "html": "<div class=\"ds-note\"><textarea rows=\"2\" maxlength=\"140\" placeholder=\"Cheer it on, ask it something…\"></textarea><input placeholder=\"Your name\"></div>",
+      "css": ".ds-note{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;width:34rem;padding:.8rem .9rem .75rem;background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,var(--stone-panel);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) var(--bevel) 0 rgba(255,255,255,.08),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.32);}.ds-note textarea{display:block;width:100%;box-sizing:border-box;margin:0 0 .55rem;padding:.55rem .65rem;resize:none;background:var(--paper);color:var(--paper-ink);caret-color:var(--moss-deep);border:var(--bevel) solid var(--ink);border-radius:0;box-shadow:inset var(--bevel) var(--bevel) 0 #d9d3bf;font:400 1.2rem/1.3 'Tiny5',sans-serif}.ds-note textarea::placeholder{color:#6e6858}.ds-note input{width:100%;box-sizing:border-box;padding:.45rem .6rem;background:rgba(14,17,18,.7);color:var(--white);caret-color:var(--gold);border:var(--bevel) solid var(--ink);border-radius:0;font:400 1.05rem/1 'Tiny5',sans-serif}.ds-note input::placeholder{color:var(--fog)}.ds-note textarea:focus-visible{outline:.25rem solid var(--white);outline-offset:.125rem}.ds-note input:focus-visible{outline:.25rem solid var(--white);outline-offset:.125rem}"
+    },
+    {
+      "name": "Kind Chip",
+      "kind": "chip",
+      "refersTo": "chip-kind",
+      "description": "A tooltip's kind tag; Disaster on dark red.",
+      "html": "<span class=\"ds-chip\">Gift</span> <span class=\"ds-chip ds-harm\">Disaster</span>",
+      "css": ".ds-chip{font:400 .62rem/1 'Silkscreen',monospace;padding:.25rem .4rem;background:#2c3335;color:#fff;border-radius:0}.ds-chip.ds-harm{background:#7a1f22}"
+    },
+    {
+      "name": "Live Bar",
+      "kind": "custom",
+      "refersTo": "panel-stone",
+      "description": "LIVE with a stepped red blink and the watcher count in gold.",
+      "html": "<header class=\"ds-live\"><span class=\"ds-dot\"></span><b>Live</b><span class=\"ds-sep\"></span><b class=\"ds-n\">4</b><span class=\"ds-label\">watching</span></header>",
+      "css": ".ds-live{--ink:#15191b;--white:#fff;--mist:#dfe6e8;--fog:#b9c5c9;--gold:#f6c945;--gold-deep:#c9951c;--gold-ink:#2a1d00;--teal:#45d6cf;--heart:#ec4b4f;--heart-deep:#a52a2f;--paper:#f6f3e8;--paper-ink:#2d2a22;--stone:#50585b;--stone-panel:rgba(44,49,51,.92);--glass:rgba(14,17,18,.62);--moss:#63b544;--moss-deep:#3f8a2c;--bevel:.1875rem;--pixel-shadow:.1rem .1rem 0 rgba(21,25,27,.9);--ease-out:cubic-bezier(.16,1,.3,1);font-family:'Tiny5',sans-serif;letter-spacing:.02em;display:inline-flex;align-items:center;gap:.7rem;padding:.6rem 1.1rem .55rem .9rem;font-size:1.65rem;line-height:1;color:var(--white);text-shadow:var(--pixel-shadow);white-space:nowrap;background:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>\") 0 0/1.5rem,var(--stone-panel);border:var(--bevel) solid var(--ink);box-shadow:inset var(--bevel) var(--bevel) 0 rgba(255,255,255,.08),inset calc(var(--bevel)*-1) calc(var(--bevel)*-1) 0 rgba(0,0,0,.32);}.ds-live b{font-weight:400;text-transform:uppercase;letter-spacing:.08em}.ds-dot{width:.95rem;height:.95rem;background:var(--heart);border:var(--bevel) solid var(--heart-deep);animation:ds-beat 1.6s steps(2,jump-none) infinite}.ds-sep{width:var(--bevel);height:1.5rem;background:rgba(0,0,0,.45)}.ds-live .ds-n{font-size:2.1rem;color:var(--gold);letter-spacing:.02em;text-transform:none;font-variant-numeric:tabular-nums}.ds-label{font-size:1.15rem;color:var(--mist)}@keyframes ds-beat{50%{opacity:.35}}@media (prefers-reduced-motion:reduce){.ds-dot{animation:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Island's Own Hotbar",
+    "overview": "The viewer screen is a block-game HUD made from the island Godling lives on. The 3D island fills the whole screen and the HUD floats over it in four corners and a bottom dock, letting every drag the HUD does not claim pass through to the camera. Its panels are slabs of slate island stone with a moss lip and a hard bevel, its type is white pixel lettering with a one-pixel shadow, and its pictures are authored 16-pixel drawings of the island's own things: a stone block, a log, a palm sapling, a coconut, a paper glider.\n\nDensity is game-HUD density: small, constant, glanceable pieces at the edges, nothing that covers Godling in the middle of the frame. Colour is spent by meaning. Halo gold belongs to the viewers and the sky (what they can press, what they pay, who did what, what the sky did, the hour); lagoon teal belongs to what Godling noticed and to outcomes that spare it; heart red belongs to life and harm. The one warm, light surface is paper, and it carries only words a viewer wrote.\n\nThe surface brief refuses the stream sidebar of glass cards, and the build holds to it: no rounded corners, no backdrop blur, no soft drop shadows. The style is Godling's own and never a copy of a famous block game (user, 2026-11-02).",
+    "keyCharacteristics": [
+      "Full-bleed live island; HUD only at the edges, pointer-transparent except its controls.",
+      "Square slabs of speckled stone with an ink border and an inset bevel; slots and the camera switch also carry a moss lip.",
+      "White Tiny5 pixel type with a hard one-pixel shadow; Silkscreen for keys, times and small caps labels.",
+      "Authored pixel icons on one palette with a shared one-pixel ink outline, scaled by whole numbers and rendered crisp.",
+      "Colour by meaning: gold for viewers and the sky, teal for Godling's noticing, red for life and harm, paper for viewer words."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "Gold, teal and red each mean one family of things: gold is viewers and the sky, teal is Godling noticing and outcomes that spare it, red is life and harm. A new element takes the colour of its meaning, never one for decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Rule",
+        "body": "Paper carries only words a viewer wrote: the note slip in a pop-up and the note being written. Paper text is ink on paper with no text shadow.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Weight Rule",
+        "body": "Tiny5 ships one weight. Hierarchy comes from size, colour and case, never from bold.",
+        "section": "typography"
+      },
+      {
+        "name": "The Shadowed Type Rule",
+        "body": "Every word over the island or on stone carries the pixel shadow; text on paper and on gold does not.",
+        "section": "typography"
+      },
+      {
+        "name": "The Drawn Depth Rule",
+        "body": "Depth is an inset bevel or a real lift, never a blurred box shadow and never backdrop blur.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do build every HUD surface as a square slab with an ink border at bevel width (0.1875rem) and an inset bevel; give pressable blocks the moss lip.",
+      "Do set HUD text in Tiny5 at weight 400 with the pixel shadow; use Silkscreen for keys, island times, counters and tooltip terms.",
+      "Do draw new icons in the icon DSL (`world/viewer/icons.js`): a 16-pixel grid, the PALETTE colours, the shared one-pixel outline, whole-number scales, pixelated rendering.",
+      "Do colour by meaning: gold for viewers and the sky, teal for Godling's noticing and outcomes that spare it, red for life and harm, paper for viewer words.",
+      "Do show the price under each slot in credits (\"4 cr\") and the euro price in the tooltip.",
+      "Do mark a harmful power wherever it appears: the red corner flag on its slot, the heart-deep band in its pop-up tile, the red kind chip, the red aim ring.",
+      "Do put a dark band or a slab behind any text over the island.",
+      "Do keep the middle of the frame clear for Godling, on phones too.",
+      "Do honour reduced motion and keep inputs at 16px on phones."
+    ],
+    "donts": [
+      "Don't round a corner anywhere in the HUD.",
+      "Don't use backdrop blur, frosted glass cards or soft drop shadows; the brief refuses the stream sidebar of glass cards.",
+      "Don't use bold or synthetic weights on Tiny5.",
+      "Don't use icon fonts, emoji or smooth-scaled raster icons; every picture is an authored pixel icon.",
+      "Don't put viewer-written words on anything but paper, or system words on paper.",
+      "Don't copy a famous block game's art or HUD; the style is Godling's own (user, 2026-11-02)."
+    ]
+  }
+}

@@ -2322,6 +2322,7 @@ local function tickClock(dt)
         clockBeat = 0
         local hour = (START_HOUR + clockSeconds / DAY_SECONDS * 24) % 24
         clockPart:SetAttribute("TimeOfDay", math.floor(hour * 100 + 0.5) / 100)
+        clockPart:SetAttribute("Day", 1 + math.floor((START_HOUR / 24 * DAY_SECONDS + clockSeconds) / DAY_SECONDS))
     end
 end
 
@@ -3329,32 +3330,48 @@ local function shadowOccupied(fall) -- the sky never drops a stone on someone: i
     return false
 end
 
-local function announceSkyFall(x, z)
+-- `aimed`: a viewer chose the spot, and the stone falls there whoever stands under it (the user's rule: only the
+-- meteor may hit Godling or what it built). Unaimed, it waits for a clear shadow, as it always has.
+local function announceSkyFall(x, z, aimed)
     skyCounter = skyCounter + 1
-    local shadow = skyMarker("SkyShadow_" .. skyCounter, Vector3.new(3.2, 0.06, 3.2), Vector3.new(x, 0.04, z),
+    local top = surfaceTopAt(x, z, -20, 60) or 0 -- on whatever is there: the ground, or the top of a wall
+    local shadow = skyMarker("SkyShadow_" .. skyCounter, Vector3.new(4, 0.06, 4), Vector3.new(x, top + 0.04, z),
         Color3.fromRGB(24, 22, 20), "SkyShadow")
     skyMark("Meteor", skyCounter)(shadow)
     shadow:SetAttribute("LandsIn", SKY_WARN_SECONDS)
-    table.insert(skyFalls, { n = skyCounter, x = x, z = z, shadow = shadow, landsAt = os.clock() + SKY_WARN_SECONDS })
-    print(string.format("SKY Meteor #%d warned at (%.1f, %.1f), lands in %ds", skyCounter, x, z, SKY_WARN_SECONDS))
+    table.insert(skyFalls, { n = skyCounter, x = x, z = z, shadow = shadow, landsAt = os.clock() + SKY_WARN_SECONDS,
+        aimed = aimed })
+    print(string.format("SKY Meteor #%d warned at (%.1f, %.1f)%s, lands in %ds", skyCounter, x, z,
+        aimed and ", aimed" or "", SKY_WARN_SECONDS))
     return skyCounter
 end
 
-local function advanceSkyFalls()
+-- The stone falls straight down at SKY_FALL_SPEED, moved by the world rather than the physics, and blasts where it
+-- first touches something (sky.meteor.blast): the ground, a wall top, or a head.
+local function advanceSkyFalls(dt)
     local now = os.clock()
     local i = 1
     while i <= #skyFalls do
         local fall = skyFalls[i]
-        if now >= fall.landsAt and not shadowOccupied(fall) then
-            fall.shadow:Destroy()
+        if fall.stone then
+            fall.y = fall.y - SKY_FALL_SPEED * dt
+            local bottom = fall.y - BLOCK_SIZE / 2
+            local contact = sky.meteor.contact(fall.x, fall.z, bottom + 3)
+            if contact and bottom <= contact then
+                sky.meteor.blast(fall, contact)
+                table.remove(skyFalls, i)
+            else
+                fall.stone.CFrame = CFrame.new(fall.x, fall.y, fall.z) * CFrame.Angles(fall.y * 0.11, fall.y * 0.07, 0)
+                i = i + 1
+            end
+        elseif now >= fall.landsAt and (fall.aimed or not shadowOccupied(fall)) then
             local size = Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
             local stone = createPiece("Meteor_" .. fall.n, CFrame.new(fall.x, SKY_DROP_HEIGHT, fall.z), size,
-                Color3.fromRGB(64, 56, 52), "Stone", stonePhysics) -- dark and bare: not a quarried stone
+                Color3.fromRGB(64, 56, 52), "Stone", stonePhysics, sky.meteor.MODEL) -- dark and bare: not quarried
+            stone.Anchored, stone.CanCollide = true, false -- carried down by the world until it touches something
             skyMark("Meteor", fall.n)(stone)
-            stone.AssemblyLinearVelocity = Vector3.new(0, -SKY_FALL_SPEED, 0)
-            hurtNear(fall.x, fall.z, HARM.meteorRange, HARM.meteor, "Meteor") -- it is down in about a second
-            print(string.format("SKY Meteor #%d landed at (%.1f, %.1f)", fall.n, fall.x, fall.z))
-            table.remove(skyFalls, i)
+            fall.stone, fall.y = stone, SKY_DROP_HEIGHT
+            i = i + 1
         else
             local left = math.max(0, math.ceil(fall.landsAt - now)) -- 0 while it waits for a clear shadow
             if fall.shadow:GetAttribute("LandsIn") ~= left then
@@ -3493,18 +3510,18 @@ local tickShip = (function() -- a function of its own, so its locals stay out of
     return tickShip
 end)()
 
-local function dropGift(kind, x, z)
+local function dropGift(kind, x, z, yaw)
     skyCounter = skyCounter + 1
     local piece
+    local at = CFrame.new(x, SKY_GIFT_HEIGHT, z) * CFrame.Angles(0, yaw or 0, 0)
     if kind == "Stone" then
         quarryWork.made = quarryWork.made + 1 -- stones share one numbering, wherever they come from
         local size = Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
-        piece = createPiece("Stone_" .. quarryWork.made, CFrame.new(x, SKY_GIFT_HEIGHT, z), size,
-            Color3.fromRGB(150, 146, 140), "Stone", stonePhysics, ART.Stone)
+        piece = createPiece("Stone_" .. quarryWork.made, at, size, Color3.fromRGB(150, 146, 140), "Stone", stonePhysics,
+            ART.Stone)
     else
         logCounter = logCounter + 1
-        piece = createPiece("Log_" .. logCounter, CFrame.new(x, SKY_GIFT_HEIGHT, z), LOG_SIZE,
-            Color3.fromRGB(140, 98, 62), "Log", woodPhysics, ART.Log)
+        piece = createPiece("Log_" .. logCounter, at, LOG_SIZE, Color3.fromRGB(140, 98, 62), "Log", woodPhysics, ART.Log)
     end
     skyMark(kind, skyCounter)(piece)
     print(string.format("SKY %s #%d dropped %s at (%.1f, %.1f)", kind, skyCounter, piece.Name, x, z))
@@ -3908,8 +3925,321 @@ sky.quake = (function()
         player:SetAttribute("LastActionResult", "Braced")
     end
 
-    return { start = start, tick = tick, brace = brace }
+    local function weak(godling) -- the mercy rule, for every disaster
+        local s, f = surviving[godling], faints[godling]
+        return (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) or false
+    end
+
+    return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
+        knocked = function(player) return knocked[player] ~= nil end }
 end)()
+
+-- AIMED POWERS (the user's rule, 2026-11-02): viewers choose where a power lands, and only the meteor may land on
+-- Godling or on what it built. Everything else goes to the nearest clear spot to the aim: a gift aimed at Godling
+-- lands at its feet; lightning picks a palm far enough from Godling not to hurt it, with nothing built beside it.
+sky.aim = {
+    REACH = 60, -- an aim at most this far from Godling, where viewers are watching
+    SNAP = 12, -- how far from the aim a clear spot is looked for
+    FEET = 3.5, -- a gift aimed at Godling lands this far from its centre: at its feet, never on it
+    AT_GODLING = 4.5, -- an aim this close to Godling counts as aimed at it
+    GAP = 0.5, -- room left between a gift, as it will lie, and any piece already there
+    BODY = 1.5, -- and between it and anyone's middle (a body is about 2 wide)
+    PALM_FROM_GODLING = HARM.lightningRange + 2, PALM_CLEAR = 5,
+}
+
+-- The viewer's aim, (x, z); nothing when the world is to choose; or nil, nil and why not.
+function sky.aim.read(godling, inputData)
+    local at = inputData and inputData.at
+    local x, z = type(at) == "table" and tonumber(at.x), type(at) == "table" and tonumber(at.z)
+    if not (x and z) then
+        return nil
+    end
+    local hrp = getHumanoidRootPart(godling)
+    if not hrp then
+        return nil, nil, "NobodyHere"
+    end
+    if Vector3.new(x - hrp.Position.X, 0, z - hrp.Position.Z).Magnitude > sky.aim.REACH then
+        return nil, nil, "TooFar"
+    end
+    return x, z
+end
+
+-- Whether a gift (`kind`) lying at (x, z), turned by `yaw`, keeps GAP from every piece and BODY from every body. The
+-- whole outline counts, as seen from above and turned as it will lie: a log is 7.5 long, so a test of its middle alone
+-- let one land across a wall or a body. Two outlines are apart when some direction separates them (a log's sides, or
+-- across a piece's own axes, which also covers a piece lying askew).
+function sky.aim.fits(kind, x, z, yaw)
+    local a = sky.aim
+    local size = kind == "Log" and LOG_SIZE or Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+    local turned = CFrame.Angles(0, yaw or 0, 0)
+    local gx, gz = { turned.RightVector.X, turned.RightVector.Z }, { turned.LookVector.X, turned.LookVector.Z }
+    local hx, hz = size.X / 2, size.Z / 2
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        if inst:IsA("Part") and inst:GetAttribute("IsPickupObject") then
+            local cf, half = inst.CFrame, inst.Size * 0.5
+            local axes = { { cf.RightVector, half.X }, { cf.UpVector, half.Y }, { cf.LookVector, half.Z } }
+            local dirs = { gx, gz }
+            for _, ax in ipairs(axes) do
+                local len = math.sqrt(ax[1].X * ax[1].X + ax[1].Z * ax[1].Z)
+                if len > 1e-3 then
+                    table.insert(dirs, { -ax[1].Z / len, ax[1].X / len })
+                end
+            end
+            local dx, dz, apart = inst.Position.X - x, inst.Position.Z - z, false
+            for _, d in ipairs(dirs) do
+                local reach = math.abs(gx[1] * d[1] + gx[2] * d[2]) * hx + math.abs(gz[1] * d[1] + gz[2] * d[2]) * hz
+                for _, ax in ipairs(axes) do
+                    reach = reach + math.abs(ax[1].X * d[1] + ax[1].Z * d[2]) * ax[2]
+                end
+                if math.abs(dx * d[1] + dz * d[2]) >= reach + a.GAP then
+                    apart = true
+                    break
+                end
+            end
+            if not apart then
+                return false
+            end
+        end
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp then -- the body's middle, against its nearest point on the gift
+            local dx, dz = hrp.Position.X - x, hrp.Position.Z - z
+            local u = math.max(math.abs(dx * gx[1] + dz * gx[2]) - hx, 0)
+            local v = math.max(math.abs(dx * gz[1] + dz * gz[2]) - hz, 0)
+            if u * u + v * v < a.BODY * a.BODY then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- The nearest spot to (x, z) where a gift may land: open land, where it fits (sky.aim.fits), and never on Godling.
+-- Aimed at Godling, it lands at its feet on the side the aim was, and a log lies across that side (yaw), not pointing
+-- at it.
+function sky.aim.spot(godling, x, z, kind)
+    local a, g = sky.aim, getHumanoidRootPart(godling).Position
+    local function ok(px, pz)
+        local dx, dz = px - g.X, pz - g.Z
+        return dx * dx + dz * dz >= a.FEET * a.FEET and clearSupplySpot(px, pz) and a.fits(kind, px, pz, 0)
+    end
+    local dx, dz = x - g.X, z - g.Z
+    local d = math.sqrt(dx * dx + dz * dz)
+    if d < a.AT_GODLING then
+        local ux, uz = 1, 0
+        if d > 0.3 then
+            ux, uz = dx / d, dz / d
+        end
+        for _, turn in ipairs({ 0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.4, -2.4, math.pi }) do
+            local c, sn = math.cos(turn), math.sin(turn)
+            local rx, rz = ux * c - uz * sn, ux * sn + uz * c
+            local px, pz = g.X + rx * a.FEET, g.Z + rz * a.FEET
+            local yaw = math.atan2(-rx, -rz) -- a log's length across the line to Godling
+            if clearSupplySpot(px, pz) and a.fits(kind, px, pz, yaw) then
+                return px, pz, yaw
+            end
+        end
+    end
+    for r = 0, a.SNAP, 1.25 do
+        local steps = r == 0 and 1 or math.max(8, math.floor(r * 4))
+        for k = 0, steps - 1 do
+            local angle = k / steps * 2 * math.pi
+            local px, pz = x + math.cos(angle) * r, z + math.sin(angle) * r
+            if ok(px, pz) then
+                return px, pz, 0
+            end
+        end
+    end
+    return nil
+end
+
+function sky.aim.gift(kind, godling, inputData)
+    local x, z, why = sky.aim.read(godling, inputData)
+    if why then
+        return nil, why
+    end
+    local yaw = 0
+    if x then
+        x, z, yaw = sky.aim.spot(godling, x, z, kind)
+    else
+        x, z = skySpotNear(godling)
+        if x and not sky.aim.fits(kind, x, z, 0) then -- room for a stone there, but not for a log: look around it
+            x, z, yaw = sky.aim.spot(godling, x, z, kind)
+        end
+    end
+    if not x then
+        return nil, "NoClearSpot"
+    end
+    return dropGift(kind, x, z, yaw)
+end
+
+-- Lightning's palm: the standing palm nearest the aim (or Godling) that is far enough from Godling not to hurt it,
+-- with no piece close enough to its trunk to be hit when it falls.
+function sky.aim.palm(godling, x, z)
+    local a, g = sky.aim, getHumanoidRootPart(godling).Position
+    x, z = x or g.X, z or g.Z
+    local best, bestDist = nil, math.huge
+    for _, t in ipairs(trees) do
+        local part = t.part
+        if part and part.Parent and part:GetAttribute("RenderRole") == "Tree" then
+            local tp = part.Position
+            local d = Vector3.new(tp.X - x, 0, tp.Z - z).Magnitude
+            if d < bestDist and Vector3.new(tp.X - g.X, 0, tp.Z - g.Z).Magnitude >= a.PALM_FROM_GODLING
+                and clearOfPieces(tp.X, tp.Z, a.PALM_CLEAR) then
+                best, bestDist = t, d
+            end
+        end
+    end
+    return best
+end
+
+-- THE METEOR'S BLAST (the user's wish, 2026-11-02, after Godling's builds stood through every sky event): the stone
+-- blasts where it first touches something. Pieces it hits are smashed, fastenings near it break, loose pieces around
+-- are thrown out and up, palms close by are felled, and anyone close is hurt and knocked down. It leaves a crater with
+-- the stone in it. A disaster: the mercy rule holds, and it is the dearest power but one.
+sky.meteor = {
+    MODEL = "asset://meteor.glb", CRATER_MODEL = "asset://crater.glb",
+    EVERY = 60, -- seconds between meteors in test mode
+    SMASH = 2.5, BREAK = 5, THROW = 7, FELL = 4, -- reach of each, from the contact point
+    THROW_SPEED = 16, LIFT = 9, -- outward and upward speed of a piece thrown from right beside it, less further out
+    BLAST_SECONDS = 3, CRATERS_KEPT = 8,
+    last = -math.huge, craters = {},
+}
+
+-- Where a stone falling at (x, z) first touches something at or below `below`: the highest solid top under its
+-- footprint, or a head.
+function sky.meteor.contact(x, z, below)
+    local h = BLOCK_SIZE / 2 - 0.1
+    local top = nil
+    for _, o in ipairs({ { 0, 0 }, { h, h }, { h, -h }, { -h, h }, { -h, -h } }) do
+        local t = surfaceTopAt(x + o[1], z + o[2], -20, below)
+        if t and (top == nil or t > top) then
+            top = t
+        end
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp and math.abs(hrp.Position.X - x) < h + 1 and math.abs(hrp.Position.Z - z) < h + 1 then
+            local head = hrp.Position.Y - BODY_ABOVE_FEET + 5
+            if head <= below and (top == nil or head > top) then
+                top = head
+            end
+        end
+    end
+    return top
+end
+
+function sky.meteor.groundAt(x, z) -- the island's own surface there, under any pieces
+    local best = 0
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        local role = inst:IsA("BasePart") and inst:GetAttribute("RenderRole")
+        if (role == "Ground" or role == "Mesa" or role == "Quarry") and isSolid(inst) then
+            local c, e = inst.Position, halfExtents(inst)
+            if math.abs(x - c.X) <= e.X and math.abs(z - c.Z) <= e.Z and c.Y + e.Y > best then
+                best = c.Y + e.Y
+            end
+        end
+    end
+    return best
+end
+
+function sky.meteor.blast(fall, top)
+    local m, n = sky.meteor, fall.n
+    local c = Vector3.new(fall.x, top, fall.z)
+    local mark = skyMark("Meteor", n)
+    if fall.shadow.Parent then
+        fall.shadow:Destroy()
+    end
+    local smashed, unfastened, thrown, felled, hurtCount = 0, 0, 0, 0, 0
+    for _, part in ipairs(Workspace:GetChildren()) do
+        if part ~= fall.stone and part:IsA("BasePart") and SNAPPED_ROLES[part:GetAttribute("RenderRole")]
+            and not isCarried(part) and not isPlacing(part) then
+            local d = (nearestPoint(part, c) - c).Magnitude
+            if d < m.SMASH then
+                wakeRestingOn(part) -- what stood on it falls, rather than staying settled in the air
+                part:Destroy()
+                smashed = smashed + 1
+            elseif d < m.THROW then
+                if part:GetAttribute("Fastened") and d < m.BREAK then
+                    unfasten(part)
+                    unfastened = unfastened + 1
+                end
+                if not part:GetAttribute("Fastened") then
+                    wakeRestingOn(part)
+                    part.Anchored = false
+                    part:SetAttribute("Settled", false)
+                    local away = Vector3.new(part.Position.X - c.X, 0, part.Position.Z - c.Z)
+                    away = away.Magnitude > 0.05 and away.Unit or Vector3.new(1, 0, 0)
+                    local k = 1 - d / m.THROW
+                    part.AssemblyLinearVelocity = away * (m.THROW_SPEED * k) + Vector3.new(0, 2 + m.LIFT * k, 0)
+                    thrown = thrown + 1
+                end
+            end
+        end
+    end
+    for _, t in ipairs(trees) do
+        local part = t.part
+        if part and part.Parent and part:GetAttribute("RenderRole") == "Tree"
+            and Vector3.new(part.Position.X - c.X, 0, part.Position.Z - c.Z).Magnitude < m.FELL then
+            fellTree(part, c, mark)
+            felled = felled + 1
+        end
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp and Vector3.new(hrp.Position.X - c.X, 0, hrp.Position.Z - c.Z).Magnitude <= HARM.meteorRange
+            and math.abs(hrp.Position.Y - c.Y) <= HARM.meteorRange then
+            local faints = player:GetAttribute("Faints") or 0
+            hurt(player, HARM.meteor, "Meteor")
+            hurtCount = hurtCount + 1
+            if (player:GetAttribute("Faints") or 0) == faints and not climbers[player] and not sky.quake.knocked(player) then
+                sky.quake.knockDown(player, hrp) -- staggers, sits, and gets up 2.5 s later
+            end
+        end
+    end
+    -- What the renderer shows: the explosion once (Blast_n, for BLAST_SECONDS), the crater for good.
+    local blast = skyMarker("Blast_" .. n, Vector3.new(1, 1, 1), c, Color3.fromRGB(255, 150, 60), "Blast")
+    blast:SetAttribute("Radius", m.THROW)
+    mark(blast)
+    table.insert(skyFlashes, { part = blast, gone = os.clock() + m.BLAST_SECONDS })
+    -- The crater lies on the ground, its foot on it: crater.glb's base is the ground (the island is not dug), its
+    -- scorched floor 0.03 above. Sunk 0.2 deeper, the sand hid the floor and only the rim showed.
+    local ground = sky.meteor.groundAt(c.X, c.Z)
+    local crater = skyMarker("Crater_" .. n, Vector3.new(8, 0.6, 8), Vector3.new(c.X, ground + 0.3, c.Z),
+        Color3.fromRGB(40, 34, 30), "Crater")
+    crater:SetAttribute("ModelUrl", m.CRATER_MODEL)
+    mark(crater)
+    table.insert(m.craters, crater)
+    while #m.craters > m.CRATERS_KEPT do
+        table.remove(m.craters, 1):Destroy()
+    end
+    local stone = fall.stone -- it comes to rest in its crater, a building stone like any other, beside anyone in it
+    local rest = Vector3.new(c.X, 0, c.Z)
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp then
+            local away = Vector3.new(rest.X - hrp.Position.X, 0, rest.Z - hrp.Position.Z)
+            if away.Magnitude < BLOCK_SIZE / 2 + 1.2 then
+                away = away.Magnitude > 0.05 and away.Unit or Vector3.new(1, 0, 0)
+                rest = Vector3.new(hrp.Position.X, 0, hrp.Position.Z) + away * (BLOCK_SIZE / 2 + 1.3)
+            end
+        end
+    end
+    stone.CFrame = CFrame.new(rest.X, ground + BLOCK_SIZE / 2 + 0.05, rest.Z)
+    stone.CanCollide, stone.Anchored = true, false
+    stone.AssemblyLinearVelocity = Vector3.new(0, -2, 0)
+    clockPart:SetAttribute("MeteorX", math.floor(c.X * 10 + 0.5) / 10)
+    clockPart:SetAttribute("MeteorZ", math.floor(c.Z * 10 + 0.5) / 10)
+    clockPart:SetAttribute("MeteorSmashed", smashed)
+    clockPart:SetAttribute("MeteorThrown", thrown)
+    clockPart:SetAttribute("MeteorUnfastened", unfastened)
+    clockPart:SetAttribute("MeteorFelled", felled)
+    clockPart:SetAttribute("MeteorHurt", hurtCount)
+    clockPart:SetAttribute("MeteorId", n)
+    print(string.format("SKY Meteor #%d blasted at (%.1f, %.1f, %.1f): smashed %d, unfastened %d, threw %d, "
+        .. "felled %d palms, hurt %d", n, c.X, c.Y, c.Z, smashed, unfastened, thrown, felled, hurtCount))
+end
 
 -- The guest panel's player has no body on the island, but the engine gives it one anyway. Parked once on joining, it
 -- fell out of the world (a character's body does not stay anchored), and the world put it back on the spawn spot,
@@ -3926,6 +4256,55 @@ sky.pedestal = (function()
     return p
 end)()
 
+-- What viewers see of Godling: its state, copied onto the Clock, which every viewer and the guest panel can read
+-- (the panel's bodiless player cannot see other players).
+function sky.mirrorGodling()
+    local godling = godlingPlayer()
+    if not godling then
+        return
+    end
+    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown" }) do
+        local value = godling:GetAttribute(name)
+        if clockPart:GetAttribute("Godling" .. name) ~= value then
+            clockPart:SetAttribute("Godling" .. name, value)
+        end
+    end
+end
+
+-- Notes from viewers (the user's wish): a paper glider drifts down near Godling with a short note. The Clock carries
+-- the latest one (NoteId, NoteText, NoteX, NoteZ); the mind reads it when it notices the glider, and decides for
+-- itself whether it matters. The guest panel limits length and pace and filters the text; the world only caps it.
+sky.notes = { MAX = 160, FALL = 4, LIE = 240 } -- characters; seconds drifting down; seconds it lies there
+
+-- The first `max` characters of a UTF-8 text, never cutting one in two: the panel counts characters, and a cut by
+-- bytes left half an emoji at the end of a note it had let through.
+function sky.notes.cut(text, max)
+    local i, count = 1, 0
+    while i <= #text and count < max do
+        local b = text:byte(i)
+        i = i + (b < 0xC0 and 1 or b < 0xE0 and 2 or b < 0xF0 and 3 or 4)
+        count = count + 1
+    end
+    return text:sub(1, i - 1)
+end
+
+function sky.tickNotes(dt)
+    local notes, i = sky.notes, 1
+    while i <= #notes do
+        local n = notes[i]
+        n.t = n.t + dt
+        if n.t >= notes.FALL + notes.LIE then
+            n.part:Destroy()
+            table.remove(notes, i)
+        else
+            local fall = math.min(1, n.t / notes.FALL)
+            local sway = (1 - fall) * 1.2 * math.sin(n.t * 2.4)
+            n.part.CFrame = CFrame.new(n.x + sway, 0.12 + (1 - fall) * 9, n.z) * CFrame.fromOrientation(0, n.t * (1 - fall) * 1.5, (1 - fall) * 0.4 * math.sin(n.t * 3))
+            i = i + 1
+        end
+    end
+end
+
 function sky.parkGuest()
     for _, player in ipairs(Players:GetPlayers()) do
         local hrp = player.Name == SKY_PLAYER and getHumanoidRootPart(player)
@@ -3936,41 +4315,59 @@ function sky.parkGuest()
     end
 end
 
--- What the guest panel can do. Viewers choose what; the world chooses where: near Godling, in view, clear of what
--- it built. Each returns the event's number, or nil and why not.
+-- What the guest panel can do. Viewers choose what, and where (`inputData.at`, see sky.aim): only the meteor lands
+-- where it was aimed whatever is there. Unaimed, the world chooses: near Godling, in view, clear of what it built.
+-- Each returns the event's number, or nil and why not.
 local SKY_POWERS = {
-    Meteor = function(godling)
-        local x, z = skySpotNear(godling)
-        if not x then
-            return nil, "NoClearSpot"
+    Meteor = function(godling, inputData)
+        local x, z, why = sky.aim.read(godling, inputData)
+        if why then
+            return nil, why
         end
-        return announceSkyFall(x, z)
-    end,
-    Stone = function(godling)
-        local x, z = skySpotNear(godling)
-        if not x then
-            return nil, "NoClearSpot"
+        local wait = sky.meteor.EVERY - (os.clock() - sky.meteor.last)
+        if wait > 0 then
+            return nil, "TooSoon:" .. math.ceil(wait)
         end
-        return dropGift("Stone", x, z)
-    end,
-    Log = function(godling)
-        local x, z = skySpotNear(godling)
-        if not x then
-            return nil, "NoClearSpot"
+        if sky.quake.weak(godling) then
+            return nil, "GodlingIsWeak"
         end
-        return dropGift("Log", x, z)
+        local aimed = x ~= nil
+        if aimed and not overLand(x, z) then
+            return nil, "NotOnLand"
+        elseif not aimed then
+            x, z = skySpotNear(godling)
+            if not x then
+                return nil, "NoClearSpot"
+            end
+        end
+        sky.meteor.last = os.clock()
+        return announceSkyFall(x, z, aimed)
     end,
-    Lightning = function(godling)
+    Stone = function(godling, inputData)
+        return sky.aim.gift("Stone", godling, inputData)
+    end,
+    Log = function(godling, inputData)
+        return sky.aim.gift("Log", godling, inputData)
+    end,
+    Lightning = function(godling, inputData)
+        local x, z, why = sky.aim.read(godling, inputData)
+        if why then
+            return nil, why
+        end
         local hrp = getHumanoidRootPart(godling)
-        local t = hrp and nearestTree("Tree", hrp.Position)
+        local t = hrp and sky.aim.palm(godling, x, z)
         if not t then
-            return nil, "NoStandingTree"
+            return nil, "NoSafePalm"
         end
         return lightningOn(t, hrp.Position)
     end,
-    Regrow = function(godling)
+    Regrow = function(godling, inputData)
+        local x, z, why = sky.aim.read(godling, inputData)
+        if why then
+            return nil, why
+        end
         local hrp = getHumanoidRootPart(godling)
-        local t = hrp and nearestTree("Stump", hrp.Position)
+        local t = hrp and nearestTree("Stump", x and Vector3.new(x, 0, z) or hrp.Position)
         if not t then
             return nil, "NoStump"
         end
@@ -3982,6 +4379,28 @@ local SKY_POWERS = {
     end,
     Earthquake = function(godling)
         return sky.quake.start(godling)
+    end,
+    Note = function(godling, inputData)
+        local text = tostring(inputData and inputData.text or ""):gsub("[%c]", " "):gsub("%s+", " ")
+        text = sky.notes.cut(text:match("^%s*(.-)%s*$"), sky.notes.MAX):match("^(.-)%s*$")
+        if text == "" then
+            return nil, "EmptyNote"
+        end
+        local x, z = skySpotNear(godling)
+        if not x then
+            return nil, "NoClearSpot"
+        end
+        skyCounter = skyCounter + 1
+        local part = skyMarker("SkyNote_" .. skyCounter, Vector3.new(0.9, 0.12, 0.7), Vector3.new(x, 9, z),
+            Color3.fromRGB(246, 243, 232), "SkyNote")
+        skyMark("Note", skyCounter)(part)
+        table.insert(sky.notes, { part = part, x = x, z = z, t = 0 })
+        clockPart:SetAttribute("NoteText", text)
+        clockPart:SetAttribute("NoteX", math.floor(x * 10 + 0.5) / 10)
+        clockPart:SetAttribute("NoteZ", math.floor(z * 10 + 0.5) / 10)
+        clockPart:SetAttribute("NoteId", skyCounter)
+        print(string.format("SKY Note #%d drifted down at (%.1f, %.1f): %s", skyCounter, x, z, text))
+        return skyCounter
     end,
 }
 
@@ -3997,7 +4416,7 @@ function sky.power(player, inputData)
         player:SetAttribute("LastActionResult", "SkyFailed:" .. (power and "NobodyHere" or "UnknownPower"))
         return
     end
-    local id, why = power(godling)
+    local id, why = power(godling, inputData)
     player:SetAttribute("LastActionResult", id and ("SkyDone:" .. name .. ":" .. id) or ("SkyFailed:" .. why))
 end
 
@@ -4181,6 +4600,7 @@ RunService.Heartbeat:Connect(function(dt)
         settleResting() -- pieces that came to rest square into their cells and hold there
         freeTrappedBodies() -- and a body never stays shut inside one
         sky.parkGuest() -- the guest panel's body stays out of sight
+        sky.mirrorGodling() -- and viewers see how Godling is
     end
     advanceTurners(dt)
     if SKY_TEST_EVERY > 0 then
@@ -4196,8 +4616,9 @@ RunService.Heartbeat:Connect(function(dt)
             end
         end
     end
-    advanceSkyFalls()
+    advanceSkyFalls(dt)
     sky.quake.tick(dt) -- an earthquake shakes what is loose
+    sky.tickNotes(dt) -- notes from viewers drift down
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
     tickShip(dt) -- and a ship passes far out
     keepsakeTimer = keepsakeTimer + dt
