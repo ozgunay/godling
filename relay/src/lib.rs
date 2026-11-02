@@ -19,7 +19,7 @@ use axum::{Json, Router};
 use tokio::net::TcpListener;
 
 use crate::hub::Hub;
-use crate::viewer::Seats;
+use crate::viewer::{Admission, Limits};
 
 /// Everything a deployment sets (`from_env`: `RELAY_*`).
 #[derive(Clone, Debug)]
@@ -34,9 +34,16 @@ pub struct Config {
     pub base_path: String,
     /// The page origins a viewer's socket may come from (RELAY_ORIGINS, comma-separated; empty: any).
     pub origins: Vec<String>,
-    /// Viewers at once (RELAY_MAX_VIEWERS, default 5000) and from one address (RELAY_MAX_PER_IP, default 8).
+    /// Viewers at once (RELAY_MAX_VIEWERS, default 5000) and from one address (RELAY_MAX_PER_IP, default 8). An IPv6
+    /// address counts by its /64.
     pub max_viewers: usize,
     pub max_per_ip: usize,
+    /// New connections from one address: RELAY_CONNECT_BURST at once (default 10), then RELAY_CONNECTS_PER_MINUTE
+    /// (default 20). From everyone together: RELAY_ALL_CONNECTS_PER_SECOND (default 200), in bursts of twice that.
+    /// A page that reconnects waits longer each time, so the relay coming back is spread out too.
+    pub connect_burst: usize,
+    pub connects_per_minute: usize,
+    pub all_connects_per_second: usize,
     /// Proxies of ours in front (RELAY_TRUSTED_PROXIES; deploy/: Caddy, 1): the viewer's address is then read from
     /// the X-Forwarded-For they add.
     pub trusted_proxies: usize,
@@ -65,6 +72,9 @@ impl Config {
             origins,
             max_viewers: number("RELAY_MAX_VIEWERS", 5000)?,
             max_per_ip: number("RELAY_MAX_PER_IP", 8)?,
+            connect_burst: number("RELAY_CONNECT_BURST", 10)?,
+            connects_per_minute: number("RELAY_CONNECTS_PER_MINUTE", 20)?,
+            all_connects_per_second: number("RELAY_ALL_CONNECTS_PER_SECOND", 200)?,
             trusted_proxies: number("RELAY_TRUSTED_PROXIES", 0)?,
             buffer: number("RELAY_BUFFER", 256)?,
             resume_frames: number("RELAY_RESUME_FRAMES", 300)?,
@@ -76,7 +86,7 @@ impl Config {
 pub struct App {
     config: Config,
     hub: Arc<Hub>,
-    seats: Arc<Seats>,
+    admission: Arc<Admission>,
 }
 
 /// Follow the world and serve viewers on `listener` until `shutdown` completes.
@@ -93,11 +103,19 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
         }
     });
     let base = config.base_path.clone();
-    let seats = Arc::new(Seats::new(config.max_viewers, config.max_per_ip));
-    let app = Arc::new(App { config, hub, seats });
+    let admission = Arc::new(Admission::new(Limits {
+        most: config.max_viewers,
+        most_per_block: config.max_per_ip,
+        connect_burst: config.connect_burst as f64,
+        connects_per_second: config.connects_per_minute as f64 / 60.0,
+        all_connect_burst: (config.all_connects_per_second * 2) as f64,
+        all_connects_per_second: config.all_connects_per_second as f64,
+    }));
+    let app = Arc::new(App { config, hub, admission });
     let router = Router::new()
         .route(&format!("{base}/spectate/ws"), get(viewer::stream))
         .route(&format!("{base}/relay/status"), get(status))
+        .route("/metrics", get(metrics))
         .with_state(app);
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown)
@@ -107,4 +125,10 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
 /// GET `/relay/status`: the world, the stream, and how many watch (for the screen's watcher count and the admin).
 async fn status(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
     Json(app.hub.report())
+}
+
+/// GET `/metrics`: Prometheus' text format, scraped by the monitoring inside Compose's network (deploy/monitoring).
+/// Like the status, Caddy never passes it on from outside.
+async fn metrics(State(app): State<Arc<App>>) -> ([(axum::http::HeaderName, &'static str); 1], String) {
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")], app.hub.metrics(app.config.max_viewers))
 }

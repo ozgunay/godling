@@ -1,5 +1,5 @@
 diff --git a/frontend_runtime/dist/main.js b/frontend_runtime/dist/main.js
-index 85fb8e8..1194781 100644
+index 85fb8e8..296ab50 100644
 --- a/frontend_runtime/dist/main.js
 +++ b/frontend_runtime/dist/main.js
 @@ -1598,7 +1598,7 @@ function applyPendingReplayCameraState() {
@@ -72,7 +72,7 @@ index 85fb8e8..1194781 100644
      chatState.wsConnected = true
      setChatConnection(replayState.enabled ? 'Replay' : 'Live')
      setStatus(
-@@ -2887,20 +2890,21 @@ async function bootstrap() {
+@@ -2887,20 +2890,51 @@ async function bootstrap() {
        startViewportReplayControlSync()
      }
    }
@@ -90,18 +90,47 @@ index 85fb8e8..1194781 100644
      renderPlayerList([])
      reportReplayViewportError('Replay connection closed before the first frame', { code: event?.code ?? null })
 +    if (!replayState.enabled) streamLost('the connection closed')
++  }
++
++  // A whole island may come gzipped (Godling's relay, ?gz=1: 276 KB becomes about 11). Messages are handled in the
++  // order they came: while one is being inflated, the ones after it wait their turn.
++  const streamQueue = []
++  let streamDraining = false
++  const isGzip = (data) => data instanceof ArrayBuffer && data.byteLength > 2
++    && new Uint8Array(data, 0, 1)[0] === 0x1f && new Uint8Array(data, 1, 1)[0] === 0x8b
++  const inflate = (data) => new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
++  const onStreamMessage = (event) => {
++    stream.heardMs = performance.now() // the socket is alive, however long handling this takes
++    streamQueue.push({ socket: ws, data: event.data })
++    if (!streamDraining) void drainStream()
++  }
++  async function drainStream() {
++    streamDraining = true
++    try {
++      while (streamQueue.length) {
++        const { socket, data } = streamQueue.shift()
++        const text = isGzip(data) ? await inflate(data) : data
++        if (socket === ws) handleStreamMessage({ data: text }) // a dropped socket's leftovers are not this stream's
++      }
++    } catch (error) {
++      console.error(error)
++      streamQueue.length = 0
++      stream.epoch = stream.seq = null // start over from the whole island
++      ws?.close()
++    } finally {
++      streamDraining = false
++    }
    }
  
 -  ws.onmessage = (event) => {
-+  const onStreamMessage = (event) => {
++  const handleStreamMessage = (event) => {
      try {
        const rawReceiveMs = performance.now()
        const payloadBytes = event.data instanceof ArrayBuffer
-@@ -2917,6 +2921,19 @@ async function bootstrap() {
+@@ -2917,6 +2951,18 @@ async function bootstrap() {
        const decodedMs = performance.now()
        const data = JSON.parse(text)
        const parsedMs = performance.now()
-+      stream.heardMs = parsedMs
 +      if (data && data.type === 'relay') { // Godling's relay: whether the world is up, and how many watch
 +        stream.world = data.world === 'down' ? 'down' : 'up'
 +        setStatus(stream.world === 'down' ? 'The island is restarting…' : `Connected | ${rendererTarget}`,
@@ -117,7 +146,7 @@ index 85fb8e8..1194781 100644
        if (data && data.type === 'audio_chunk') {
          onAudioChunk(data)
          return
-@@ -2931,6 +2948,7 @@ async function bootstrap() {
+@@ -2931,6 +2977,7 @@ async function bootstrap() {
          const appliedMs = performance.now()
          if (!state) {
            setStatus('Missing base spectator state; reconnecting', 'warn')
@@ -125,7 +154,7 @@ index 85fb8e8..1194781 100644
            ws.close()
            return
          }
-@@ -3000,13 +3018,97 @@ async function bootstrap() {
+@@ -3000,13 +3047,104 @@ async function bootstrap() {
      }
    }
  
@@ -137,6 +166,7 @@ index 85fb8e8..1194781 100644
 +      url.searchParams.set('epoch', String(stream.epoch))
 +      url.searchParams.set('since', String(stream.seq))
 +    }
++    if (typeof DecompressionStream === 'function') url.searchParams.set('gz', '1') // whole islands gzipped, please
 +    // Run locally, the relay listens on a port of its own (mind/run_godling.py --relay): this host, never another.
 +    const port = new URLSearchParams(window.location.search).get('stream_port') || ''
 +    const host = /^\d{2,5}$/.test(port) ? `${window.location.hostname}:${port}` : window.location.host
@@ -183,10 +213,16 @@ index 85fb8e8..1194781 100644
 +  }
 +  if (!replayState.enabled) {
 +    // A stream gone quiet has died without a close (phones, mobile networks): the world sends at least every ~165 ms,
-+    // and the relay tells how the world is every 5 s.
++    // and the relay tells how the world is every 5 s. A page that was itself stalled (a long frame on a slow phone)
++    // has not heard because it could not listen: that is no reason to reconnect.
++    let watchedMs = performance.now()
 +    setInterval(() => {
++      const now = performance.now()
++      const stalled = now - watchedMs > 2500
++      watchedMs = now
++      if (stalled) stream.heardMs = Math.max(stream.heardMs, now - 1000)
 +      if (ws?.readyState !== WebSocket.OPEN) return
-+      if (performance.now() - stream.heardMs > (stream.world === 'down' ? 15000 : 5000)) {
++      if (now - stream.heardMs > (stream.world === 'down' ? 15000 : 5000)) {
 +        dropStream()
 +        streamLost('no news')
 +      }
