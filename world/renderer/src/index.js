@@ -985,6 +985,7 @@ export function createRenderer(ctx) {
     tier,
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
+    animations: () => characters.debug(),
   }
 
   return {
