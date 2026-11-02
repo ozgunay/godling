@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 from .world import (BODY_CENTRE_Y, BUILDING_KINDS, CUBE, FASTEN_SECONDS, LADDER_HEIGHT, LIFT_SECONDS, PICKUP_RANGE,
-                    PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, STEP, STRIKE_RANGE, STRIKE_SECONDS,
+                    PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, SPEAR_THRUST, STEP, STRIKE_RANGE, STRIKE_SECONDS,
                     TOOL_KINDS, TURN_RATE, WALK_SPEED, BoxIndex, WorldError, grid, hdist, turned_size)
 
 # What the body can do. These know the body's own limits (reach, not walking through things)
@@ -31,8 +31,12 @@ PRIMITIVES = {
     "throw": ({"x": "number", "y": "number", "z": "number", "speed": "number 0-10"},
               "Throw the held object in direction (x, y, z). The world says where it landed."),
     "jump": ({}, "Jump."),
-    "strike": ({"object": "what to strike, such as Quarry, Tree_2 or Brick_4"},
-               "Walk within reach of it and strike it once with the tool in your hands. The world says what happened."),
+    "strike": ({"object": "what to strike, such as Quarry, Palm_2, Log_4 or Fish_3"},
+               "Walk within reach of it and strike it once with the tool in your hands: an axe fells a palm or carves "
+               "a log, a hammer breaks stone off the quarry, a spear takes a fish. The world says what happened."),
+    "rub": ({"object": "what to rub against, such as Log_3"},
+            "Walk within reach and rub what you hold hard against it, over and over, for up to half a minute or until "
+            "something comes of it."),
     "fasten": ({"object": "a piece you have set down"},
                "Walk within reach and fasten that piece where it is, like mortar, so it stays even if what it rests on "
                "is taken away. Takes a few seconds; fastened pieces cannot be picked up."),
@@ -62,6 +66,8 @@ CATALOG = {**PRIMITIVES, **GIFTED}
 MAX_DROP = 2.6  # the highest drop the body hops down from; higher needs a ladder
 BODY_HEIGHT = 5.0  # the engine's capsule: exactly two blocks
 STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block high (ADR-010)
+RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
+RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
 PEN_CELLS = 1600  # half-unit cells: floor the body can reach smaller than this (20 x 20 units) is a pen
 LIFTABLE = SNAPPED_KINDS + ("Brick_", "Ladder_")  # what the body lifts aside to get out of a pen
 GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
@@ -845,6 +851,46 @@ class Skills:
                     stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid)
         return stand, snap
 
+    def _step_up_to_reach(self, snap, target, spot, held):
+        """Step up onto something a block high near `target` (x, y, z), from where the hands reach it: what a person
+        does to set a stone above their head. Returns (where to stand or None, latest snapshot, how, or why not)."""
+        level = self._level(snap)
+
+        def hands(x, z, floor):
+            return math.dist((x, floor + BODY_CENTRE_Y, z), target)
+        steps = []
+        for e in snap.movables() + snap.terrain():
+            if e.name == held or not 1.5 <= e.top - level <= STEP_UP + 0.05:
+                continue
+            if not (e.role in ("Mesa", "Quarry") or (e.movable and e.name.startswith(SNAPPED_KINDS + ("Brick_",)))):
+                continue
+            # Stand on its top as near the target as the whole body fits, a unit inside its edges; on a block right
+            # beside the spot, that would press the body against what stands there: then on the block's middle.
+            x, z = (min(max(t, c - max(s / 2 - 1.0, 0)), c + max(s / 2 - 1.0, 0))
+                    for t, c, s in ((target[0], e.pos[0], e.size[0]), (target[2], e.pos[2], e.size[2])))
+            if spot.footprint_contains(x, z, margin=1.15):
+                x, z = e.pos[0], e.pos[2]
+            if spot.footprint_contains(x, z, margin=1.15) or hands(x, z, e.top) > PLACE_RANGE - 0.5:
+                continue
+            if abs((snap.surface(x, z)[0] or -99) - e.top) > 0.3:  # something else stands on it there
+                continue
+            steps.append((hdist(snap.me, (x, 0, z)), x, z, e))
+        if not steps:
+            return None, snap, ("; it is above your reach from there, and nothing one block high stands near it to "
+                                "step up onto")
+        why = ""
+        for _, x, z, e in sorted(steps, key=lambda s: s[0])[:2]:
+            self.log(kind="reflex", text=f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f}) is above reach: "
+                                         f"stepping up onto {e.name}")
+            walked = self.skill_walk_to(x, z)
+            snap = self._observe()
+            floor = self._level(snap)
+            if abs(floor - e.top) < 0.4 and hands(snap.me[0], snap.me[2], floor) <= PLACE_RANGE - 0.1:
+                return (snap.me[0], snap.me[2]), snap, f"; you stood on {e.name} to reach that high"
+            why = (f"; it is above your reach from the ground, and stepping up onto {e.name} did not bring it in "
+                   f"reach: {walked.summary}")
+        return None, snap, why
+
     def _here(self, snap):
         """Where the body stands, in words, when it is not simply on the ground."""
         level = self._level(snap)
@@ -1205,14 +1251,26 @@ class Skills:
         size = turned_size(held.local_size, turn, upright)
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
+        stepped, floor = "", None
         if math.dist(body, target) > PLACE_RANGE - 0.3 or spot.footprint_contains(body[0], body[2], margin=1.3):
             stand, snap = self._approach(snap, target, PLACE_RANGE, 1.0 + min(size[0], size[2]) / 2 + 0.5,
                                          ignore={held.name}, avoid=spot)
+            if stand is None and target[1] > self._level(snap) + BODY_HEIGHT:
+                # Above the hands from this floor: step up onto something a block high beside it first, as a person
+                # would (in run n8 a third layer laid from the ground failed about half the time).
+                floor = (snap.me[0], snap.me[2], self._level(snap))  # to step back down to after
+                stand, snap, stepped = self._step_up_to_reach(snap, target, spot, held.name)
             if stand is None:
                 where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
                 return Result(False, "place_at", self._out_of_reach(
-                    snap, target, where, f"cannot get within reach of {where} from {self._here(snap)}"))
-            snap = self._move(*stand, ignore={held.name})
+                    snap, target, where, f"cannot get within reach of {where} from {self._here(snap)}" + stepped))
+            if hdist(snap.me, (stand[0], 0, stand[1])) > 0.3:
+                snap = self._move(*stand, ignore={held.name})
+            if math.dist(snap.me, target) > PLACE_RANGE - 0.05:  # stopped a little short, and high up the reach is short
+                try:
+                    snap = self._move_once(*stand, 0.2, ignore={held.name})
+                except Stuck:
+                    snap = self._observe()
         snap = self.world.act("Place", {"position": list(target), "rotation": _rotation(turn, upright)})
         sink = self._sink(snap, target, size, held.name) if snap.last_result == "PlaceFailed:Occupied" else None
         if sink is not None:
@@ -1226,7 +1284,11 @@ class Skills:
                 why = f"that space is taken by {', '.join(blocking) or 'something'}"
             return Result(False, "place_at", f"place rejected: {why}", {"object": held.name})
         snap = self._settle(PLACE_SECONDS + 0.7)
-        return Result(True, "place_at", self._describe(snap, held.name) + _orientation(turn, upright), {"object": held.name})
+        said = self._describe(snap, held.name) + _orientation(turn, upright)
+        if stepped:  # and back down again, as a person would: the mind never asked to stand up there
+            down = self._hop_down(snap, floor[0], floor[1], self._level(snap), floor[2], walk_on=False)
+            said += stepped + (", and stepped back down" if down.ok else f"; {down.summary}")
+        return Result(True, "place_at", said, {"object": held.name})
 
     def skill_throw(self, x, y, z, speed=6):
         snap = self._observe()
@@ -1269,6 +1331,7 @@ class Skills:
             return Result(False, "strike", "your hands hold no tool to strike with" + (f" ({held.name} is not one)" if held else ""))
         self.busy.add(held.name)
         moving = object.startswith("Fish_")  # a fish swims on: aim where it is now, and again if it slips out of reach
+        reach = STRIKE_RANGE + (SPEAR_THRUST if moving and held.name.startswith("Spear_") else 0)
         for _ in range(4 if moving else 1):
             snap = self._observe()
             target = snap.entities.get(object)
@@ -1278,8 +1341,10 @@ class Skills:
             level = self._level(snap)
             aim = tuple(min(max(c, p - s / 2), p + s / 2) for c, p, s in
                         zip((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), target.pos, target.size))
-            if math.dist((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), aim) > STRIKE_RANGE - 0.5:
-                stand, snap = self._approach(snap, aim, STRIKE_RANGE, 2.2, ignore={held.name})
+            if math.dist((snap.me[0], level + BODY_CENTRE_Y, snap.me[2]), aim) > reach - 0.5:
+                stand, snap = self._approach(snap, aim, reach, 2.2, ignore={held.name})
+                if stand is None and reach > STRIKE_RANGE:  # out on the water: from the sand, a spear's length further off
+                    stand, snap = self._approach(snap, aim, reach, 2.2 + SPEAR_THRUST, ignore={held.name})
                 if stand is None:
                     if moving:
                         return Result(False, "strike", f"{object} is too far out in the water to reach from the shore")
@@ -1343,6 +1408,53 @@ class Skills:
                "StrikeFailed:TooSoon": "the last swing was too recent",
                "StrikeFailed:NoTarget": f"there is nothing called {object}"}.get(outcome, outcome or "nothing happened")
         return Result(False, "strike", f"strike failed: {why}")
+
+    def skill_rub(self, object):
+        """Rub what the hands hold against `object`, a rub at a swing's pace, until a flame catches, nothing more can
+        come of it, or RUB_TRIES rubs have gone by (run n8 never thought of striking a log with a spear to rub it)."""
+        snap = self._observe()
+        target = snap.entities.get(object)
+        if target is None:
+            return Result(False, "rub", f"there is nothing called {object}")
+        held = snap.held()
+        if not held:
+            return Result(False, "rub", "your hands are empty: there is nothing to rub with")
+        self.busy.add(held.name)
+        level = self._level(snap)
+        body = (snap.me[0], level + BODY_CENTRE_Y, snap.me[2])
+        aim = tuple(min(max(c, p - s / 2), p + s / 2) for c, p, s in zip(body, target.pos, target.size))
+        if math.dist(body, aim) > STRIKE_RANGE - 0.5:
+            stand, snap = self._approach(snap, aim, STRIKE_RANGE, 2.2, ignore={held.name, object}, avoid=target)
+            if stand is None:
+                return Result(False, "rub", f"no clear spot to stand within reach of {object} from {self._here(snap)}")
+            self._move(*stand, ignore={held.name, object})
+        rubs, heat = 0, 0
+        while rubs < RUB_TRIES:
+            outcome = self.world.act("Rub", {"name": object}).last_result or ""
+            kind, _, detail = outcome.partition(":")
+            if kind == "RubFailed" and detail == "TooSoon":
+                time.sleep(0.3)
+                continue
+            rubs += 1
+            if kind in ("StrikeRubWarm", "StrikeRubHot"):
+                heat = int(detail)
+                time.sleep(0.85)
+                continue
+            if kind == "StrikeRubCaught":
+                return Result(True, "rub", f"rubbed {held.name} against {object} {rubs} times, and a flame caught: "
+                                           f"{detail} burns on {object}", {"made": detail})
+            why = {"StrikeRubBurning": f"{object} is already burning",
+                   "StrikeRubRain": "in the rain the wood is wet through and nothing warms",
+                   "StrikeRubDamp": "the wood is still damp from the rain and will not warm",
+                   "RubNothing": f"rubbing {held.name} against {object} does nothing",
+                   "RubFailed:OutOfRange": f"{object} is out of reach",
+                   "RubFailed:NoTarget": f"{object} cannot be rubbed"}.get(outcome, outcome or "nothing happened")
+            return Result(kind == "StrikeRubBurning", "rub", why)
+        if heat >= RUB_HOT:
+            return Result(False, "rub", f"rubbed {held.name} against {object} {rubs} times in a row; the wood grew hot "
+                                        f"and smoked, but nothing beside it caught", {"rubs": rubs})
+        return Result(False, "rub", f"rubbed {held.name} against {object} {rubs} times; the wood grew warm, no more",
+                      {"rubs": rubs})
 
     def skill_fasten(self, object):
         snap = self._observe()

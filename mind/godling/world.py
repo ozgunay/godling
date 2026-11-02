@@ -25,6 +25,7 @@ WALK_SPEED = 16.0
 LIFT_SECONDS = 1.0  # main.lua LIFT_SECONDS: a picked-up block rises into the hands
 PLACE_SECONDS = 1.2  # main.lua PLACE_SECONDS: a placed block is lowered into place (upstream world: 0.3)
 STRIKE_RANGE = 6.0  # main.lua STRIKE_RANGE: body centre to the target's nearest surface
+SPEAR_THRUST = 2.5  # main.lua strike(): a spear's thrust at a fish reaches this much further
 STRIKE_SECONDS = 1.0  # one swing (main.lua STRIKE_COOLDOWN is 0.8)
 FASTEN_SECONDS = 2.5  # main.lua FASTEN_COOLDOWN
 LADDER_HEIGHT = 3 * CUBE  # main.lua LADDER_SIZE.Y

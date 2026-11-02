@@ -2645,7 +2645,10 @@ local function strike(player, inputData)
     end
     local body = hrp.Position
     local nearest = nearestPoint(target, body)
-    if (nearest - body).Magnitude > STRIKE_RANGE then
+    -- A spear's thrust reaches past the hand, about half its length: fish swim 6-8 off the sand, out of an arm's reach
+    -- from the beach (in run n8 the mind never fished).
+    local thrust = (tool == "Spear" and target:GetAttribute("RenderRole") == "Fish") and 2.5 or 0
+    if (nearest - body).Magnitude > STRIKE_RANGE + thrust then
         player:SetAttribute("LastActionResult", "StrikeFailed:OutOfRange")
         return
     end
@@ -2676,6 +2679,39 @@ local function strike(player, inputData)
     gesture(player, rubbing and "Kindle" or tool == "Spear" and "Spear" or tool == "Hammer" and "Mine"
         or role == "Log" and "Carve" or "Chop")
     player:SetAttribute("LastActionResult", result)
+end
+
+-- Rub (after run n8, where the mind never thought of striking a log with a spear to rub it, and never made fire):
+-- what the hands hold, worked hard against something. A stick (the Spear) against a log that lies still is the way
+-- to fire (rubLog); anything else rubbed against anything comes to nothing. One rub per input, at a swing's pace.
+local function rub(player, inputData)
+    local hrp = getHumanoidRootPart(player)
+    local held = heldBlocksByPlayer[player]
+    if not hrp or not held then
+        player:SetAttribute("LastActionResult", "RubFailed:EmptyHands")
+        return
+    end
+    local target = inputData and inputData.name and findWorkspaceChild(tostring(inputData.name))
+    if not target or not target:IsA("BasePart") or target == held then
+        player:SetAttribute("LastActionResult", "RubFailed:NoTarget")
+        return
+    end
+    if (nearestPoint(target, hrp.Position) - hrp.Position).Magnitude > STRIKE_RANGE then
+        player:SetAttribute("LastActionResult", "RubFailed:OutOfRange")
+        return
+    end
+    if os.clock() - (lastStrikeAt[player] or -math.huge) < STRIKE_COOLDOWN then
+        player:SetAttribute("LastActionResult", "RubFailed:TooSoon")
+        return
+    end
+    lastStrikeAt[player] = os.clock()
+    player:SetAttribute("Strikes", (player:GetAttribute("Strikes") or 0) + 1)
+    gesture(player, "Kindle")
+    if target:GetAttribute("RenderRole") == "Log" and held:GetAttribute("ToolKind") == "Spear" and not isCarried(target) then
+        player:SetAttribute("LastActionResult", rubLog(target))
+    else
+        player:SetAttribute("LastActionResult", "RubNothing")
+    end
 end
 
 local lastFastenAt = {}
@@ -3124,6 +3160,8 @@ if AgentInputService then
             throwBlock(player, inputData)
         elseif inputType == "Strike" then
             strike(player, inputData)
+        elseif inputType == "Rub" then
+            rub(player, inputData)
         elseif inputType == "Fasten" then
             fasten(player, inputData)
         elseif inputType == "Climb" then
