@@ -48,7 +48,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - **Spawning.** New logs appear at a free spot (`freeSpawn`), along the fall or higher up. They never appear inside another piece.
   - **Sky supply.** The cube supply from the sky (ADR-003 O7) is off (`SUPPLY_FROM_SKY = false`). The quarry replaces it; the code stays for viewer drops.
 - **Godling's look (art session; build scripts and previews in `art/`, details in `art/README.md`).**
-  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the Jump, Fall and Climb loops, and Strike (see `art/README.md`).
+  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the earthquake's Stagger, GetUp and LookAround, the Jump, Fall, Climb and Brace loops, and Strike (see `art/README.md`).
   - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (2.5 x 20 x 2.5, on grid cells about 10 apart) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
     - A felled tree falls along the grid into two logs side by side, in the cells next to its stump (2.5 x 1.25 x 2.5, `RenderRole` "Stump"). The body walks round stumps as terrain.
   - **Terrain on the block grid (ADR-005).** Mesa and quarry heights are whole blocks (2.5, 5, 7.5, 10, 20), and their faces lie on cell boundaries, so blocks set against them sit flush.
