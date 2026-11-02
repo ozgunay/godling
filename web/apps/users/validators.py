@@ -269,6 +269,23 @@ def normalize_email(value):
     return f"{local}@{domain.lower()}"
 
 
+GMAIL = {"gmail.com", "googlemail.com"}
+
+
+def canonical_email(value):
+    """The inbox an address delivers to, as one key: me+island@example.org is me@example.org, and at Gmail the dots
+    do not count either (m.e@gmail.com is me@gmail.com). Never an address to write to; only for telling that two
+    accounts share an inbox, so they share one welcome gift and one voice in reports (ADR-014)."""
+    email = (value or "").strip().casefold()
+    local, at, domain = email.rpartition("@")
+    if not at:
+        return email
+    local = local.split("+", 1)[0]
+    if domain in GMAIL:
+        local, domain = local.replace(".", ""), "gmail.com"
+    return f"{local}@{domain}"
+
+
 def validate_email_not_disposable(value):
     """Reject email addresses on known disposable / throwaway domains."""
     domain = (value or "").rpartition("@")[2].lower()

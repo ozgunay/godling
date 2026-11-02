@@ -18,6 +18,9 @@ A note reaches the world as a paper glider; the mind reads it and decides for it
 
 With --key, the panel takes powers and notes only from the accounts site (web/, ADR-012), which sends the key and
 the signed-in viewer's name and client id; the panel must then not be reachable from outside.
+
+Joining the world takes its agent key (patches/v2, ADR-014): started by run_godling.py the panel inherits it; next to
+a world started some other way, export that world's WORLD_AGENT_KEY first.
 """
 import argparse
 import hmac
@@ -154,11 +157,27 @@ def describe(power, result):
     return False, f"{label}: {WHY_NOT.get(why, why)}"
 
 
+_mind_seen = {"key": None, "out": {}}
+_mind_lock = threading.Lock()
+
+
 def mind_status(run_dir):
-    """What Godling thinks, needs and noticed lately, from the tail of its log: its feed for the viewers' screen."""
+    """What Godling thinks, needs and noticed lately, from the tail of its log: its feed for the viewers' screen.
+
+    Read again only when the log has grown: every page's poll asks for it, and reading the tail costs a 400 KB parse."""
     path = run_dir / "mind/log.jsonl" if run_dir else None
     if not path or not path.exists():
         return {}
+    stat = path.stat()
+    with _mind_lock:
+        if _mind_seen["key"] == (str(path), stat.st_size, stat.st_mtime_ns):
+            return _mind_seen["out"]
+        out = _read_mind(path)
+        _mind_seen.update(key=(str(path), stat.st_size, stat.st_mtime_ns), out=out)
+        return out
+
+
+def _read_mind(path):
     with path.open("rb") as f:
         f.seek(max(0, path.stat().st_size - LOG_TAIL_BYTES))
         lines = f.read().decode("utf-8", "replace").splitlines()[1:]
@@ -389,6 +408,8 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
     threading.Thread(target=keep_looking, daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 10  # seconds a connection may sit idle: a client that trickles its request in is let go
+
         def _send(self, body, kind="application/json", code=200):
             data = body.encode() if isinstance(body, str) else body
             self.send_response(code)
@@ -403,7 +424,8 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
 
         def _body(self):
             try:
-                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+                size = max(0, min(int(self.headers.get("Content-Length") or 0), 4096))
+                body = json.loads(self.rfile.read(size) or b"{}")
                 return body if isinstance(body, dict) else {}
             except ValueError:
                 return {}
@@ -457,6 +479,10 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
             url = urllib.parse.urlsplit(self.path)
             if key and not hmac.compare_digest(self.headers.get("X-Godling-Key", ""), key):
                 return self._json({"ok": False, "text": "Sign in on the site to call powers and send notes."}, 403)
+            # JSON only: a browser asks first before sending JSON to another origin, and this panel never says yes,
+            # so a web page elsewhere cannot call powers here (a plain-text or form post would not ask).
+            if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+                return self._json({"ok": False, "text": "Send JSON."}, 415)
             body = self._body()
             client, name = clean_client(body.get("client")), clean_name(body.get("name"))
             if not client:
@@ -504,6 +530,9 @@ def main():
     args = ap.parse_args()
     if args.host not in ("127.0.0.1", "localhost") and not args.key:
         ap.error("listening beyond this machine needs --key: the panel trusts whoever calls it")
+    key_file = args.run_dir.expanduser() / "world.key" if args.run_dir else None
+    if key_file and key_file.exists() and not os.environ.get("WORLD_AGENT_KEY"):
+        os.environ["WORLD_AGENT_KEY"] = key_file.read_text().strip()  # the run's world asks for it (ADR-014)
     serve(args.world, args.port, args.run_dir.expanduser().resolve() if args.run_dir else None, args.view,
           args.note_every, args.note_gap, args.key, args.host)
 

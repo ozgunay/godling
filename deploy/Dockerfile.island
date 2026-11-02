@@ -1,18 +1,23 @@
-# The island: the world (Clawblox, built from source with Godling's two patches, as the README says), Godling's mind
-# and the guest panel, all started by mind/run_godling.py. Build context: the repo root.
+# The island: the world (Clawblox, built from source with Godling's four patches, as the README says), Godling's
+# mind and the guest panel, all started by mind/run_godling.py. The stream relay runs in a container of its own
+# (Dockerfile.relay), away from the keys this one holds. Build context: the repo root.
 FROM rust:1-bookworm AS world
 ARG CLAWBLOX_REPO=https://github.com/nacloos/clawblox.git
 ARG CLAWBLOX_COMMIT=8be90a0
 RUN git clone "$CLAWBLOX_REPO" /src && git -C /src checkout "$CLAWBLOX_COMMIT"
-COPY patches/v0-fix-cli-sandbox.patch patches/v1-viewer-terrain-and-offline.patch /patches/
+COPY patches/v0-fix-cli-sandbox.patch patches/v1-viewer-terrain-and-offline.patch patches/v2-private-agent-api.patch \
+    patches/v3-stream-reconnect.patch /patches/
 RUN cd /src && git apply /patches/v0-fix-cli-sandbox.patch && git apply /patches/v1-viewer-terrain-and-offline.patch \
+    && git apply /patches/v2-private-agent-api.patch && git apply /patches/v3-stream-reconnect.patch \
     && cargo install --path . --locked --root /out
 
 FROM debian:bookworm-slim
-# tmux: Clawblox's agent mode needs it (README). zstd: the replay packer reads the recordings with it; python3-boto3:
-# it uploads replay chunks to object storage, when a bucket is set (ADR-016).
-RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux zstd python3-boto3 \
-    && rm -rf /var/lib/apt/lists/*
+# tmux: Clawblox's agent mode needs it (README). Chromium: the world draws Godling's first-person view with it
+# (world.toml vision = true, GET /observe/image), headless and on software WebGL; the fonts are for its pages.
+# zstd: the replay packer reads the recordings with it; python3-boto3: it uploads replay chunks to object storage,
+# when a bucket is set (ADR-016).
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux chromium     fonts-dejavu-core zstd python3-boto3 && rm -rf /var/lib/apt/lists/*
+ENV CLAWBLOX_CHROME=/usr/bin/chromium
 COPY --from=world /out/bin/clawblox /usr/local/bin/clawblox
 WORKDIR /app
 COPY mind/ ./mind/

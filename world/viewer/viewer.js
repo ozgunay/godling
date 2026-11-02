@@ -89,8 +89,11 @@ function showView(url) {
   view.src = src
 }
 
+// The island has its own origin behind the site (ADR-014): keys and camera wishes go to that origin only, never to
+// whatever page the frame might have been sent to instead.
 function tellView(message) {
-  view.contentWindow?.postMessage({ source: 'godling-viewer', ...message }, '*')
+  if (!viewSrc) return
+  view.contentWindow?.postMessage({ source: 'godling-viewer', ...message }, new URL(viewSrc, location.href).origin)
 }
 view.addEventListener('load', () => {
   tellView({ type: 'godling-camera', mode: camera })
@@ -314,13 +317,22 @@ function pick(id) {
   const s = slots[POWERS.indexOf(p)]
   tip = el('div', 'tip b-tip stone')
   tip.setAttribute('role', 'tooltip')
-  const wait = cooling[p.id] > Date.now() ? `<dt>Ready</dt><dd>in ${minutesText((cooling[p.id] - Date.now()) / 1000)}</dd>` : ''
+  // Words only, never markup: behind the site a power's name, words and rule are what the admin typed (its Power
+  // rows), and this page shares the admin's origin.
+  const head = el('div', 'tip-head', icon(p.icon, 2))
+  head.append(text('strong', '', p.name), text('em', p.harm ? 'harm' : '', p.kind))
+  const facts = el('dl')
+  const fact = (term, words, after = null) => {
+    const dd = text('dd', '', words)
+    if (after) dd.append(after)
+    facts.append(text('dt', '', term), dd)
+  }
   // Free only in test mode: the panel on its own (no accounts), or the site's rules saying so (drawPurse).
-  const free = !account || account.free ? '<span class="free">free while testing</span>' : ''
-  tip.innerHTML = `<div class="tip-head">${icon(p.icon, 2)}<strong>${p.name}</strong><em class="${p.harm ? 'harm' : ''}">${p.kind}</em></div>
-    <p>${p.does}</p>
-    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}${free}</dd>`}
-    ${p.rule ? `<dt>Rule</dt><dd>${p.rule}</dd>` : ''}${wait}</dl>`
+  if (p.note) fact('Price', `Free · ${status?.notes?.limit || 140} characters`)
+  else fact('Price', `${p.price} credits · ${EURO(p.price)}`, !account || account.free ? text('span', 'free', 'free while testing') : null)
+  if (p.rule) fact('Rule', p.rule)
+  if (cooling[p.id] > Date.now()) fact('Ready', `in ${minutesText((cooling[p.id] - Date.now()) / 1000)}`)
+  tip.append(head, text('p', '', p.does), facts)
   stage.append(tip)
   const r = s.getBoundingClientRect(), sr = stage.getBoundingClientRect()
   tip.style.left = `${Math.max(16, Math.min(sr.width - tip.offsetWidth - 16, r.left - sr.left + r.width / 2 - tip.offsetWidth / 2))}px`
@@ -360,11 +372,31 @@ function inThePast() {
   return true
 }
 
+// Behind the site a power is queued for the island and the answer is `pending` (its call's id): ask how it went, every
+// half second at first and then every two, until the world has answered. The panel on its own answers at once.
+const PENDING_DEADLINE_MS = 4.5 * 60 * 1000 // the site gives a call up after 3 minutes (4 once sent), so this ends
+async function settled(answer) {
+  const deadline = Date.now() + PENDING_DEADLINE_MS
+  for (let tries = 0; answer.pending && Date.now() < deadline; tries++) {
+    await new Promise((done) => setTimeout(done, tries < 20 ? 500 : 2000))
+    try {
+      const res = await fetch(`api/power/${encodeURIComponent(answer.pending)}`, { cache: 'no-store' })
+      if (res.status === 401) {
+        nudgeSignIn()
+        return { ok: false, text: 'You were signed out; sign in again to see how your power went.' }
+      }
+      if (res.status === 404) return { ok: false, text: 'That power is no longer on its way.' }
+      if (res.ok) answer = await res.json()
+    } catch { /* a blip: ask again */ }
+  }
+  return answer.pending ? { ok: false, text: 'The island is slow to answer; your power is still on its way.' } : answer
+}
+
 async function call(p, s, at = null) {
   if (inThePast() || s.classList.contains('calling')) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   s.classList.add('calling')
-  const answer = await post('api/power', { power: p.id, ...(at ? { at } : {}) })
+  const answer = await settled(await post('api/power', { power: p.id, ...(at ? { at } : {}) }))
   s.classList.remove('calling')
   if (account && Number.isFinite(answer.credits)) drawPurse({ ...account, credits: answer.credits })
   if (answer.ok) popup(answer)
@@ -439,6 +471,10 @@ addEventListener('message', (event) => {
     call(p, slots[POWERS.indexOf(p)], [Number(data.x), Number(data.z)])
   } else if (data.type === 'godling-aim-cancel') endAim()
   else if (String(data.type).startsWith('godling-replay')) past?.heard(data)
+  else if (data.type === 'godling-stream') {
+    islandStream = { state: String(data.state), world: data.world === 'down' ? 'down' : 'up' }
+    drawLive(status?.watching || 0, status?.world)
+  }
 })
 
 function toggleNote(open = composer.hidden) {
@@ -519,11 +555,21 @@ function drawClock(c, up) {
   clock.innerHTML = `${icon(weather, 3)}<span class="day">Day ${c.day || 1}</span><span class="time">${clockText(c.hour)}</span>${c.quake ? `<span class="quake">${icon('quake', 2)}Shaking</span>` : ''}`
 }
 
-function drawLive(n, up) {
+// The island frame's own stream (patches/v3, through the renderer) decides the badge, so it never says Live over a
+// frozen island; until the frame has said anything, the panel's word stands.
+let islandStream = null
+const STREAM_WORDS = { connecting: 'Connecting', reconnecting: 'Reconnecting', paused: 'Paused' }
+
+function drawLive(n, panelUp) {
+  const s = islandStream
+  const word = !s ? (panelUp ? 'Live' : 'Offline')
+    : s.state === 'live' ? (s.world === 'down' ? 'Restarting' : 'Live')
+    : STREAM_WORDS[s.state] || 'Offline'
+  const up = word === 'Live'
   live.classList.toggle('down', !up)
-  live.querySelector('.word').textContent = past?.on ? 'Replay' : up ? 'Live' : 'Offline'
+  live.querySelector('.word').textContent = past?.on ? 'Replay' : word
   live.querySelector('.n').textContent = n.toLocaleString('en')
-  live.setAttribute('aria-label', up ? `Live, ${n} watching` : 'Offline')
+  live.setAttribute('aria-label', up ? `Live, ${n} watching` : word)
 }
 
 // ---- keys: numbers pick a slot; in the free camera, W A S D Q E fly it ---------------------
@@ -650,8 +696,9 @@ function takePowers(powers) {
     const row = powers[p.id]
     slots[i].hidden = !row
     if (!row) return
-    Object.assign(p, { name: row.label, price: row.price, kind: row.kind, harm: row.harms, does: row.does,
-      rule: row.rule || undefined, did: row.did || p.did, after: row.after || p.after })
+    Object.assign(p, { name: String(row.label), price: Number(row.price) || 0, kind: String(row.kind),
+      harm: Boolean(row.harms), does: String(row.does || ''), rule: row.rule ? String(row.rule) : undefined,
+      did: row.did || p.did, after: row.after || p.after })
     slots[i].classList.toggle('harm', Boolean(row.harms))
     slots[i].setAttribute('aria-label', `${p.name}, ${p.price} credits`)
   })

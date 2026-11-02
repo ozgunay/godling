@@ -1,4 +1,4 @@
-"""The viewer screen behind accounts (ADR-012, ADR-013).
+"""The viewer screen behind accounts (ADR-012, ADR-013, ADR-014).
 
 The screen's page (world/viewer) is served as it is. Its API is the guest panel's (tools/guest_panel.py), relayed:
 anyone may watch (/api/status), but powers and notes need an account, and the panel hears them under the account's
@@ -6,17 +6,21 @@ name and client id. A power costs its price in credits (apps.credits), taken bef
 back if the world refuses; every call is logged (PowerCall). Every note is kept (apps.notes), viewers may report
 one, and a hidden note disappears from every screen. The pace, the note length, test mode and the blocked words are
 the site rules in the admin (apps.rules): the site keeps them, from the database, and the panel defers to it.
+
+No request waits on the island for long (ADR-014): the news is fetched once a second for everyone (island.shared),
+a power is queued for the worker (tasks.call_power) and the screen asks how it went (api_power_result), and a note,
+which the panel only queues, gets a few seconds.
 """
 import json
+import math
 import mimetypes
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse
@@ -30,27 +34,11 @@ from apps.notes import services as notes
 from apps.notes.models import Note, Report
 from apps.rules import words
 from apps.rules.models import Rules
+from apps.screen import island, tasks
 
-PANEL_DOWN = {"ok": False, "text": "The island is out of reach. Try again in a moment."}
-
-
-def relay(method, path, body=None):
-    """Ask the guest panel; its JSON answer, or PANEL_DOWN."""
-    headers = {"Content-Type": "application/json"}
-    if settings.GODLING_PANEL_KEY:
-        headers["X-Godling-Key"] = settings.GODLING_PANEL_KEY
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(settings.GODLING_PANEL_URL + path, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read() or b"{}")
-    except urllib.error.HTTPError as err:
-        try:
-            return json.loads(err.read() or b"{}") or PANEL_DOWN
-        except ValueError:
-            return PANEL_DOWN
-    except (OSError, ValueError):
-        return PANEL_DOWN
+PANEL_DOWN = island.PANEL_DOWN
+STATUS_TIMEOUT = 3  # seconds: the shared news waits no longer than this for the panel
+NOTE_TIMEOUT = 5  # seconds: the panel only puts a note in its queue, so it answers at once
 
 
 def wait_after(last, every):
@@ -60,8 +48,9 @@ def wait_after(last, every):
     return max(0, int(every - (timezone.now() - last).total_seconds() + 0.999))
 
 
-def note_wait(user, rules):
-    return wait_after(user.last_note_at, rules.note_every)
+def note_wait(user, every):
+    """Seconds until this viewer's next note may go, one every `every` seconds (the site rules' note_every)."""
+    return wait_after(user.last_note_at, every)
 
 
 def take_turn(user, field, every):
@@ -85,12 +74,13 @@ def give_back(user, turn):
     get_user_model().objects.filter(pk=user.pk, **{field: now}).update(**{field: before})
 
 
-def account(request, rules):
-    """What the screen shows of the viewer's account, and where to sign in, up or out, or buy credits."""
+def account(request, free):
+    """What the screen shows of the viewer's account, and where to sign in, up or out, or buy credits. `free`: test
+    mode, from the site rules."""
     user = request.user
     out = {"enabled": True, "signedIn": user.is_authenticated, "signIn": reverse("account_login"),
            "signUp": reverse("account_signup"), "signOut": reverse("account_logout"), "creditsPage": reverse("credits"),
-           "free": rules.free_powers}
+           "free": free}
     if user.is_authenticated:
         out.update(username=user.username, credits=credits.balance_of(user), notesMuted=user.notes_muted)
     return out
@@ -133,31 +123,64 @@ def moderate(status):
     return status
 
 
-@require_GET
-def api_status(request):
-    if request.user.is_authenticated:
-        client = request.user.client_id
-    else:
-        client = request.GET.get("client", "")
-        client = client if re.fullmatch(r"[A-Za-z0-9]{6,40}", client) and not client.startswith("user") else ""
-    status = relay("GET", f"/api/status?client={client}")
+def public_status():
+    """The news every viewer shares: the panel's, moderated, with the admin's powers and prices (island.shared)."""
+    status = island.relay("GET", "/api/status", timeout=STATUS_TIMEOUT)
     if status is PANEL_DOWN:
         status = {"world": False}
     if settings.GODLING_VIEW_URL:
-        status["view"] = settings.GODLING_VIEW_URL  # the island as the public reaches it (ADR-013)
+        status["view"] = settings.GODLING_VIEW_URL  # the island as the public reaches it (ADR-013, ADR-014)
     rules = Rules.get()
-    queue = (status.get("notes") or {}).get("queue", 0)
-    status["notes"] = {"limit": rules.note_limit, "every": rules.note_every, "queue": queue,
-                       "wait": note_wait(request.user, rules) if request.user.is_authenticated else 0}
+    status["notes"] = {"limit": rules.note_limit, "every": rules.note_every,
+                       "queue": (status.get("notes") or {}).get("queue", 0)}
     powers = credits.powers()
-    return JsonResponse({**moderate(status), "account": account(request, rules), "powers": powers,
-                         "prices": {k: p["price"] for k, p in powers.items()}})
+    return {**moderate(status), "powers": powers, "prices": {k: p["price"] for k, p in powers.items()},
+            "free": rules.free_powers}
+
+
+@require_GET
+def api_status(request):
+    """The shared news, with this viewer's part added: who they are, when their next note may go, and the count of
+    who is watching. A signed-out viewer's poll reads the shared copy and the cache, never the database."""
+    status = dict(island.shared(public_status))
+    free = bool(status.pop("free", False))
+    notes_now = {**(status.get("notes") or {}), "wait": 0}
+    if request.user.is_authenticated:
+        client = request.user.client_id
+        island.seen(request.user)
+        notes_now["wait"] = note_wait(request.user, notes_now.get("every") or 0)
+    else:
+        client = request.GET.get("client", "")
+        client = client if re.fullmatch(r"[A-Za-z0-9]{6,40}", client) and not client.startswith("user") else ""
+    status["notes"] = notes_now
+    status["watching"] = island.watching(client, island.address(request), request.user.is_authenticated)
+    return JsonResponse({**status, "account": account(request, free)})
 
 
 def signed_in(request):
     if request.user.is_authenticated:
         return None
     return JsonResponse({"ok": False, "signIn": True, "text": "Sign in to call powers and send notes."}, status=401)
+
+
+def spot(at):
+    """Where the viewer aimed, as two finite numbers, or None (the sky chooses), as the panel checks it."""
+    if not (isinstance(at, list) and len(at) == 2):
+        return None, None
+    try:
+        x, z = float(at[0]), float(at[1])
+    except (TypeError, ValueError):
+        return None, None
+    return (round(x, 2), round(z, 2)) if all(math.isfinite(v) and abs(v) < 2000 for v in (x, z)) else (None, None)
+
+
+def power_answer(call):
+    """What the screen hears of a call: still on its way (`pending`, ask again), or the world's answer."""
+    if call.status in (PowerCall.QUEUED, PowerCall.SENDING):
+        return {"ok": True, "pending": call.pk, "text": f"{call.power}: on its way to the island…",
+                "credits": credits.balance_of(call.user)}
+    return {**call.reply, "ok": call.ok, "text": call.answer or call.reply.get("text", ""),
+            "credits": credits.balance_of(call.user)}
 
 
 @require_POST
@@ -175,26 +198,35 @@ def api_power(request):
     if wait:
         return JsonResponse({"ok": False, "text": "One power at a time: give the last one a moment."})
     charged = 0 if rules.free_powers else power.price
-    if charged:
-        try:
-            credits.spend(user, charged, power.key)
-        except credits.NotEnough as short:
-            give_back(user, turn)
-            return JsonResponse({"ok": False, "needCredits": True, "credits": short.balance,
-                                 "text": f"{power.label} costs {power.price} credits; you hold {short.balance}."})
-    at = body.get("at") if isinstance(body.get("at"), list) and len(body.get("at")) == 2 else None
-    answer = relay("POST", "/api/power", {"client": user.client_id, "name": user.username, "power": power.key,
-                                          "at": at})
-    refunded = bool(charged and not answer.get("ok"))
-    if refunded:
-        credits.refund(user, charged, f"{power.key}: the world refused")
+    x, z = spot(body.get("at"))
     try:
-        x, z = (float(at[0]), float(at[1])) if at else (None, None)
-    except (TypeError, ValueError):
-        x = z = None
-    PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z, ok=bool(answer.get("ok")),
-                             refunded=refunded, answer=str(answer.get("text") or "")[:200])
-    return JsonResponse({**answer, "credits": credits.balance_of(user)})
+        with transaction.atomic():  # the credits go and the call is kept together, or neither
+            if charged:
+                credits.spend(user, charged, power.key)
+            call = PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z,
+                                            status=PowerCall.QUEUED)
+    except credits.NotEnough as short:
+        give_back(user, turn)
+        return JsonResponse({"ok": False, "needCredits": True, "credits": short.balance,
+                             "text": f"{power.label} costs {power.price} credits; you hold {short.balance}."})
+    try:
+        tasks.call_power.delay(call.pk)
+    except Exception:  # noqa: BLE001 (the queue is down: give the call up now rather than leave it waiting)
+        tasks.settle(call.pk, PANEL_DOWN, PowerCall.QUEUED, PowerCall.EXPIRED)
+    call.refresh_from_db()
+    return JsonResponse(power_answer(call))
+
+
+@require_GET
+def api_power_result(request, call):
+    """How a queued power went: the screen asks every half second until the world has answered."""
+    refused = signed_in(request)
+    if refused:
+        return refused
+    found = PowerCall.objects.filter(pk=call, user=request.user).select_related("user").first()
+    if found is None:
+        raise Http404
+    return JsonResponse(power_answer(tasks.give_up_if_stale(found)))
 
 
 @require_POST
@@ -210,7 +242,7 @@ def api_note(request):
     rules = Rules.get()
     # Checked as it will be delivered: the panel makes the same text of it (words.plain), so ｂｌｏｃｋｅｄ is blocked.
     text = words.plain(body.get("text"))
-    wait = note_wait(user, rules)
+    wait = note_wait(user, rules.note_every)
     if wait:
         return note_later(wait)
     if len(text) > rules.note_limit:
@@ -222,8 +254,8 @@ def api_note(request):
         return note_later(wait)
     # Kept before it is sent, so its id travels with it (the panel's pop-up `ref`, for reports: moderate).
     note = Note.objects.create(author=user, text=text[:200])
-    answer = relay("POST", "/api/note", {"client": user.client_id, "name": user.username, "text": text,
-                                         "ref": note.pk})
+    answer = island.relay("POST", "/api/note", {"client": user.client_id, "name": user.username, "text": text,
+                                                "ref": note.pk}, timeout=NOTE_TIMEOUT)
     if answer.get("ok"):
         shown = (answer.get("note") or text)[:200]  # kept as the panel shows it
         if shown != note.text:
@@ -250,8 +282,11 @@ def api_report(request):
     note = Note.objects.filter(pk=body.get("note")).first() if str(body.get("note", "")).isdigit() else None
     if note is None:
         return JsonResponse({"ok": False, "text": "That note is gone."}, status=404)
+    if not island.is_watching(request.user):  # a note is reported from the screen it popped up on
+        return JsonResponse({"ok": False, "text": "Reports come from the screen: watch the island to report a note."})
     reason = body.get("reason") if body.get("reason") in dict(Report.REASONS) else Report.UNKIND
-    return JsonResponse({"ok": True, "text": notes.report(note, request.user, reason)})
+    ok, text = notes.report(note, request.user, reason)
+    return JsonResponse({"ok": ok, "text": text})
 
 
 HIDDEN_NOTE = "A note drifted down; moderators have hidden it."
@@ -297,7 +332,7 @@ def api_replay(request, what):
     if what not in REPLAY_PARTS:
         raise Http404
     query = urllib.parse.urlencode({k: request.GET[k] for k in ("from", "to") if k in request.GET})
-    answer = relay("GET", f"/api/replay/{what}" + (f"?{query}" if query else ""))
+    answer = island.relay("GET", f"/api/replay/{what}" + (f"?{query}" if query else ""))
     if answer is PANEL_DOWN:
         return JsonResponse({"ok": False, "text": "The island's past is out of reach. Try again in a moment."}, status=503)
     if what == "index" and isinstance(answer, dict):

@@ -14,10 +14,12 @@ REPO_DIR = BASE_DIR.parent
 VIEWER_DIR = REPO_DIR / "world" / "viewer"  # the screen's page, served as it is
 
 TESTING = "test" in sys.argv[1:2]
-DEBUG = os.environ.get("GODLING_DEBUG", "1") == "1"
+# Off unless asked for (GODLING_DEBUG=1, development only): debug pages show settings, and with no Stripe keys debug
+# opens the test checkout, which credits packs for nothing (apps.credits.views).
+DEBUG = os.environ.get("GODLING_DEBUG", "0") == "1"
 SECRET_KEY = os.environ.get("GODLING_SECRET_KEY", "")
 if not SECRET_KEY:
-    if not DEBUG:
+    if not (DEBUG or TESTING):
         raise RuntimeError("Set GODLING_SECRET_KEY: the site signs sessions with it.")
     SECRET_KEY = "dev-only-not-secret-godling"
 ALLOWED_HOSTS = [h for h in os.environ.get("GODLING_HOSTS", "localhost,127.0.0.1").split(",") if h]
@@ -32,6 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "allauth",  # authentication, registration, email verification
     "allauth.account",  # email/password accounts + email confirmation
+    "allauth.mfa",  # two-factor sign-in (an authenticator app, recovery codes): staff need it for the admin
     "apps.users",
     "apps.rules",
     "apps.credits",
@@ -49,6 +52,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "allauth.account.middleware.AccountMiddleware",  # required by django-allauth
+    "apps.users.middleware.AdminNeedsTwoFactor",  # staff set up two-factor sign-in before the admin opens
 ]
 
 ROOT_URLCONF = "godling_web.urls"
@@ -89,9 +93,30 @@ else:
         }
     }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-# One cache for every gunicorn worker: an admin change clears the blocked words or the disposable domains for all of
-# them, and allauth's rate limits count across them. The table is made by migrate (rules 0003).
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.db.DatabaseCache", "LOCATION": "godling_cache"}}
+# One cache for every gunicorn worker and the Celery worker: an admin change clears the blocked words or the disposable
+# domains for all of them, allauth's rate limits count across them, and the island's news is fetched once a second for
+# every viewer (apps.screen.island). Redis in production (deploy/: GODLING_REDIS_URL); otherwise a table, made by
+# migrate (rules 0003), which is enough for development and a small site.
+REDIS_URL = os.environ.get("GODLING_REDIS_URL", "")
+if REDIS_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL,
+                          "KEY_PREFIX": "godling"}}
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.db.DatabaseCache", "LOCATION": "godling_cache"}}
+
+# Celery (as AgentOp runs it): powers go to the island from a worker, never from a viewer's request, so a slow island
+# holds no web thread (apps.screen.tasks). Without Redis, in development and tests, a task runs at once, in the request.
+CELERY_BROKER_URL = REDIS_URL or "memory://"
+CELERY_TASK_ALWAYS_EAGER = TESTING or not REDIS_URL
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_IGNORE_RESULT = True  # results live in the database (PowerCall)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+# The worker's own clock (deploy/: `worker --beat`): powers nobody will take are given up and refunded on the server,
+# not only when their viewer's page asks (apps.screen.tasks.expire_stale_powers).
+CELERY_BEAT_SCHEDULE = {"expire-stale-powers": {"task": "apps.screen.tasks.expire_stale_powers", "schedule": 60.0}}
 
 AUTH_USER_MODEL = "users.User"
 AUTH_PASSWORD_VALIDATORS = [
@@ -122,6 +147,11 @@ LOGIN_REDIRECT_URL = "/"
 ALLAUTH_TRUSTED_PROXY_COUNT = int(os.environ.get("GODLING_TRUSTED_PROXIES", "0"))
 if TESTING:
     ACCOUNT_RATE_LIMITS = {}  # repeated sign-ups and sign-ins in tests are not abuse
+# Two-factor sign-in (allauth.mfa): an authenticator app's codes, and recovery codes for a lost phone. Staff must have
+# it to open the admin (apps.users.middleware); viewers may turn it on for themselves at /accounts/2fa/.
+MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]
+MFA_TOTP_ISSUER = "Godling"
+GODLING_ADMIN_TWO_FACTOR = os.environ.get("GODLING_ADMIN_TWO_FACTOR", "1") == "1"
 
 # Email: printed to the console in development; SMTP when GODLING_EMAIL_HOST is set.
 DEFAULT_FROM_EMAIL = os.environ.get("GODLING_FROM_EMAIL", "Godling <noreply@localhost>")
@@ -147,8 +177,9 @@ GODLING_PANEL_KEY = os.environ.get("GODLING_PANEL_KEY", "")
 GODLING_CURRENCY = os.environ.get("GODLING_CURRENCY", "eur")
 GODLING_STRIPE_SECRET_KEY = os.environ.get("GODLING_STRIPE_SECRET_KEY", "")
 GODLING_STRIPE_WEBHOOK_SECRET = os.environ.get("GODLING_STRIPE_WEBHOOK_SECRET", "")
-# The island as the public reaches it, e.g. https://godling.example/island?spectator_token=… (no slash after
-# /island: that is where the world serves its page under a base path); empty, the panel's own.
+# The island as the public reaches it, on its own origin (ADR-014) and with no token in it (ADR-015: Caddy and the
+# relay hold it), e.g. https://island.godling.example/island (no slash after /island: that is where the world serves
+# its page under a base path). Empty, the panel's own, which carries the token: development only.
 GODLING_VIEW_URL = os.environ.get("GODLING_VIEW_URL", "")
 # The live run, for the admin's log viewer (apps.users.log_views).
 GODLING_RUN_DIR = os.environ.get("GODLING_RUN_DIR", "")
@@ -172,6 +203,12 @@ STORAGES = {
 SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = not DEBUG
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_HSTS_SECONDS = int(os.environ.get("GODLING_HSTS_SECONDS", "3600"))
+    # A year, the island's subdomain included (Caddy serves both over HTTPS). Not on the preload list: that cannot
+    # be taken back quickly.
+    SECURE_HSTS_SECONDS = int(os.environ.get("GODLING_HSTS_SECONDS", str(365 * 24 * 3600)))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get("GODLING_HSTS_SUBDOMAINS", "1") == "1"
+    # check --deploy, answered: Caddy sends plain HTTP to HTTPS itself (W008), and the preload list is left alone
+    # on purpose (W021, above).
+    SILENCED_SYSTEM_CHECKS = ["security.W008", "security.W021"]
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_REFERRER_POLICY = "same-origin"

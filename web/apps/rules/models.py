@@ -19,7 +19,13 @@ class Rules(models.Model):
         help_text=f"Characters in a note, {NOTE_LIMIT_MAX} at most.")
     reports_to_hide = models.PositiveIntegerField(
         default=3, validators=[MinValueValidator(1)],
-        help_text="Viewers' reports that hide a note from every screen and pause its sender's notes.")
+        help_text="Viewers' reports that hide a note from every screen and pause its sender's notes. Only reports from "
+                  "accounts old enough (below) count, and accounts sharing one inbox count once.")
+    report_min_age_hours = models.PositiveIntegerField(
+        default=24, help_text="Hours an account must have existed before its reports count toward hiding a note "
+                              "(fresh accounts are cheap). Moderators still see every report.")
+    reports_per_hour = models.PositiveIntegerField(
+        default=10, validators=[MinValueValidator(1)], help_text="Reports one viewer may send in an hour.")
 
     class Meta:
         verbose_name = verbose_name_plural = "site rules"

@@ -1,17 +1,36 @@
-# Godling on one domain, with HTTPS from Let's Encrypt (Caddy does it on its own).
-#   /island/…  the world's spectator page and its stream (WORLD_BASE_PATH=/island), and only that: the agent API
-#              (join, input, observe, reset, chat, snapshot…) is never reachable from outside.
-#   /replay/chunks/…  the island's past, packed for replays (ADR-016), from the runs volume
-#   the rest   the site: the viewer screen, accounts, credits, the admin.
+# Godling on two origins, each with HTTPS from Let's Encrypt (Caddy does it on its own). ADR-014.
+#   {$GODLING_DOMAIN}         the site: the viewer screen, accounts, credits, the admin.
+#   {$GODLING_ISLAND_DOMAIN}  the world's spectator page and its stream (WORLD_BASE_PATH=/island), and only that: the
+#                             agent API (join, input, observe, reset, chat, snapshot…) is never reachable from outside.
+#                             Also the island's past, packed for replays (/replay/chunks/…, ADR-016), which the page
+#                             fetches and plays itself.
+# The island is a page of its own origin inside the screen's frame, so nothing on it can reach the site's cookies or
+# act as a signed-in viewer, and only the site may frame it.
+# Its stream comes from the relay (ADR-015): one connection to the world, however many watch. The spectator token
+# stays on the server: Caddy hands it to the world, the relay holds its own, and the public link carries none.
 {$GODLING_DOMAIN} {
 	encode zstd gzip
+	reverse_proxy site:8000
+}
 
-	@island path /island /island/ /island/ui /island/ui/* /island/spectate /island/spectate/ws /island/spectate/chat/messages /island/renderer/manifest /island/replay/info /island/renderer-files/* /island/assets/* /island/static/*
-	handle @island {
-		reverse_proxy island:8080
+{$GODLING_ISLAND_DOMAIN} {
+	encode zstd gzip
+	header Content-Security-Policy "frame-ancestors https://{$GODLING_DOMAIN}"
+	header -X-Frame-Options
+	header Referrer-Policy same-origin
+	header X-Content-Type-Options nosniff
+
+	@stream path /island/spectate/ws
+	handle @stream {
+		reverse_proxy relay:8082
 	}
-	handle /island/* {
-		respond 404
+	# The page and what it fetches. Not /island/spectate: the page never asks for it, and each call would have the
+	# world build the whole island.
+	@island path /island /island/ /island/ui /island/ui/* /island/spectate/chat/messages /island/renderer/manifest /island/replay/info /island/renderer-files/* /island/assets/* /island/static/*
+	handle @island {
+		reverse_proxy island:8080 {
+			header_up X-Spectator-Token {$GODLING_SPECTATOR_TOKEN}
+		}
 	}
 
 	# Replays (ADR-016): the chunks the island packs, straight from the runs volume. Files only, the same for everyone
@@ -22,10 +41,7 @@
 		header Access-Control-Allow-Origin *
 		file_server
 	}
-	handle /replay/* {
-		respond 404
-	}
 	handle {
-		reverse_proxy site:8000
+		respond 404
 	}
 }

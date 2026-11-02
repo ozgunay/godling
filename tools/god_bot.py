@@ -3,13 +3,16 @@
 events, but rarely). It joins the world as the bodiless "Sky", like tools/guest_panel.py, calls one of the world's sky
 powers at long random intervals, and logs what it did, so the run can be read against it afterwards.
 
-    python3 tools/god_bot.py --world http://localhost:8092 [--every 25-55] [--first 10] [--hours 8.5]
-                             [--log ~/godling-runs/<run>/god_bot.jsonl]
+    python3 tools/god_bot.py --world http://localhost:8092 --run-dir ~/godling-runs/<run> [--every 25-55]
+                             [--first 10] [--hours 8.5] [--log ~/godling-runs/<run>/god_bot.jsonl]
 
 The world chooses where (near Godling, in view, clear of what it built); the bot only chooses what and when.
+Joining takes the world's agent key (patches/v2, ADR-014): the run keeps it in <run>/world.key, which --run-dir reads,
+or export it as WORLD_AGENT_KEY.
 """
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -29,7 +32,10 @@ def main():
     ap.add_argument("--first", type=float, default=10, help="minutes before the first event")
     ap.add_argument("--hours", type=float, default=8.5, help="stop after this long")
     ap.add_argument("--log", help="append one JSON line per event here")
+    ap.add_argument("--run-dir", type=Path, help="the run whose world this is: its world.key lets the bot join")
     args = ap.parse_args()
+    if args.run_dir:
+        os.environ["WORLD_AGENT_KEY"] = (args.run_dir.expanduser() / "world.key").read_text().strip()
     lo, hi = (float(v) for v in args.every.split("-"))
     log = Path(args.log).expanduser() if args.log else None
     rng = random.Random()

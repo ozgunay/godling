@@ -29,8 +29,9 @@ Useful flags:
 - `--minutes 60`: stop by itself after an hour.
 - `--gifted-skills`: also offer ready-made `stack_on`/`build_tower` (the comparison arm).
 - `--no-narration`: don't post intentions to world chat.
-- `--attach`: use a world that's already running.
+- `--attach`: use a world that's already running. If that world asks for a join key (`patches/v2`, ADR-014), export its `WORLD_AGENT_KEY` first. A run that starts its own world makes a fresh key and keeps it in `<run>/world.key`.
 - `--guest-panel 8081`: also serve the guest panel at http://localhost:8081/. It shows the live view, what Godling thinks and needs, and buttons for the sky powers (stone, log, regrow, lightning, meteor). Free in test mode. It also runs on its own: `python3 tools/guest_panel.py --world http://localhost:8080 --run-dir <run>`.
+- `--relay 8082`: stream the island to viewers through the relay (`relay/`, ADR-015; build it first with `cargo build --release` in `relay/`). The world gets a spectator token the relay shares, and the guest panel's island streams from the relay: one connection to the world however many watch, and pages that reconnect pick up where they left off. With `--attach`, export the world's `WORLD_SPECTATOR_TOKEN`.
 - `--sky-test-minutes 10`: drop a meteor near Godling every 10 minutes, its shadow 40 s ahead, to measure reactions without anyone at the panel.
 - **The brace reflex** (`skills.steady`): when the Clock says the ground is rumbling, the body looks around for about 2 s (the world plays LookAround), then sends `Brace` and holds on until the world lets go. It runs between steps, while waiting, and while the mind thinks. The rumble is a salience-5 event, so the step in progress stops; the mind is told how quakes work and hears of one in its next plan. `analyze_run.py` reports each quake: pieces woken, moved and fallen, how soon the body braced, and knock-downs.
 

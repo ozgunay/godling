@@ -1,6 +1,36 @@
-# Godling on one server (the user's choice, as AgentOp runs): Postgres, the site, the island (world, mind, panel) and
-# Caddy in front. Copy .env.example to .env, fill it in, then: docker compose up -d --build. See deploy/README.md.
+# Godling on one server (the user's choice, as AgentOp runs): Postgres, Redis, the site and its worker, the island
+# (world, mind, panel) and Caddy in front. Copy .env.example to .env, fill it in, then: docker compose up -d --build.
+# See deploy/README.md.
 name: godling
+
+# What the site and its worker both need.
+x-site-env: &site-env
+  GODLING_DEBUG: "0"
+  GODLING_SECRET_KEY: ${GODLING_SECRET_KEY:?set GODLING_SECRET_KEY in .env}
+  GODLING_HOSTS: ${GODLING_DOMAIN:?set GODLING_DOMAIN in .env}
+  GODLING_TRUSTED_ORIGINS: https://${GODLING_DOMAIN}
+  GODLING_TRUSTED_PROXIES: "1"  # Caddy: allauth's rate limits read the viewer's address it forwards
+  GODLING_DB_HOST: postgres
+  GODLING_DB_PASSWORD: ${GODLING_DB_PASSWORD}
+  GODLING_REDIS_URL: redis://redis:6379/0  # the shared cache, and the worker's queue
+  GODLING_PANEL_URL: http://island:8081
+  GODLING_PANEL_KEY: ${GODLING_PANEL_KEY:?set GODLING_PANEL_KEY in .env}
+  # The island on its own origin (ADR-014). No slash after /island: the world serves its page there exactly.
+  # No token in the island's public link: Caddy and the relay hold it (ADR-015).
+  GODLING_VIEW_URL: https://${GODLING_ISLAND_DOMAIN:?set GODLING_ISLAND_DOMAIN in .env}/island
+  GODLING_RUN_DIR: /runs/live
+  # Where browsers fetch replay chunks (ADR-016): the island's origin, where Caddy serves them from the runs volume.
+  # With a bucket set on the island, the index names the bucket's address instead.
+  GODLING_REPLAY_URL: https://${GODLING_ISLAND_DOMAIN}/replay
+  GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
+  GODLING_STRIPE_WEBHOOK_SECRET: ${GODLING_STRIPE_WEBHOOK_SECRET:-}
+  GODLING_FROM_EMAIL: ${GODLING_FROM_EMAIL:-Godling <noreply@localhost>}
+  GODLING_EMAIL_HOST: ${GODLING_EMAIL_HOST:-}
+  GODLING_EMAIL_PORT: ${GODLING_EMAIL_PORT:-587}
+  GODLING_EMAIL_USER: ${GODLING_EMAIL_USER:-}
+  GODLING_EMAIL_PASSWORD: ${GODLING_EMAIL_PASSWORD:-}
+  GODLING_EMAIL_TLS: ${GODLING_EMAIL_TLS:-1}
+  GODLING_EMAIL_SSL: ${GODLING_EMAIL_SSL:-0}
 
 services:
   postgres:
@@ -18,39 +48,47 @@ services:
       timeout: 5s
       retries: 10
 
+  # The shared cache (rate limits, the island's news, who is watching) and the worker's queue. Nothing in it
+  # outlives a restart that matters: a queued power not taken in 3 minutes is given up and its credits come back.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb",
+              "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   site:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.site
     restart: unless-stopped
-    environment:
-      GODLING_DEBUG: "0"
-      GODLING_SECRET_KEY: ${GODLING_SECRET_KEY:?set GODLING_SECRET_KEY in .env}
-      GODLING_HOSTS: ${GODLING_DOMAIN:?set GODLING_DOMAIN in .env}
-      GODLING_TRUSTED_ORIGINS: https://${GODLING_DOMAIN}
-      GODLING_TRUSTED_PROXIES: "1"  # Caddy: allauth's rate limits read the viewer's address it forwards
-      GODLING_DB_HOST: postgres
-      GODLING_DB_PASSWORD: ${GODLING_DB_PASSWORD}
-      GODLING_PANEL_URL: http://island:8081
-      GODLING_PANEL_KEY: ${GODLING_PANEL_KEY:?set GODLING_PANEL_KEY in .env}
-      # No slash after /island: the world serves its page under the base path at /island exactly.
-      GODLING_VIEW_URL: https://${GODLING_DOMAIN}/island?spectator_token=${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
-      GODLING_RUN_DIR: /runs/live
-      # Where browsers fetch replay chunks (ADR-016): Caddy's /replay, unless the island uploads them to a bucket.
-      GODLING_REPLAY_URL: ${GODLING_REPLAY_URL:-/replay}
-      GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
-      GODLING_STRIPE_WEBHOOK_SECRET: ${GODLING_STRIPE_WEBHOOK_SECRET:-}
-      GODLING_FROM_EMAIL: ${GODLING_FROM_EMAIL:-Godling <noreply@localhost>}
-      GODLING_EMAIL_HOST: ${GODLING_EMAIL_HOST:-}
-      GODLING_EMAIL_PORT: ${GODLING_EMAIL_PORT:-587}
-      GODLING_EMAIL_USER: ${GODLING_EMAIL_USER:-}
-      GODLING_EMAIL_PASSWORD: ${GODLING_EMAIL_PASSWORD:-}
-      GODLING_EMAIL_TLS: ${GODLING_EMAIL_TLS:-1}
-      GODLING_EMAIL_SSL: ${GODLING_EMAIL_SSL:-0}
+    environment: *site-env
     volumes:
       - runs:/runs:ro  # the admin's log viewer reads the island's logs
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Takes powers to the island, one at a time as the island takes them (apps.screen.tasks), so no web request waits.
+  # Its clock (--beat; one worker, so one clock) gives up every minute the powers nobody will take, credits back.
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.site
+    restart: unless-stopped
+    command: ["celery", "-A", "godling_web", "worker", "--beat", "--schedule", "/tmp/celerybeat-schedule",
+              "--concurrency", "1", "--loglevel", "info"]
+    environment: *site-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   island:
@@ -62,7 +100,10 @@ services:
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
       WORLD_BASE_PATH: /island
-      WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}
+      WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+      # Reachable by Caddy and the relay inside Compose's network. The world then insists on a join key, which the launcher makes
+      # for every start (patches/v2, ADR-014); Caddy passes only the watching side on.
+      WORLD_HOST: 0.0.0.0
       GODLING_PANEL_HOST: 0.0.0.0
       GODLING_PANEL_KEY: ${GODLING_PANEL_KEY}
       GODLING_RUN_DIR: /runs/live
@@ -80,6 +121,25 @@ services:
     volumes:
       - runs:/runs
 
+  # The island's stream relay (relay/, ADR-015), which Caddy sends every viewer's socket to: one connection to the
+  # world, the same updates to everyone. In a container of its own, with the spectator token and nothing else: the
+  # part of the island that the whole internet talks to is kept apart from Godling's keys. It takes sockets only from
+  # the island's own page, at most RELAY_MAX_PER_IP per viewer address (read from Caddy's X-Forwarded-For).
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    restart: unless-stopped
+    environment:
+      RELAY_LISTEN: 0.0.0.0:8082
+      RELAY_UPSTREAM: ws://island:8080/island/spectate/ws
+      RELAY_BASE_PATH: /island
+      RELAY_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+      RELAY_ORIGINS: https://${GODLING_ISLAND_DOMAIN}
+      RELAY_TRUSTED_PROXIES: "1"
+    depends_on:
+      - island
+
   caddy:
     image: caddy:2
     restart: unless-stopped
@@ -88,6 +148,8 @@ services:
       - "443:443"
     environment:
       GODLING_DOMAIN: ${GODLING_DOMAIN}
+      GODLING_ISLAND_DOMAIN: ${GODLING_ISLAND_DOMAIN}
+      GODLING_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}  # handed to the world on the page's own requests
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - runs:/runs:ro  # replay chunks (ADR-016)
@@ -96,6 +158,7 @@ services:
     depends_on:
       - site
       - island
+      - relay
 
 volumes:
   pgdata:

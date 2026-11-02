@@ -1178,6 +1178,9 @@ export function createRenderer(ctx) {
       if (captureMeta) delete obsState.__mesaCaptureMeta
 
       if (captureMeta?.resetBuffer) stateBuffer.clear()
+      // A whole island (on connecting, after falling behind, or a new world: patches/v3, ADR-015) is not eased in from
+      // what was shown before the gap; only a delta's state carries __spectatorDelta.
+      else if (!captureMeta && !obsState?.__spectatorDelta && stateBuffer.latest()) stateBuffer.clear()
       if (captureMeta?.push !== false) {
         const pushNowMs = Number.isFinite(captureMeta?.pushNowMs)
           ? Number(captureMeta.pushNowMs)
@@ -1194,6 +1197,12 @@ export function createRenderer(ctx) {
         : Math.min((now - lastStateMs) / 1000, 0.05)
       lastStateMs = now
       draw(obs, dt)
+    },
+
+    // The page's stream (patches/v3): live, reconnecting, paused, and whether the world is up. Inside the viewers'
+    // screen it decides the Live badge, so the badge never says Live over a frozen island.
+    onConnection({ state, world } = {}) {
+      if (embedded) tellScreen({ type: 'godling-stream', state: String(state || ''), world: world === 'down' ? 'down' : 'up' })
     },
 
     // Between states, keep animating (the sea, clouds and walk cycle) from the interpolated snapshots.
