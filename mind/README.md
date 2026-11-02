@@ -42,6 +42,8 @@ python3 /mnt/c/Work/godling/tools/analyze_run.py ~/godling-runs/m-002
 ```
 It reports the world-side numbers plus the mind's calls, cost and skill success. Raw logs: `<run>/mind/log.jsonl`. Memory and learned skills: `<run>/memory/`.
 
+Replays (ADR-016): beside the world, `python3 -m godling.replay follow <run>` packs its recording into `<run>/replay/` as it grows (its log: `<run>/replay.log`); the guest panel and the site serve it, and the viewers' screen plays it (Rewind). `python3 -m godling.replay check <run>` compares replayed moments with the raw recording.
+
 ## Test results so far (2026-11-01, deepseek-flash)
 
 | Run | Setup | What happened | Cost |

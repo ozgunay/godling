@@ -121,7 +121,7 @@ def main():
     local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
     save = IslandSave(run, local_world, log)
     island = save.load()  # what the island was when the run last stopped: the world puts it back (main.lua)
-    server = hindsight = panel = None
+    server = hindsight = panel = packer = None
     try:
         if not args.attach:
             world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes, island)
@@ -159,6 +159,11 @@ def main():
             print(f"World is up{f', the island put back ({restored})' if restored else ''}. "
                   f"Watch it here: {spectator or local_world + '/'}", flush=True)
             save.start()
+            # The recording, packed for replays as it grows (ADR-016), in a process of its own: catching up on a long
+            # recording must never hold up Godling's mind.
+            packer = subprocess.Popen([sys.executable, "-m", "godling.replay", "follow", str(run)],
+                                      cwd=str(Path(__file__).resolve().parent), env=clean_env,
+                                      stdout=(run / "replay.log").open("a"), stderr=subprocess.STDOUT)
         world.join()
         if args.bubble:
             bubble = Bubble(world, llm, log=log).start()
@@ -195,6 +200,7 @@ def main():
         except Exception as err:
             log(kind="error", message=f"structures at the end: {err!r}"[:200])
         stop_children(panel, server, hindsight)
+        stop_children(packer)  # after the world: the last seconds it recorded are packed too
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,

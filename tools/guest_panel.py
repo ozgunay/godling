@@ -37,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mind"))
+from godling import replay  # noqa: E402
 from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 
 # name in main.lua's SKY_POWERS, button label, what it does, tier in the plan's price list. Viewers may aim each but
@@ -161,31 +162,32 @@ def mind_status(run_dir):
     with path.open("rb") as f:
         f.seek(max(0, path.stat().st_size - LOG_TAIL_BYTES))
         lines = f.read().decode("utf-8", "replace").splitlines()[1:]
-    out = {"thought": "", "needs": "", "intention": ""}
-    feed = deque(maxlen=FEED_KEPT)
+    entries = []
     for line in lines:
         try:
-            e = json.loads(line)
+            entries.append(json.loads(line))
         except ValueError:
             continue
-        kind = e.get("kind")
-        if kind == "decision":
-            out["thought"], out["needs"] = clean_shown(e.get("thought", "")), clean_shown(e.get("needs", ""))
-            if out["thought"] and (not feed or feed[-1]["text"] != out["thought"]):
-                feed.append({"time": e.get("time"), "who": "godling", "text": out["thought"]})
-        elif kind == "bubble" and e.get("ok"):
-            out["bubble"] = {"thing": e.get("thing"), "feeling": e.get("feeling")}
-        elif kind == "project" and e.get("phase") == "start":
-            out["intention"] = clean_shown(e.get("intention") or e.get("goal", ""))
-        elif kind == "event":
-            feed.append({"time": e.get("time"), "who": "sky" if e.get("sky") else "notice", "text": clean_shown(e["text"]),
-                         "glance": None})
-        elif kind == "glance":
-            seen = next((n for n in reversed(feed) if n["text"] == e.get("text") and n.get("glance", 0) is None), None)
-            if seen:
-                seen["glance"] = e.get("degrees") if e.get("turned") else 0
-    out["feed"] = list(feed)
-    return out
+    return replay.reduce_status(entries, clean_shown, FEED_KEPT)  # read the same way in replays (ADR-016)
+
+
+def replay_tracks(run_dir, t_from, t_to):
+    """The screen's tracks for a replay (ADR-016), with what viewers see of Godling's mind cleaned as it is live."""
+    tracks = replay.read_tracks(run_dir, t_from, t_to)
+    for e in tracks["lead"] + tracks["entries"]:
+        for key in ("thought", "needs", "intention", "goal", "text"):
+            if key in e:
+                e[key] = clean_shown(e[key])
+    return tracks
+
+
+def span(query, most_ms):
+    """`from` and `to` (UTC ms) of a replay request, at most `most_ms` apart, or None."""
+    try:
+        t_from, t_to = int(query.get("from", [""])[0]), int(query.get("to", [""])[0])
+    except ValueError:
+        return None
+    return (t_from, t_to) if 0 <= t_to - t_from <= most_ms else None
 
 
 def world_up(base):
@@ -263,8 +265,9 @@ def clean_client(client):
 class Island:
     """What the panel knows and keeps: the latest look at the Clock, who is watching, what viewers did, the notes queue."""
 
-    def __init__(self, sky, note_every, note_gap, trusted=False):
+    def __init__(self, sky, note_every, note_gap, trusted=False, run_dir=None):
         self.sky = sky
+        self.run_dir = run_dir  # what viewers did is kept there for replays (ADR-016)
         self.note_every, self.note_gap = note_every, note_gap
         # Behind the accounts site (--key), the site keeps each viewer's pace from its database (its rules, which the
         # admin edits); the panel keeps only the island's own: one note at a time, a short queue.
@@ -297,7 +300,12 @@ class Island:
                      "ok": ok, **({"ref": ref} if ref is not None else {})}
             if ok:
                 self.popups.append(entry)
-            return entry
+        if ok and self.run_dir:
+            try:
+                replay.record_act(self.run_dir, entry)
+            except OSError as err:
+                print(f"Guest panel: could not keep a viewer's act for replays: {err}", flush=True)
+        return entry
 
     def power(self, client, name, power, at=None):
         now = time.time()
@@ -367,7 +375,7 @@ class Island:
 
 def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key="", host="127.0.0.1"):
     base = world.rstrip("/")
-    island = Island(Sky(base), note_every, note_gap, trusted=bool(key))
+    island = Island(Sky(base), note_every, note_gap, trusted=bool(key), run_dir=run_dir)
     powers = {p[0] for p in POWERS if p[0] != "Note"}  # a note comes through /api/note, with its text checked
 
     def keep_looking():
@@ -408,11 +416,42 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
                             "watching": island.watching(client), "testMode": True, "now": time.time(),
                             "mind": mind_status(run_dir), **island.status(client)})
                 return
+            if url.path.startswith(("/api/replay/", "/replay/")):
+                return self._replay(url)
             path = (VIEWER / (urllib.parse.unquote(url.path).lstrip("/") or "index.html")).resolve()
             if not path.is_relative_to(VIEWER) or not path.is_file():
                 return self._send("Not here.", "text/plain", 404)
             kind = "text/javascript" if path.suffix == ".js" else mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             self._send(path.read_bytes(), kind + ("; charset=utf-8" if kind.startswith("text/") else ""))
+
+        def _replay(self, url):
+            """Replays (ADR-016): the index, the screen's tracks, the timeline's markers and sky, and the chunks."""
+            if not run_dir:
+                return self._json({"ok": False, "text": "No replays without --run-dir."}, 404)
+            query = urllib.parse.parse_qs(url.query)
+            if url.path == "/api/replay/index":
+                index = replay.read_index(run_dir)
+                return self._json({**index, "chunks": index.get("chunks_url") or "replay"})
+            if url.path == "/api/replay/tracks":
+                got = span(query, 3 * 3_600_000)
+                return self._json(replay_tracks(run_dir, *got) if got else {"ok": False}, 200 if got else 400)
+            if url.path in ("/api/replay/marks", "/api/replay/sky"):
+                got = span(query, 8 * 86_400_000)
+                if not got:
+                    return self._json({"ok": False}, 400)
+                read = replay.read_marks if url.path.endswith("marks") else replay.read_sky
+                return self._json(read(run_dir, *got))
+            chunk = replay.chunk_file(run_dir, url.path.removeprefix("/replay/"))
+            if chunk is None:
+                return self._send("Not here.", "text/plain", 404)
+            data = chunk.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("Access-Control-Allow-Origin", "*")  # the island's page fetches them; nobody's data
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             url = urllib.parse.urlsplit(self.path)

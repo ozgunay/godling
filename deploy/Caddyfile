@@ -1,6 +1,7 @@
 # Godling on one domain, with HTTPS from Let's Encrypt (Caddy does it on its own).
 #   /island/…  the world's spectator page and its stream (WORLD_BASE_PATH=/island), and only that: the agent API
 #              (join, input, observe, reset, chat, snapshot…) is never reachable from outside.
+#   /replay/chunks/…  the island's past, packed for replays (ADR-016), from the runs volume
 #   the rest   the site: the viewer screen, accounts, credits, the admin.
 {$GODLING_DOMAIN} {
 	encode zstd gzip
@@ -10,6 +11,18 @@
 		reverse_proxy island:8080
 	}
 	handle /island/* {
+		respond 404
+	}
+
+	# Replays (ADR-016): the chunks the island packs, straight from the runs volume. Files only, the same for everyone
+	# and never changed once written, so they are cached for good. (With a bucket, browsers fetch them from there.)
+	handle_path /replay/chunks/* {
+		root * /runs/live/replay/chunks
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin *
+		file_server
+	}
+	handle /replay/* {
 		respond 404
 	}
 	handle {

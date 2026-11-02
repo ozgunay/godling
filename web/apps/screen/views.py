@@ -11,8 +11,9 @@ import json
 import mimetypes
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -251,6 +252,59 @@ def api_report(request):
         return JsonResponse({"ok": False, "text": "That note is gone."}, status=404)
     reason = body.get("reason") if body.get("reason") in dict(Report.REASONS) else Report.UNKIND
     return JsonResponse({"ok": True, "text": notes.report(note, request.user, reason)})
+
+
+HIDDEN_NOTE = "A note drifted down; moderators have hidden it."
+REPLAY_PARTS = ("index", "tracks", "marks", "sky")
+
+
+def moderate_past(tracks):
+    """A replay's tracks as viewers may see them (ADR-016): looked up now, never baked into the recording, so a note
+    hidden since, or an account deleted since, is gone from the past too. Notes hidden by moderation vanish from the
+    pop-ups, and lines of Godling's mind that quote one are hidden; a name with no account any more is "Someone"."""
+    lead, entries, acts = tracks.get("lead") or [], tracks.get("entries") or [], tracks.get("acts") or []
+    try:
+        start = datetime.fromtimestamp(int(tracks["from"]) / 1000, dt_timezone.utc) - timedelta(days=2)
+        end = datetime.fromtimestamp(int(tracks["to"]) / 1000, dt_timezone.utc) + timedelta(days=1)
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False}
+    hidden = set(Note.objects.filter(status=Note.HIDDEN, created__range=(start, end)).values_list("text", flat=True))
+    refs = [a["ref"] for a in acts if a.get("kind") == "note" and type(a.get("ref")) is int]
+    by_id = Note.objects.in_bulk(refs)
+    names = set(get_user_model().objects.filter(username__in={a.get("name") for a in acts})
+                .values_list("username", flat=True))
+    kept = []
+    for a in acts:
+        a = dict(a)
+        note = by_id.get(a.pop("ref", None))
+        if a.get("kind") == "note" and (note and note.status == Note.HIDDEN or a.get("text") in hidden):
+            continue
+        if a.get("name") not in names:
+            a["name"] = "Someone"
+        kept.append({**a, "noteId": note.pk} if note else a)
+    for e in lead + entries:
+        for key in ("text", "thought", "needs"):
+            if hidden and any(h in str(e.get(key) or "") for h in hidden):
+                e[key] = HIDDEN_NOTE if key == "text" else "…"
+    return {**tracks, "acts": kept}
+
+
+@require_GET
+def api_replay(request, what):
+    """The island's past (ADR-016): anyone may watch it all (D1). The panel reads it from the run; the site moderates
+    what it says about viewers. Chunks never pass through here: Caddy serves them from the runs volume, or the browser
+    fetches them from object storage (GODLING_REPLAY_URL)."""
+    if what not in REPLAY_PARTS:
+        raise Http404
+    query = urllib.parse.urlencode({k: request.GET[k] for k in ("from", "to") if k in request.GET})
+    answer = relay("GET", f"/api/replay/{what}" + (f"?{query}" if query else ""))
+    if answer is PANEL_DOWN:
+        return JsonResponse({"ok": False, "text": "The island's past is out of reach. Try again in a moment."}, status=503)
+    if what == "index" and isinstance(answer, dict):
+        answer["chunks"] = answer.get("chunks_url") or settings.GODLING_REPLAY_URL  # the bucket's, or Caddy's
+    elif what == "tracks" and isinstance(answer, dict):
+        answer = moderate_past(answer)
+    return JsonResponse(answer, safe=False)
 
 
 @ensure_csrf_cookie

@@ -17,6 +17,7 @@ import { createBlasts } from './blast.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createAim } from './aim.js'
+import { createReplay } from './replay.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -574,6 +575,7 @@ export function createRenderer(ctx) {
       if (data.type === 'godling-camera') cameraWish = data.mode === 'free' ? 'free' : 'follow'
       else if (data.type === 'godling-key') freeCam.key(String(data.code), Boolean(data.down))
       else if (data.type === 'godling-aim') (data.power ? aim.start(String(data.power)) : aim.stop())
+      else if (data.type === 'godling-replay') replay?.command(data)
     })
   }
 
@@ -599,6 +601,14 @@ export function createRenderer(ctx) {
   // The runtime serves asset://name.glb from the folder it puts in each entity's model_url: learn it from one of them.
   let assetBase = null
   const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
+  // The island's past, when the screen asks for it (ADR-016): its frames go into the same buffer the live ones do, so
+  // the camera follows Godling in replay as it does live.
+  const replay = embedded ? createReplay({
+    onFrame: (obs) => stateBuffer.push(obs),
+    onReset: () => stateBuffer.clear(),
+    tell: tellScreen,
+    assetBase: () => assetBase,
+  }) : null
   const bubbles = createBubbles(scene, models, resolveAsset)
   const instancer = createInstancer(scene)
   const kit = createPartKit(onMaterial)
@@ -1153,6 +1163,14 @@ export function createRenderer(ctx) {
     },
 
     onState(state) {
+      if (replay?.active) { // the past is playing: the live stream waits (ADR-016)
+        replay.step()
+        const now = performance.now()
+        const dt = Math.min((now - lastStateMs) / 1000, 0.05)
+        lastStateMs = now
+        if (latestObs) draw(stateBuffer.interpolated() || latestObs, dt)
+        return
+      }
       const captureMeta = state && typeof state === 'object' && state.__mesaCaptureMeta && typeof state.__mesaCaptureMeta === 'object'
         ? state.__mesaCaptureMeta
         : null
@@ -1180,6 +1198,7 @@ export function createRenderer(ctx) {
 
     // Between states, keep animating (the sea, clouds and walk cycle) from the interpolated snapshots.
     onFrame({ dt }) {
+      replay?.step()
       if (!latestObs) return
       lastStateMs = performance.now()
       draw(stateBuffer.interpolated() || latestObs, Math.min(Math.max(dt, 0), 0.05))

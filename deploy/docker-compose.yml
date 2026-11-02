@@ -36,6 +36,8 @@ services:
       # No slash after /island: the world serves its page under the base path at /island exactly.
       GODLING_VIEW_URL: https://${GODLING_DOMAIN}/island?spectator_token=${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
       GODLING_RUN_DIR: /runs/live
+      # Where browsers fetch replay chunks (ADR-016): Caddy's /replay, unless the island uploads them to a bucket.
+      GODLING_REPLAY_URL: ${GODLING_REPLAY_URL:-/replay}
       GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
       GODLING_STRIPE_WEBHOOK_SECRET: ${GODLING_STRIPE_WEBHOOK_SECRET:-}
       GODLING_FROM_EMAIL: ${GODLING_FROM_EMAIL:-Godling <noreply@localhost>}
@@ -65,6 +67,16 @@ services:
       GODLING_PANEL_KEY: ${GODLING_PANEL_KEY}
       GODLING_RUN_DIR: /runs/live
       GODLING_MIND_ARGS: ${GODLING_MIND_ARGS:-}
+      # Replays (ADR-016): raw recordings kept this many days; and, to keep the packed chunks in object storage too,
+      # an S3-compatible bucket (Cloudflare R2, Hetzner, Amazon S3). Empty bucket: chunks stay in the runs volume.
+      GODLING_REPLAY_RAW_DAYS: ${GODLING_REPLAY_RAW_DAYS:-3}
+      GODLING_REPLAY_BUCKET: ${GODLING_REPLAY_BUCKET:-}
+      GODLING_REPLAY_ENDPOINT: ${GODLING_REPLAY_ENDPOINT:-}
+      GODLING_REPLAY_KEY_ID: ${GODLING_REPLAY_KEY_ID:-}
+      GODLING_REPLAY_SECRET: ${GODLING_REPLAY_SECRET:-}
+      GODLING_REPLAY_PUBLIC_URL: ${GODLING_REPLAY_PUBLIC_URL:-}
+      GODLING_REPLAY_PREFIX: ${GODLING_REPLAY_PREFIX:-}
+      GODLING_REPLAY_REGION: ${GODLING_REPLAY_REGION:-auto}
     volumes:
       - runs:/runs
 
@@ -78,6 +90,7 @@ services:
       GODLING_DOMAIN: ${GODLING_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - runs:/runs:ro  # replay chunks (ADR-016)
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

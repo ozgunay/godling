@@ -1,5 +1,6 @@
 """The screen behind accounts: anyone watches; powers cost credits and go to the panel as the signed-in account; notes
 are kept and can be reported, and hidden ones vanish from every screen."""
+import time
 from unittest import mock
 
 from django.test import Client, TestCase, override_settings
@@ -9,6 +10,7 @@ from apps.credits.models import Entry, Power, PowerCall
 from apps.notes.models import Note, Report
 from apps.rules import words
 from apps.rules.models import BlockedWord, Rules
+from apps.screen.views import PANEL_DOWN
 from apps.users.models import User
 
 PANEL_STATUS = {"world": True, "watching": 3, "popups": [], "view": "http://localhost:8080/?spectator_token=t"}
@@ -255,3 +257,56 @@ class ScreenTests(TestCase):
         strict = Client(enforce_csrf_checks=True)
         strict.force_login(make_user("ozzy"))
         self.assertEqual(strict.post("/api/power", {"power": "Stone"}, content_type="application/json").status_code, 403)
+
+
+class ReplayTests(TestCase):
+    """The island's past (ADR-016): anyone watches it all; what it says of viewers is looked up when served."""
+
+    def setUp(self):
+        self.answers = {}
+
+        def fake_relay(method, path, body=None):
+            return self.answers.get(path.split("?")[0], {"ok": False})
+
+        patcher = mock.patch("apps.screen.views.relay", side_effect=fake_relay)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @override_settings(GODLING_REPLAY_URL="https://replay.example.org/godling")
+    def test_the_index_names_where_the_chunks_are(self):
+        self.answers["/api/replay/index"] = {"format": 1, "segments": [{"id": "a", "start": 1, "end": 2}], "chunks": "replay"}
+        index = self.client.get("/api/replay/index").json()
+        self.assertEqual(index["chunks"], "https://replay.example.org/godling")
+        self.assertEqual(index["segments"][0]["id"], "a")
+        self.answers["/api/replay/index"]["chunks_url"] = "https://bucket.example.org/island"
+        self.assertEqual(self.client.get("/api/replay/index").json()["chunks"], "https://bucket.example.org/island")
+
+    def test_marks_and_sky_pass_through_and_nothing_else_is_asked(self):
+        self.answers["/api/replay/marks"] = [{"t": 5, "m": "rain"}]
+        self.assertEqual(self.client.get("/api/replay/marks?from=0&to=10").json(), [{"t": 5, "m": "rain"}])
+        self.assertEqual(self.client.get("/api/replay/chunks").status_code, 404)
+
+    def test_hidden_notes_and_gone_accounts_leave_the_past(self):
+        mara = make_user("mara")
+        kept = Note.objects.create(author=mara, text="hello island")
+        hidden = Note.objects.create(author=mara, text="buy cheap gold", status=Note.HIDDEN)
+        now = int(time.time() * 1000)
+        self.answers["/api/replay/tracks"] = {
+            "format": 1, "from": now - 60_000, "to": now, "lead": [],
+            "entries": [{"time": now / 1000, "kind": "event", "text": 'A paper glider drifted down. It reads: "buy cheap gold"'},
+                        {"time": now / 1000, "kind": "decision", "thought": "The note says buy cheap gold", "needs": "logs"}],
+            "acts": [{"time": now / 1000, "id": 1, "kind": "note", "name": "mara", "text": "hello island", "ref": kept.pk},
+                     {"time": now / 1000, "id": 2, "kind": "note", "name": "mara", "text": "buy cheap gold", "ref": hidden.pk},
+                     {"time": now / 1000, "id": 3, "kind": "power", "name": "gone_viewer", "power": "Stone", "text": "x"}]}
+        tracks = self.client.get(f"/api/replay/tracks?from={now - 60_000}&to={now}").json()
+        self.assertEqual([a["id"] for a in tracks["acts"]], [1, 3])
+        self.assertEqual(tracks["acts"][0]["noteId"], kept.pk)
+        self.assertNotIn("ref", tracks["acts"][0])
+        self.assertEqual(tracks["acts"][1]["name"], "Someone")
+        self.assertEqual(tracks["entries"][0]["text"], "A note drifted down; moderators have hidden it.")
+        self.assertEqual(tracks["entries"][1]["thought"], "…")
+        self.assertEqual(tracks["entries"][1]["needs"], "logs")
+
+    def test_the_past_out_of_reach_says_so(self):
+        with mock.patch("apps.screen.views.relay", return_value=PANEL_DOWN):
+            self.assertEqual(self.client.get("/api/replay/index").status_code, 503)
