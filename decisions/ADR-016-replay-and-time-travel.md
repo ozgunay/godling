@@ -228,7 +228,7 @@ Taken as recommended: D1 everyone, all the history; D2 the browser plays static 
   - `python3 -m godling.replay check <run>` compares random replayed moments with the raw recording.
 - **The guest panel** serves `/api/replay/index`, `/tracks`, `/marks` and `/sky`, and `/replay/chunks/…`, and keeps what viewers did for replays (`replay/acts/`).
 - **The site** relays the same endpoints (`apps.screen.views.api_replay`). On the way it hides notes hidden by moderation, and lines of Godling's mind that quote one, and shows names whose account is gone as "Someone".
-- **Caddy** serves `/replay/chunks/*` straight from the runs volume, cached for good. The island image gets `zstd` and `python3-boto3`.
+- **Caddy** serves `/replay/chunks/*` straight from the runs volume, cached for good, on the island's own origin (ADR-014), where the page that plays them lives. The site's index names that address (`GODLING_REPLAY_URL`), or the bucket's when the packer uploads. The island image gets `zstd` and `python3-boto3`.
 - **The island's page** (`world/renderer/src/replay.js`) plays the chunks itself when the screen asks. Its frames go into the same buffer as the live ones, so the camera follows Godling in the past as it does live. The live stream stays connected, so going live is instant.
 - **The viewers' screen** (`world/viewer/replay.js`):
   - Rewind under the live badge; the badge then says "Replay".
