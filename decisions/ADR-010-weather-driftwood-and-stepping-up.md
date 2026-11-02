@@ -95,3 +95,19 @@ On a test world with short timings: rain at 30 s, night at 40 s, driftwood every
 | Gate | from a step block, laid a log across two upright logs at 8.75: a gate 7.5 high. It then stepped down and walked round |
 | Under the gate | posts on two sides, the step behind and the lintel overhead counted as "enclosed": out of the rain, not cold, pace back to 5, drying (99 → 92%) and healing (86.9 → 88) |
 | Back in the open | soaked, cold and slowed again |
+
+## After night run n8: shelter that never sheltered
+The art session analysed n8 (stopped after 6 h 15 min). Godling was never once out of the rain, and the cold made it faint 5 times, although it thought about shelter constantly (8,528 mentions of roof, hut or shelter) and its own `shelter_wait` reported success 119 of 130 times. Three causes:
+- **Its shelter test could not fail.** `shelter_wait` was "walk there, wait 30 s, wait 30 s". Walking and waiting succeed, and their reports never said whether it was still in the rain.
+- **Its hut roof was too low.** It reasoned that an underside 5.0 up was "the lowest roof I can stand under, since I'm 5 tall". The body is exactly 5.0 tall and needs more room than that, so it always stopped beside the roof. That also explains much of why the world had to free it from inside pieces 36 times.
+- **The body could not walk under any roof.** `walk_to` treated a spot under a roof as "on top of" the roof, which it cannot climb.
+
+Fixed:
+- **Walking and waiting say how the weather finds the body there** when it rains or the body is cold: "out in the rain with nothing over your head, and cold", "under a roof, out of the rain", or "under a roof with walls round you, out of the rain and the cold".
+- **Walking under something overhead that is too low says so:** "Log_4 is overhead there with its underside 5.0 up, too low for you to stand under (you are 5 tall)".
+- **A roof over the body's own floor is something to walk under, not to climb.**
+- **The mind is told the body fact:** to stand under something it needs more room than its own height; an underside two blocks up is too low.
+
+Tested live, in rain:
+- **A log across two 2-block stacks:** "too low … out in the rain … and cold".
+- **A log across two 3-block stacks** (laid from a step): the body walked under it, and both the walk and the wait reported "under a roof with walls round you, out of the rain and the cold".

@@ -91,6 +91,20 @@ def _orientation(turn, upright):
     return (", stood on end" if upright else "") + (", turned a quarter round" if turn else "")
 
 
+def _weather_here(snap):
+    """How the weather finds the body where it now stands, when it rains or the body is cold (ADR-010). Walking and
+    waiting say it, so a step meant to keep dry or warm shows whether it did: run n8's own shelter_wait reported
+    success 119 times, and not once was the body out of the rain."""
+    if snap.rain < 0.3 and not snap.cold:
+        return ""
+    if snap.sheltered == "enclosed":
+        return "; here you are under a roof with walls round you, out of the rain and the cold"
+    if snap.sheltered == "roof":
+        return "; here you are under a roof, out of the rain" + (", but still cold" if snap.cold else "")
+    return ("; here you are out in the rain with nothing over your head" if snap.rain >= 0.3
+            else "; here you have nothing over your head") + (", and cold" if snap.cold else "")
+
+
 class _Box:
     """Where a piece is about to lie: enough of an Entity for `_stand_point(avoid=...)`."""
 
@@ -713,7 +727,12 @@ class Skills:
             rise = max(covering, key=lambda t: t.top) if covering else None
         else:  # something built there, higher than a step up from here (a loose stone is just in the way)
             top, part = snap.surface(x, z)
-            if part is not None and part.movable and top > level + 1.0:
+            floor = snap.surface(x, z, below=level + STEP)[0]
+            overhead = (part is not None and floor is not None and abs(floor - level) < 0.3
+                        and part.pos[1] - part.size[1] / 2 - level > STEP)
+            # A roof or a lintel over our own floor is something to walk under, not to climb (run n8's body never got
+            # under one: it was told the spot was "on top of" the roof). Too low to stand under is said further on.
+            if part is not None and part.movable and top > level + 1.0 and not overhead:
                 rise, height = part, top
         if rise is not None or ground > level + 0.5:
             mesa = rise.name if rise else "a mesa"
@@ -758,9 +777,17 @@ class Skills:
             hx, hz = e.size[0] / 2 + 1.5, e.size[2] / 2 + 1.5
             exits = [(e.pos[0] + hx, z), (e.pos[0] - hx, z), (x, e.pos[2] + hz), (x, e.pos[2] - hz)]
             x, z = min(exits, key=lambda p: (round(math.hypot(p[0] - x, p[1] - z), 1), hdist(snap.me, (p[0], 0, p[1]))))
-            note = f"; stopped beside {e.name} instead of walking into it"
+            bottom = e.pos[1] - e.size[1] / 2
+            under = bottom - level
+            beneath = snap.surface(e.pos[0], e.pos[2], below=bottom + 0.05)[0]  # what it rests on, if anything
+            if under > STEP and (beneath is None or bottom - beneath > STEP):
+                # Overhead with open floor beneath, but lower than the body is tall (run n8 built its hut roof so).
+                note = (f"; {e.name} is overhead there with its underside {under:.1f} up, too low for you to stand under "
+                        f"(you are {BODY_HEIGHT:g} tall), so you stopped beside it")
+            else:
+                note = f"; stopped beside {e.name} instead of walking into it"
         snap = self._move(x, z)
-        return Result(True, "walk_to", f"walked to ({snap.me[0]:.1f}, {snap.me[2]:.1f}){note}")
+        return Result(True, "walk_to", f"walked to ({snap.me[0]:.1f}, {snap.me[2]:.1f}){note}" + _weather_here(snap))
 
     def _step_up(self, snap, x, z, top):
         """Walk to the foot of what stands one block higher at (x, z) and step up onto it, at the edge nearest us.
@@ -1487,9 +1514,10 @@ class Skills:
 
     def skill_wait(self, seconds):
         end = time.time() + max(1.0, min(30.0, float(seconds)))
+        snap = None
         while time.time() < end:
             time.sleep(1.0)
-            self._observe()
+            snap = self._observe()
             self.steady()
             self.glance()
-        return Result(True, "wait", f"waited {seconds}s")
+        return Result(True, "wait", f"waited {seconds}s" + _weather_here(snap or self._observe()))
