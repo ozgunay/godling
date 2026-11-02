@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from godling.attention import Attention  # noqa: E402
 from godling.learned import SkillLibrary  # noqa: E402
 from godling.llm import LLM, load_api_key  # noqa: E402
+from godling.discovery import Discovery  # noqa: E402
 from godling.memory import NativeMemory  # noqa: E402
 from godling.mind import Mind  # noqa: E402
 from godling.skills import Interrupted, Skills  # noqa: E402
@@ -105,10 +106,12 @@ def main():
         library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
                         walk_speed=args.walk_speed)
-        attention = Attention(memory, busy=lambda: skills.busy, log=log)
+        discovery = Discovery(run / "memory" / "discovery.json")  # the island as far as Godling has seen it
+        attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
-        mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda)
+        mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
+                    discovery=discovery)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(server, hindsight)
         raise

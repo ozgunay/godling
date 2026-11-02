@@ -10,6 +10,7 @@ import json
 import time
 
 from .learned import SkillError
+from .discovery import SIGHT
 from .world import CUBE, hdist
 
 ANSWER_SHAPE = {
@@ -53,13 +54,16 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
 
 
-def island_map(snap, half=150, step=10):
+def island_map(snap, discovery=None, half=150, step=10):
     """A small map of the island for the mind (ADR-007): where the beach, the grass and the rock are. It knew only
     coordinates, and walked into the sea and drew lines across the grass looking for the beach (test run c1)."""
     rows = []
     for z in range(half, -half - 1, -step):
         row = []
         for x in range(-half, half + 1, step):
+            if discovery is not None and not discovery.knows_ground(x, z):
+                row.append("?")
+                continue
             top, e = snap.surface(x, z)
             if top is None:
                 row.append("~")
@@ -88,8 +92,9 @@ def _fmt_pos3(p):
 
 
 class Mind:
-    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True):
+    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None):
         self.llm = llm
+        self.discovery = discovery  # what Godling has seen of the island; None: it knows everything (ADR-008)
         self.memory = memory
         self.soul = soul
         self.skills = skills
@@ -103,12 +108,15 @@ class Mind:
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
         self.think_s = None  # running estimate of how long a plan takes to think up
 
+    def _knows(self, thing):
+        return self.discovery is None or self.discovery.knows(thing)
+
     # ---- prompts ----------------------------------------------------------------------
     def system_prompt(self, snap):
         body = "\n".join(f"- {name}({', '.join(f'{k}: {v}' for k, v in args.items())}): {does}"
                          for name, (args, does) in self.skills.offered.items())
         learned = self.library.describe() or "(none yet)"
-        marks = snap.landmarks()
+        marks = [e for e in snap.landmarks() if self._knows(e)]
         lines = [f"- {e.name}: centre {_fmt_pos(e.pos)}, top at height {e.top:.1f}, footprint {e.size[0]:.0f} x {e.size[2]:.0f}"
                  for e in marks if e.role != "Tree"]
         trees = sorted((e for e in marks if e.role == "Tree"), key=lambda e: (e.name.split("_")[0], int(e.name.split("_")[-1])
@@ -154,8 +162,9 @@ Everything else about the world, and how to build well, is yours to discover.
 ## Fixed landmarks
 {landmarks}
 
-## The island from above (north up; one character is 10 units; ~ sea, . sand, , grass, ^ rock, Q quarry, R raft)
-{island_map(snap)}
+## The island as far as you have seen it (north up; one character is 10 units; ~ sea, . sand, , grass, ^ rock,
+Q quarry, R raft, ? not seen yet). You know only what you have been near: walk to see more.
+{island_map(snap, self.discovery)}
 
 ## How to answer
 {plan_rule}
@@ -171,7 +180,7 @@ thought and in that project's intention."""
         held = snap.held()
         protected = self.memory.protected_cubes()
         stacked = {n for _, names in snap.stacks() for n in names}
-        loose = sorted((e for e in snap.movables() if e.name not in stacked and e is not held),
+        loose = sorted((e for e in snap.movables() if e.name not in stacked and e is not held and self._knows(e)),
                        key=lambda e: hdist(e.pos, snap.me))
         loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" [kept]" if e.name in protected else "")
                               for e in loose[:LOOSE_IN_VIEW])
@@ -181,7 +190,7 @@ thought and in that project's intention."""
         kept = "; ".join(f"{title} at {s['where']} ({len(s['cubes'])} cubes)" for title, s in self.memory.state["structures"].items()) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
         cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in snap.stacks() for n in names[-1:]]
-        cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25]
+        cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]
         cue_entities += [n for ev in events for n in ev.get("entities", [])]
         cue_text = self.last_outcome + " " + " ".join(p["goal"] for p in doing or [])
         recalled = self.memory.recall_for(cue_entities, cue_text)
@@ -206,9 +215,9 @@ thought and in that project's intention."""
         if fires:
             lines.insert(4, "Fires burning: " + ", ".join(f"{e.name} {_fmt_pos(e.pos)}" for e in fires) + ".")
         fish = sorted((e for e in snap.entities.values() if e.name.startswith("Fish_")), key=lambda e: hdist(e.pos, snap.me))
-        if fish and hdist(fish[0].pos, snap.me) < 40:  # fish are not things to pick up, so say where they swim
+        if fish and hdist(fish[0].pos, snap.me) < SIGHT:  # fish are not things to pick up, so say where they swim
             lines.insert(4, "Fish swimming in the shallows nearest you: "
-                         + ", ".join(f"{e.name} {_fmt_pos(e.pos)}" for e in fish[:5] if hdist(e.pos, snap.me) < 40) + ".")
+                         + ", ".join(f"{e.name} {_fmt_pos(e.pos)}" for e in fish[:5] if hdist(e.pos, snap.me) < SIGHT) + ".")
         strokes = sorted((e for e in snap.entities.values() if e.name.startswith("Mark_") and e.attrs.get("Stroke")),
                          key=lambda e: int(e.name.split("_")[1]))
         if strokes:  # what it wrote in the sand, so it can read it back

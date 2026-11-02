@@ -46,8 +46,9 @@ def _sky_arrival(kind, pieces):
 
 
 class Attention:
-    def __init__(self, memory, busy=lambda: set(), log=None):
+    def __init__(self, memory, busy=lambda: set(), log=None, discovery=None):
         self.memory = memory
+        self.discovery = discovery  # what Godling has seen of the island grows with every look (ADR-008)
         self.busy = busy  # objects our own skills are handling right now: their movement is not news
         self.log = log or (lambda **kw: None)
         self.prev = None
@@ -59,6 +60,8 @@ class Attention:
         """Called by the skills on every observation; raises Interrupted for salient events."""
         if not snap.has_world:
             return
+        if self.discovery is not None:
+            self.discovery.see(snap)
         if self.prev is not None:
             for text, salience, entities, extra in self._diff(self.prev, snap):
                 event = {"text": text, "salience": salience, "entities": entities, "tick": snap.tick, **extra}
