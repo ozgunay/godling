@@ -181,6 +181,7 @@ class Snapshot:
         self.time_of_day = clock.attrs.get("TimeOfDay") if clock else None  # hours, 0-24 (main.lua day and night)
         self.rain = (clock.attrs.get("Rain") or 0) if clock else 0  # 0 dry .. 1 pouring
         self.fog = (clock.attrs.get("Fog") or 0) if clock else 0  # 0 clear .. 1 thick (ADR-010)
+        self.wind = math.hypot(clock.attrs.get("WindX") or 0, clock.attrs.get("WindZ") or 0) if clock else 0  # 0 .. 1 gale
         self._held, self._held_known = None, False
 
     @property
