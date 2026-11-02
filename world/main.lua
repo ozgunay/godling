@@ -4203,8 +4203,10 @@ function sky.meteor.blast(fall, top)
     blast:SetAttribute("Radius", m.THROW)
     mark(blast)
     table.insert(skyFlashes, { part = blast, gone = os.clock() + m.BLAST_SECONDS })
+    -- The crater lies on the ground, its foot on it: crater.glb's base is the ground (the island is not dug), its
+    -- scorched floor 0.03 above. Sunk 0.2 deeper, the sand hid the floor and only the rim showed.
     local ground = sky.meteor.groundAt(c.X, c.Z)
-    local crater = skyMarker("Crater_" .. n, Vector3.new(8, 0.6, 8), Vector3.new(c.X, ground + 0.1, c.Z),
+    local crater = skyMarker("Crater_" .. n, Vector3.new(8, 0.6, 8), Vector3.new(c.X, ground + 0.3, c.Z),
         Color3.fromRGB(40, 34, 30), "Crater")
     crater:SetAttribute("ModelUrl", m.CRATER_MODEL)
     mark(crater)
