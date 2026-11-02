@@ -94,6 +94,11 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - **Sand writing.** `SandMark` is drawn at half height with a dark floor and light rims, so a stroke reads as a groove in the sand.
     - **Pieces without models.** `Coconut`, `Volleyball` (with seams), a `Tool` with `ToolKind` "Spear", and `Catch` (browned when `Cooked`) are drawn procedurally until a `ModelUrl` is set.
     - **Ball parts.** Their primitive is `ball` and they draw round.
+  - **Godling's animations** (`models.js`, `createCharacterController`):
+    - `Gesture` (a clip name) and `Gestures` (a counter) on the player: each new count plays that clip once at its own speed, cutting any one-shot in progress. It is not played on first sight.
+    - A model without the clip keeps the older counters: `Reaches` plays PickUp and `Strikes` plays Strike.
+    - Jump and Fall loop while the body is jumping or falling, if the model has them. Climb loops while `Climbing` is true.
+    - `__godlingRenderer.animations()` lists each character's one-shot and clip weights, for checking a new model.
   - **Models** (`models.js`): each loads once.
     - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
     - Animated ones (Godling) get their own mixer. The clips follow the attributes above, and Walk plays at the body's real speed.
