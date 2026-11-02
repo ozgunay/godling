@@ -13,6 +13,7 @@ import { bubbleSheet, createBubbles } from './bubble.js'
 import { createRain } from './rain.js'
 import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
+import { createWind, swayMaterial } from './wind.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -468,6 +469,7 @@ export function createRenderer(ctx) {
   const fish = createFishLayer(scene)
   // The world's weather (ADR-010): the Clock's Rain, 0 to 1, eased in and out here. `?rain=1` forces it, to look.
   const rain = createRain(scene, tier)
+  const wind = createWind(params) // bends the rain, sways the palms
   const forcedRain = params.has('rain') ? Number(params.get('rain')) : NaN
   let worldRain = Number.isFinite(forcedRain) ? forcedRain : 0
   let rainNow = worldRain
@@ -540,8 +542,13 @@ export function createRenderer(ctx) {
   // (patched Clawblox exports trackAssetLoad; upstream keeps it private, and then models are simply untracked).
   let modelsArrived = 0
   const models = createModelLibrary({
-    onReady() {
+    onReady(url) {
       modelsArrived += 1
+      if (/palm\.glb(\?|$)/.test(url)) { // the palms sway in the wind
+        for (const part of models.get(url)?.parts || []) {
+          for (const material of [].concat(part.material)) swayMaterial(material, wind.uniforms)
+        }
+      }
     },
     onError(err, meta) {
       ctx.log('warn', 'Model load failed', { err: String(err), ...meta })
@@ -834,6 +841,7 @@ export function createRenderer(ctx) {
       if (Number.isFinite(hour)) worldHour = hour
       const rainFall = Number(entity.attributes?.Rain)
       if (Number.isFinite(rainFall) && !Number.isFinite(forcedRain)) worldRain = rainFall
+      if (entity.attributes?.WindX !== undefined) wind.read(entity.attributes)
       const mist = Number(entity.attributes?.Fog)
       if (Number.isFinite(mist) && !Number.isFinite(forcedFog)) worldFog = mist
       const quake = Number(entity.attributes?.Quake)
@@ -1035,7 +1043,7 @@ export function createRenderer(ctx) {
     sky.update(camera, elapsed)
     sea.update({ camera, time: elapsed, seaLevel, land, landKey, light })
     clouds.update({ camera, time: elapsed, sky, rain: rainNow })
-    rain.update({ rain: rainNow, time: elapsed, camera })
+    rain.update({ rain: rainNow, time: elapsed, camera, wind: wind.update(dt) })
     fires.update({ time: elapsed, camera, daylight: sky.daylight, night: sky.night })
     fish.update(swimming, sea, elapsed)
     dust.update({ time: elapsed, daylight: sky.daylight })

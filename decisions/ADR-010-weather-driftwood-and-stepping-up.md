@@ -60,6 +60,12 @@ The persona is unchanged.
   - The mind notices "A ship is passing far out at sea, to the …" (salience 4) and "The ship has sailed out of sight".
   - Nothing comes of it yet.
 - **What the mind notices:** fog rolling in and lifting, fires going out ("the rain put it out"), the ship, and the lightning (as a sky event).
+- **Wind** (added after you saw the screenshots, and asked how games do it).
+  - The world keeps a wind that veers slowly: a breeze (0.25) in fair weather, 0.55 in rain, a gale (1.0) in a storm. The Clock carries `WindX`/`WindZ`. The wind moves nothing in the world; the mind feels "A storm wind is blowing".
+  - The renderer (`wind.js`) eases it in and adds gusts, wilder in a gale.
+  - It sways the palms as games sway foliage. In the vertex shader the bend grows with height (the square of it), so trunks stay rooted and crowns lean up to 2.4 in a gale. A slow gust wave sweeps across the grove with position, and the fronds flutter faster on top.
+  - The rain streaks stretch along each drop's velocity, so the wind slants them. They drive in at nearly 40° in a storm.
+  - The streaks are longer, brighter and denser, so the rain shows by day. `?wind=1` forces a gale.
 
 ### Driftwood
 - **A log washes up** every 3 minutes, on open sand a little up the beach from the water and clear of other pieces, lying along the shore. It stops while 6 lie on the beach.

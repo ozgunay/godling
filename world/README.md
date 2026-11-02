@@ -144,6 +144,10 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - In a quake, a piece rocking where it lies raises a little dust now and then. One sliding fast leaves a trail.
     - The stream doesn't say which parts are anchored. So every piece up to 12 long is watched, and only a stopped fall or movement during a quake makes dust; nothing makes dust over the sea.
     - The puffs are a fixed pool (48, 96 or 160 by tier), drawn in one call.
+  - **Wind** (`wind.js`, ADR-010): the Clock's `WindX`/`WindZ`, with gusts added here.
+    - It slants the rain along each drop's velocity.
+    - It sways the palms in the vertex shader: the bend grows with height, a gust wave sweeps the grove, and the fronds flutter.
+    - `?wind=1` forces a gale.
   - **Terrain** (`terrain.js`): Clawblox voxel terrain, drawn as blocks, when the patched server sends it.
   - **Checks.**
     - `?stats=1` shows frame rate, draw calls, triangles and the tier.
