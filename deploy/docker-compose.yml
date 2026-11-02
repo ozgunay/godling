@@ -16,7 +16,8 @@ x-site-env: &site-env
   GODLING_PANEL_URL: http://island:8081
   GODLING_PANEL_KEY: ${GODLING_PANEL_KEY:?set GODLING_PANEL_KEY in .env}
   # The island on its own origin (ADR-014). No slash after /island: the world serves its page there exactly.
-  GODLING_VIEW_URL: https://${GODLING_ISLAND_DOMAIN:?set GODLING_ISLAND_DOMAIN in .env}/island?spectator_token=${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+  # No token in the island's public link: Caddy and the relay hold it (ADR-015).
+  GODLING_VIEW_URL: https://${GODLING_ISLAND_DOMAIN:?set GODLING_ISLAND_DOMAIN in .env}/island
   GODLING_RUN_DIR: /runs/live
   GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
   GODLING_STRIPE_WEBHOOK_SECRET: ${GODLING_STRIPE_WEBHOOK_SECRET:-}
@@ -94,7 +95,12 @@ services:
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
       WORLD_BASE_PATH: /island
-      WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}
+      WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+      # The stream relay (relay/, ADR-015; island-start: --relay 8082), which Caddy sends the island's stream to. It
+      # takes sockets only from the island's own page, a few per viewer address (Caddy's X-Forwarded-For).
+      RELAY_LISTEN: 0.0.0.0:8082
+      RELAY_ORIGINS: https://${GODLING_ISLAND_DOMAIN}
+      RELAY_TRUSTED_PROXIES: "1"
       # Reachable by Caddy inside Compose's network. The world then insists on a join key, which the launcher makes
       # for every start (patches/v2, ADR-014); Caddy passes only the watching side on.
       WORLD_HOST: 0.0.0.0
@@ -114,6 +120,7 @@ services:
     environment:
       GODLING_DOMAIN: ${GODLING_DOMAIN}
       GODLING_ISLAND_DOMAIN: ${GODLING_ISLAND_DOMAIN}
+      GODLING_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}  # handed to the world on the page's own requests
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

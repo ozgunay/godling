@@ -4,6 +4,8 @@
 #                             agent API (join, input, observe, reset, chat, snapshot…) is never reachable from outside.
 # The island is a page of its own origin inside the screen's frame, so nothing on it can reach the site's cookies or
 # act as a signed-in viewer, and only the site may frame it.
+# Its stream comes from the relay (ADR-015): one connection to the world, however many watch. The spectator token
+# stays on the server: Caddy hands it to the world, the relay holds its own, and the public link carries none.
 {$GODLING_DOMAIN} {
 	encode zstd gzip
 	reverse_proxy site:8000
@@ -16,9 +18,17 @@
 	header Referrer-Policy same-origin
 	header X-Content-Type-Options nosniff
 
-	@island path /island /island/ /island/ui /island/ui/* /island/spectate /island/spectate/ws /island/spectate/chat/messages /island/renderer/manifest /island/replay/info /island/renderer-files/* /island/assets/* /island/static/*
+	@stream path /island/spectate/ws
+	handle @stream {
+		reverse_proxy island:8082
+	}
+	# The page and what it fetches. Not /island/spectate: the page never asks for it, and each call would have the
+	# world build the whole island.
+	@island path /island /island/ /island/ui /island/ui/* /island/spectate/chat/messages /island/renderer/manifest /island/replay/info /island/renderer-files/* /island/assets/* /island/static/*
 	handle @island {
-		reverse_proxy island:8080
+		reverse_proxy island:8080 {
+			header_up X-Spectator-Token {$GODLING_SPECTATOR_TOKEN}
+		}
 	}
 	handle {
 		respond 404

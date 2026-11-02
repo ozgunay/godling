@@ -10,9 +10,10 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014). Six services:
 
 ## What the public can reach
 - **The site**, at `https://<domain>/`.
-- **The island's spectator page**, on its own origin: `https://<island domain>/island?spectator_token=…`. Only the site may frame it (`frame-ancestors`), and nothing on it can reach the site's cookies.
-  - Caddy passes only what watching needs: the page, its files, the spectator stream and chat. The world's agent API (`join`, `input`, `observe`, `reset`, `chat`, `snapshot`…) answers 404 from outside.
-  - Inside Compose's network the world still asks for its keys: joining takes the agent key the launcher makes at every start, and the snapshot takes the operator token (`patches/v2`, ADR-014). The spectator token, which every viewer's page carries, opens only the watching side.
+- **The island's spectator page**, on its own origin: `https://<island domain>/island`. Only the site may frame it (`frame-ancestors`), and nothing on it can reach the site's cookies.
+  - Caddy passes only what watching needs: the page, its files and chat to the world, and the stream to the relay (port 8082, ADR-015). The world's agent API (`join`, `input`, `observe`, `reset`, `chat`, `snapshot`…) and its whole-island `/spectate` answer 404 from outside.
+  - The stream relay is the world's one spectator: every viewer's socket is the relay's, from the island's own page only, a few per address. However many watch, the world works out its changes once.
+  - Inside Compose's network the world still asks for its keys: joining takes the agent key the launcher makes at every start, and the snapshot takes the operator token (`patches/v2`, ADR-014). The spectator token stays on the server: Caddy adds it to the page's requests, and the relay holds its own.
 - **Nothing else.** The guest panel (8081) is reachable only from the site and its worker, inside Compose's network, and only with `GODLING_PANEL_KEY`. Postgres and Redis are not published.
 
 ## Steps
