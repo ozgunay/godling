@@ -47,14 +47,14 @@ PALETTE = {  # as seen on screen (sRGB)
     "edge": dict(color=(0.9, 0.93, 0.96), roughness=0.2, metallic=0.9),
     "iron": dict(color=(0.4, 0.42, 0.47), roughness=0.35, metallic=0.8),
     # Stone colours are lighter than they look right here: the world's renderer uses filmic tone mapping,
-    # which darkens greys a lot, so mid greys came out charcoal in game.
-    "rock": dict(color=(0.76, 0.73, 0.68), roughness=0.85),
-    "rock_dark": dict(color=(0.63, 0.61, 0.58), roughness=0.85),
-    "fresh_cut": dict(color=(0.93, 0.89, 0.81), roughness=0.7),
-    # Granite is mottled and warm: a uniform pale blue-grey read as frosted glass in game, a "ghost box".
-    "granite": dict(color=(0.67, 0.65, 0.61), roughness=1.0),
-    "granite_dark": dict(color=(0.53, 0.51, 0.48), roughness=1.0),
-    "granite_light": dict(color=(0.79, 0.77, 0.72), roughness=1.0),
+    # which darkens greys a lot, so mid greys came out charcoal in game. Rock is painted per facet in vertex
+    # colours (rock_colours), these being its tones; the material names tag the faces until then.
+    "rock": dict(color=(0.74, 0.7, 0.63), roughness=0.9),
+    "rock_dark": dict(color=(0.62, 0.59, 0.54), roughness=0.9),
+    "rock_band": dict(color=(0.8, 0.72, 0.6), roughness=0.9),  # the warmer strata of the quarry
+    "fresh_cut": dict(color=(0.93, 0.89, 0.81), roughness=0.8),
+    "moss": dict(color=(0.47, 0.6, 0.3), roughness=0.9),
+    "cut_stone": dict(color=(0.78, 0.76, 0.71), roughness=0.9),
 }
 
 
@@ -128,6 +128,8 @@ def palm():
     spine = [Vector((lean * math.sin(0.5 * math.pi * (i / segments)) ** 1.3, 0, trunk_h * i / segments))
              for i in range(segments + 1)]
     radius = lambda t: 0.13 - 0.04 * t
+    light, scar = linear(PALETTE["palm_bark"]["color"]), linear(PALETTE["palm_bark_dark"]["color"])
+    trunk = None
     for i in range(segments):
         a, b = spine[i], spine[i + 1]
         axis = b - a
@@ -137,7 +139,19 @@ def palm():
         seg = bpy.context.active_object
         seg.rotation_mode = "QUATERNION"
         seg.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(axis.normalized())
-        parts.append(paint(seg, "palm_bark" if i % 2 else "palm_bark_dark"))  # faint ring scars
+        # Ring scars: each segment shades from pale bark at its foot to a darker scar under the next one, like
+        # the overlapping leaf bases of a real trunk (alternate pale and dark segments read as candy stripes).
+        if trunk is None:
+            trunk = _vertex_colours(seg.data, lambda co: scar if co.z > 0 else light, name="Col")
+            trunk.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.8
+        else:
+            attr = seg.data.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
+            for v in seg.data.vertices:
+                attr.data[v.index].color = (*(scar if v.co.z > 0 else light), 1.0)
+            seg.data.materials.append(trunk)
+        for poly in seg.data.polygons:
+            poly.use_smooth = True
+        parts.append(seg)
     parts.append(blob((0, 0, 0.05), 0.2, "palm_bark_dark", squash=0.4, segments=10, rings=5))  # the foot in the sand
     top = spine[-1]
     fronds = [(math.radians(k * 36), 1.75, 0.55, 0.95, "palm_leaf" if k % 2 else "palm_leaf_dark", 0.26)
@@ -579,7 +593,20 @@ def stump():
 def boulder_ball():
     """A heavy round rock for a 1.6 ball part: lumpy, with a few worn flat facets, but round enough to roll."""
     facets = [((0.62, 0, 0), (1, 0.2, 0.1)), ((0, -0.62, 0.1), (-0.2, -1, 0.3)), ((-0.3, 0.3, 0.55), (-0.4, 0.4, 1))]
-    return boulder((0, 0, 0.8), (0.82, 0.82, 0.8), 13.0, "rock_dark", cuts=facets, rough=0.8, cut_mat="rock")
+    rock = boulder((0, 0, 0.8), (0.82, 0.82, 0.8), 13.0, "rock_dark", cuts=facets, rough=0.8, cut_mat="rock")
+    rock_colours(rock, seed=13.0, moss=0.3)
+    return rock
+
+
+def stone_block(name, size, seed):
+    """A building stone: cut_stone with its chamfers worn pale, and a stronger tone per facet."""
+    block = cut_stone(name, size, seed)
+    block.data.materials.append(material("fresh_cut"))
+    for poly in block.data.polygons:
+        if max(abs(c) for c in poly.normal) < 0.95:  # a chamfer, not one of the six faces
+            poly.material_index = 1
+    rock_colours(block, seed=seed, shade=0.12, jitter=0.16)
+    return block
 
 
 def axe():
@@ -666,8 +693,9 @@ def ladder():
 
 
 def boulder(centre, radii, seed, mat_name, cuts=(), rough=1.0, cut_mat="fresh_cut", detail=3):
-    """A soft lumpy rock; each cut (point, normal) slices it flat and caps the cut (fresh, pale stone by default).
-    `detail` 3 is a big rock (320 faces), 2 a pebble (80)."""
+    """A lumpy rock; each cut (point, normal) slices it flat and caps the cut (fresh, pale stone by default).
+    `detail` 3 is a big rock (320 faces), 2 a pebble (80), 1 a small stone (20). Flat-shaded, so it reads as
+    chunky facets; the material names only tag the faces until rock_colours paints them."""
     bm = bmesh.new()
     bmesh.ops.create_icosphere(bm, subdivisions=detail, radius=1.0)
     offset = Vector((seed, seed * 0.37, seed * 0.71))
@@ -682,45 +710,99 @@ def boulder(centre, radii, seed, mat_name, cuts=(), rough=1.0, cut_mat="fresh_cu
         capped = bmesh.ops.holes_fill(bm, edges=edges, sides=0)["faces"]
         for f in capped:
             f.material_index = 1
-    mesh = bpy.data.meshes.new("Boulder")
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new("Boulder", mesh)
-    bpy.context.scene.collection.objects.link(obj)
+    obj = _mesh_object("Boulder", bm)
     obj.location = centre
-    mesh.materials.append(material(mat_name))
-    mesh.materials.append(material(cut_mat))
-    for poly in mesh.polygons:
-        poly.use_smooth = poly.material_index == 0
+    obj.data.materials.append(material(mat_name))
+    obj.data.materials.append(material(cut_mat))
+    for poly in obj.data.polygons:
+        poly.use_smooth = False
+    return obj
+
+
+def _slab(z0, z1, radii, seed, mat_name, sides=14, shift=(0.0, 0.0), face_at=None):
+    """One layer of a stratified outcrop: an irregular rounded footprint, straight-sided, its rims bevelled. With
+    face_at, its front (-Y) is quarried back flat to y = face_at: a sheer pale face, the bench above it."""
+    bm = bmesh.new()
+    offset = Vector((seed, seed * 0.61, 0.0))
+    ring = []
+    for k in range(sides):
+        a = 2 * math.pi * k / sides
+        r = 1 + 0.16 * noise.noise(Vector((math.cos(a), math.sin(a), 0)) * 1.4 + offset)
+        ring.append(bm.verts.new((shift[0] + radii[0] * r * math.cos(a), shift[1] + radii[1] * r * math.sin(a), z0)))
+    bottom = bm.faces.new(ring)
+    top = bmesh.ops.extrude_face_region(bm, geom=[bottom])
+    up = [v for v in top["geom"] if isinstance(v, bmesh.types.BMVert)]
+    bmesh.ops.translate(bm, verts=up, vec=(0, 0, z1 - z0))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    rims = [e for e in bm.edges if abs(e.verts[0].co.z - e.verts[1].co.z) < 1e-6]
+    bmesh.ops.bevel(bm, geom=rims, offset=min(0.12, (z1 - z0) * 0.25), segments=1, affect="EDGES")
+    for v in bm.verts:  # a little unevenness on the tops, so the ledges are not machined
+        if v.co.z > z1 - 0.2:
+            v.co.z += 0.05 * noise.noise(v.co * 1.9 + offset)
+    if face_at is not None:
+        geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+        cut = bmesh.ops.bisect_plane(bm, geom=geom, plane_co=(0, face_at, 0), plane_no=(0, -1, 0), clear_outer=True)
+        edges = [e for e in cut["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
+        for f in bmesh.ops.holes_fill(bm, edges=edges, sides=0)["faces"]:
+            f.material_index = 1
+    obj = _mesh_object("Slab", bm)
+    obj.data.materials.append(material(mat_name))
+    obj.data.materials.append(material("fresh_cut"))
+    return obj
+
+
+def cut_stone(name, size, seed, mat_name="cut_stone"):
+    """A cut stone block: chamfered edges, each face dressed into a few flat facets, and a chipped corner or two.
+    Every facet gets its own tone (rock_colours), so it reads as crisp stone. Dents only: it never pokes out of its
+    part. (A softly mottled block blurred into a "ghost box" in game.)"""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=Vector(size), verts=bm.verts)
+    bmesh.ops.bevel(bm, geom=bm.edges[:], offset=min(size) * 0.08, segments=1, affect="EDGES")
+    big = [f for f in bm.faces if f.calc_area() > min(size) ** 2 * 0.5]
+    bmesh.ops.subdivide_edges(bm, edges=list({e for f in big for e in f.edges}), cuts=1, use_grid_fill=True)
+    offset = Vector((seed, seed * 1.3, seed * 0.7))
+    half = Vector(size) / 2
+    for v in bm.verts:
+        n = noise.noise(v.co * 3.0 / min(size) + offset)
+        corner = sum(abs(v.co[i]) > half[i] * 0.85 for i in range(3)) == 3
+        chip = 0.1 if corner and noise.noise(v.co + offset) > 0.15 else 0.0  # a knocked corner
+        v.co -= v.normal * min(size) * (0.02 + 0.05 * max(0.0, n) + chip)
+    obj = _mesh_object(name, bm)
+    obj.data.materials.append(material(mat_name))
+    for poly in obj.data.polygons:
+        poly.use_smooth = False
     return obj
 
 
 def quarry():
-    """A rocky outcrop with freshly cut faces and rubble at its foot, shaped like its 10 x 5 x 7.5 part."""
-    # Cut planes only shave the outside of a rock: a quarried face where stone was taken, and a bench above it.
-    parts = [
-        boulder((0, 0.35, 1.45), (2.3, 1.8, 1.7), 1.0, "rock",
-                cuts=[((0, -1.45, 0), (0, -1, 0.05)), ((0, 0, 1.25), (0, -0.55, 1)), ((2.0, 0, 0), (1, -0.15, 0.1))]),
-        boulder((-1.8, -0.6, 0.85), (1.15, 1.05, 0.95), 4.0, "rock_dark", cuts=[((0, -0.8, 0), (-0.2, -1, 0.1))]),
-        boulder((1.85, -0.95, 0.75), (1.05, 0.95, 0.8), 7.0, "rock", cuts=[((0, 0, 0.6), (0.15, -0.3, 1))]),
-        boulder((0.3, 0.7, 2.85), (0.55, 0.5, 0.42), 9.0, "rock_dark"),
-    ]
-    rubble = [((-2.6, -1.9, 0.14), 0.2), ((-2.2, -2.3, 0.1), 0.13), ((-0.9, -2.2, 0.12), 0.17),
-              ((0.6, -2.35, 0.1), 0.14), ((2.5, -2.1, 0.13), 0.19), ((2.8, -1.5, 0.1), 0.12),
-              ((2.7, 1.0, 0.12), 0.16), ((-2.8, 0.8, 0.12), 0.17), ((-1.5, -2.45, 0.09), 0.11),
-              ((1.4, -2.2, 0.11), 0.15), ((-2.9, -0.6, 0.1), 0.13), ((0.0, -2.4, 0.08), 0.1)]
+    """A stratified rock outcrop, shaped like its 10 x 5 x 7.5 part: ledges of warm grey and tan rock with moss on
+    their tops, quarried at the front (-Y) into stepped benches with sheer, pale cut faces. Cut blocks and rubble
+    lie at its foot."""
+    # (bottom, top, radii, shift, front face): each layer sits a little into the one below, so no gap shows.
+    layers = [(0.0, 0.85, (2.95, 2.2), (0.0, 0.0), -1.75), (0.75, 1.6, (2.7, 2.0), (0.1, 0.12), -1.3),
+              (1.5, 2.3, (2.25, 1.7), (-0.1, 0.22), -0.8), (2.2, 2.9, (1.6, 1.25), (0.2, 0.3), None)]
+    parts = [_slab(z0, z1, radii, 3.0 + 5 * i, "rock_band" if i % 2 else "rock", shift=shift, face_at=face)
+             for i, (z0, z1, radii, shift, face) in enumerate(layers)]
+    rubble = [((-2.6, -2.0, 0.14), 0.2), ((-2.2, -2.4, 0.1), 0.13), ((1.6, -2.45, 0.12), 0.17),
+              ((0.6, -2.6, 0.1), 0.14), ((2.5, -2.0, 0.13), 0.19), ((2.8, -1.4, 0.1), 0.12),
+              ((2.7, 1.2, 0.12), 0.16), ((-2.9, 0.8, 0.12), 0.17), ((-1.1, -2.65, 0.09), 0.11)]
     for i, (centre, size) in enumerate(rubble):
         parts.append(boulder(centre, (size * 1.25, size, size * 0.85), 20.0 + i, "rock_dark" if i % 2 else "rock",
-                             cuts=[((0, 0, size * 0.45), (0.3, -0.4, 1))] if i % 3 == 0 else (), detail=2))
-    # Broken-off chunks at the foot of the face: what the quarry gives.
-    for i, (x, y, yaw) in enumerate([(-0.6, -1.95, 20), (0.35, -2.05, -15), (-0.1, -1.75, 50)]):
-        chunk = rough_block(f"Chunk{i}", (0.42, 0.36, 0.3), 30.0 + i, mat_name="fresh_cut")
-        chunk.location = (x, y, 0.15)
-        chunk.rotation_euler = (0, 0, math.radians(yaw))
-        parts.append(chunk)
+                             cuts=[((0, 0, size * 0.45), (0.3, -0.4, 1))] if i % 3 == 0 else (), detail=1))
+    # Blocks already cut: what the quarry gives.
+    for i, (x, y, z, yaw) in enumerate([(-0.55, -2.35, 0.2, 12), (0.45, -2.45, 0.2, -10), (-0.05, -2.3, 0.6, 30)]):
+        block = cut_stone(f"Block{i}", (0.42, 0.42, 0.4), 30.0 + i, mat_name="fresh_cut")
+        block.location = (x, y, z)
+        block.rotation_euler = (0, 0, math.radians(yaw))
+        parts.append(block)
     obj = join(parts, "Quarry")
+    rock_colours(obj, seed=2.0, moss=0.35)
+    # The quarry is cut into the south foot of the peak (world -Z, the model's +Y here): turn the working face there.
+    obj.rotation_euler = (0, 0, math.pi)
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
     # Stretch to the part's proportions, 10 x 5 x 7.5 (wide : tall : deep = 2 : 1 : 1.5), so the rock fills its
-    # collider instead of standing inside an invisible margin. The rocks are lumpy; 15-20% does not show.
+    # collider instead of standing inside an invisible margin.
     bpy.context.view_layer.update()
     dims = obj.dimensions.copy()
     obj.scale = (2.0 * dims.z / dims.x, 1.5 * dims.z / dims.y, 1.0)
@@ -728,55 +810,43 @@ def quarry():
     return obj
 
 
-def rough_block(name, size, seed, mat_name="granite"):
-    """A rough-cut stone: a bevelled box with chiselled, uneven faces and chipped edges."""
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    bmesh.ops.scale(bm, vec=Vector(size), verts=bm.verts)
-    bmesh.ops.bevel(bm, geom=bm.edges[:] + bm.verts[:], offset=min(size) * 0.1, segments=2, affect="EDGES",
-                    profile=0.6)
-    bmesh.ops.subdivide_edges(bm, edges=[e for e in bm.edges if e.calc_length() > min(size) * 0.35], cuts=3,
-                              use_grid_fill=True)
-    half = Vector(size) / 2
-    offset = Vector((seed, seed * 1.3, seed * 0.7))
-    for v in bm.verts:
-        n = noise.noise(v.co * 5.0 / min(size) + offset) + 0.5 * noise.noise(v.co * 13.0 / min(size) + offset)
-        v.co -= v.normal * min(size) * 0.045 * (1.2 + n)  # dents, never bulges: the stone stays inside its part
-        v.co = Vector((max(-half.x, min(half.x, v.co.x)), max(-half.y, min(half.y, v.co.y)),
-                       max(-half.z, min(half.z, v.co.z))))
-    mesh = bpy.data.meshes.new(name)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.scene.collection.objects.link(obj)
-    if mat_name == "granite":
-        granite(mesh, size, offset)
-    else:
-        mesh.materials.append(material(mat_name))
+def rock_colours(obj, seed=0.0, moss=0.0, shade=0.22, jitter=0.09):
+    """Paint rock per facet, in face-corner colours, and give the mesh one material that shows them.
+
+    Each face's tone comes from the material that tagged it (rock, rock_band, fresh_cut, ...), varied a little per
+    facet so neighbouring facets read apart, and darkened towards the ground like shade under a rock. Faces looking
+    up get moss where a noise patch says so (`moss` 0 none, 1 most). Flat colours per facet stay crisp in game,
+    where a blend across faces read as frosted glass."""
+    mesh = obj.data
+    tones = [linear(PALETTE[m.name]["color"]) if m.name in PALETTE else (0.5, 0.5, 0.5) for m in mesh.materials]
+    names = [m.name for m in mesh.materials]
+    moss_tone = linear(PALETTE["moss"]["color"])
+    zs = [v.co.z for v in mesh.vertices]
+    floor, height = min(zs), max(1e-6, max(zs) - min(zs))
+    offset = Vector((seed, seed * 0.5, seed * 0.3))
+    colors = mesh.color_attributes.new("Col", "FLOAT_COLOR", "CORNER")
     for poly in mesh.polygons:
+        centre = poly.center
+        vary = 1 + jitter * noise.noise(centre * 7.3 + offset)
+        lift = 1 - shade * (1 - min(1.0, (centre.z - floor) / height * 2.5))  # shade near the ground
+        tone = [c * vary * lift for c in tones[poly.material_index]]
+        fresh = names[poly.material_index] in ("fresh_cut", "cut_stone")
+        if moss and not fresh and poly.normal.z > 0.6 and noise.noise(centre * 1.2 + offset) > 0.45 - moss:
+            tone = [c * vary for c in moss_tone]
+        for li in poly.loop_indices:
+            colors.data[li].color = (*tone, 1.0)
+    for poly in mesh.polygons:
+        poly.material_index = 0
         poly.use_smooth = False
-    return obj
-
-
-def granite(mesh, size, offset):
-    """Mottled granite as vertex colours, blended smoothly across each face: soft patches of darker and lighter
-    stone plus a fine speckle. Stays solid and stony in game (a uniform pale grey read as frosted glass)."""
-    dark, mid, light = (linear(PALETTE[k]["color"]) for k in ("granite_dark", "granite", "granite_light"))
-    colors = mesh.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
-    for v in mesh.vertices:
-        patch = noise.noise(v.co * 2.6 / min(size) + offset * 1.7)
-        speck = noise.noise(v.co * 16.0 / min(size) + offset)
-        t = max(-1.0, min(1.0, patch * 2.2 + speck * 0.5))
-        a, b, w = (mid, light, t) if t > 0 else (mid, dark, -t)
-        colors.data[v.index].color = (*(p + (q - p) * w for p, q in zip(a, b)), 1.0)
-    mat = bpy.data.materials.get("granite_vc") or bpy.data.materials.new("granite_vc")
+    mesh.materials.clear()
+    mat = bpy.data.materials.get("rock_vc") or bpy.data.materials.new("rock_vc")
     mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     bsdf = nodes["Principled BSDF"]
     attr = nodes.get("Color Attribute") or nodes.new("ShaderNodeVertexColor")
     attr.layer_name = "Col"
     links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
-    bsdf.inputs["Roughness"].default_value = 1.0
+    bsdf.inputs["Roughness"].default_value = 0.95
     bsdf.inputs["Metallic"].default_value = 0.0
     mesh.materials.append(mat)
 
@@ -794,8 +864,8 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
     made = {"tree.glb": tree(), "log.glb": log(), "axe.glb": axe(), "hammer.glb": hammer(), "quarry.glb": quarry(),
-            "stone.glb": rough_block("Stone", (0.75, 0.75, 0.75), 3.0),
-            "brick.glb": rough_block("Brick", (1.5, 0.75, 0.75), 5.0), "ladder.glb": ladder(),
+            "stone.glb": stone_block("Stone", (0.75, 0.75, 0.75), 3.0),
+            "brick.glb": stone_block("Brick", (1.5, 0.75, 0.75), 5.0), "ladder.glb": ladder(),
             "boulder.glb": boulder_ball(), "stump.glb": stump(), "palm.glb": palm(), "raft.glb": raft(),
             "coconut.glb": coconut(), "spear.glb": spear(), "fish.glb": fish(), "fish_cooked.glb": fish(cooked=True),
             "volleyball.glb": volleyball()}
