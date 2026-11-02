@@ -9,6 +9,7 @@ import { createInstancer } from './instances.js'
 import { createTerrain } from './terrain.js'
 import { createFires } from './fire.js'
 import { createFishLayer } from './fish.js'
+import { bubbleSheet, createBubbles } from './bubble.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -523,6 +524,10 @@ export function createRenderer(ctx) {
     onMaterial,
   })
   const characters = createCharacterController(models)
+  // The runtime serves asset://name.glb from the folder it puts in each entity's model_url: learn it from one of them.
+  let assetBase = null
+  const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
+  const bubbles = createBubbles(scene, models, resolveAsset)
   const instancer = createInstancer(scene)
   const kit = createPartKit(onMaterial)
   const records = new Map() // entity id -> how it is drawn
@@ -795,6 +800,10 @@ export function createRenderer(ctx) {
 
     for (const entity of obs.entities || []) {
       activeIds.add(entity.id)
+      const served = entity.model_url
+      if (assetBase === null && typeof served === 'string' && served.endsWith('.glb') && !served.startsWith('asset://')) {
+        assetBase = served.slice(0, served.lastIndexOf('/') + 1) // all the world's models sit in one folder
+      }
       const hour = Number(entity.attributes?.TimeOfDay)
       if (Number.isFinite(hour)) worldHour = hour
       const key = lookKey(entity)
@@ -877,6 +886,7 @@ export function createRenderer(ctx) {
           humanoidState: stateByRootPartId.get(entity.id) || null,
           attributes: attributesByRootPartId.get(entity.id) || {},
         })
+        bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
       }
       record.fresh = false
       if (moved) {
@@ -892,6 +902,7 @@ export function createRenderer(ctx) {
         records.delete(id)
       }
     }
+    bubbles.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -986,6 +997,8 @@ export function createRenderer(ctx) {
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
+    bubbles: () => ({ assetBase, shown: bubbles.info() }),
+    bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
 
   return {
@@ -1039,6 +1052,7 @@ export function createRenderer(ctx) {
       colliderDebugObjects.clear()
       instancer.clear()
       characters.clear()
+      bubbles.dispose()
       models.dispose()
       kit.dispose()
       sky.dispose()

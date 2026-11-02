@@ -11,9 +11,10 @@ parts are joined into one mesh, each fully weighted to its bone, so the body dra
 
 Budget (it has to run in phone browsers): about 5k triangles in all.
 
-Clips (60 fps): Idle (a calm stance), Walk (in place: the world moves the body), PickUp (reach down and
-lift, sped up to about 2 s) from the Mixamo sources; Strike (a two-handed overhead swing, 1.0 s) and Climb
-(hand over hand, a 1.0 s loop) posed by hand on the same rig.
+Clips (60 fps), from the Mixamo sources (see CLIPS): Idle and Walk (in place: the world moves the body); a
+one-shot gesture for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake,
+Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp); loops for Jump, Fall and Climb. Strike (a two-handed overhead
+swing, 1.0 s) is posed by hand on the same rig, as is Climb when its source is missing.
 
 Writes world/assets/godling.glb and art/godling.blend.
 """
@@ -32,11 +33,50 @@ OUT_BLEND = ART / "godling.blend"
 
 # Chibi proportions: length factor per bone group (1 = Mixamo's adult proportions).
 LEG, SPINE, NECK, ARM, HAND, HIPS = 0.42, 0.55, 0.4, 0.65, 0.6, 0.8  # arms long enough to reach past the head
-PICKUP_FROM, PICKUP_TO, PICKUP_SPEEDUP = 40, 370, 2.6  # source frames of the actual reach-and-lift
-IDLE_FRAMES = 30  # source frames 1..30 of the pick-up clip are a calm stance; played forth and back
-
-PICKUP_BEND = 0.35  # an adult's pick-up bends the back ~90°: with a big head that is a face-plant
+IDLE_FRAMES = 30  # without happy_idle.fbx: source frames 1..30 of the pick-up clip, played forth and back
 BENDING = ("Spine", "Spine1", "Spine2", "Neck", "Head")
+FPS = 60
+
+# Clips from Mixamo (art/source: skeleton only, 60 fps, all on the same character, so they share one skeleton).
+# Each: name, source file (the first that exists, of several), source frames to keep (None: all), length in game
+# in seconds (None: as it is), and options:
+#   loop   plays round and round (Idle, Walk, Climb, Jump, Fall)
+#   bend   keeps only this much of the back's bend: an adult's deep bend is a face-plant with Godling's big head
+#   still  takes out the root's drift across the ground, so the clip ends where it began (the world moves the body)
+#   cut    leaves out source frames a..b (the middle of a long hold) and closes the gap
+#   ease   seconds to ease in from the standing pose and back out to it: a clip that starts or ends kneeling or
+#          lying drops into it instead of snapping (the renderer cross-fades for only about 0.2 s)
+#   settle keeps the hips at standing height on average (a ladder climb in place hangs the body up in the air)
+#   face   turns the clip so the body faces forward on average (some are acted facing sideways or away)
+#   upright tips the clip so the body stands upright on average (Mixamo's falls are acted lying flat in the air)
+#   pingpong plays the kept frames forth and back: a seamless loop from part of a one-off motion
+# The world names a gesture as it happens (player attributes Gesture and Gestures); the renderer plays the clip of
+# that name once at its own speed, and falls back to PickUp or Strike if godling.glb has none. So a gesture whose
+# file is missing is just left out. Lengths fit the world: a strike every 0.8 s at most, a lift in 1.0 s, a lowering
+# in 1.2 s, a rub for fire every 4 s; frames keep the action itself, so the speed-up stays near 2x where the world
+# allows.
+CLIPS = [
+    ("Idle", ("happy_idle.fbx",), None, None, dict(loop=True)),
+    ("Walk", ("happy_walk.fbx", "walking.fbx"), None, None, dict(loop=True)),
+    ("PickUp", ("picking_up.fbx",), (40, 370), 1.1, dict(bend=0.35, still=True)),
+    ("PutDown", ("putting_down.fbx",), (170, 470), 1.2, dict(bend=0.35, still=True)),
+    ("Throw", ("throw.fbx",), (15, 105), 1.0, dict(still=True)),
+    ("Chop", ("chop.fbx",), (12, 118), 0.8, dict(still=True)),  # axe swung level, right to left
+    ("Mine", ("mine.fbx",), (10, 115), 0.8, dict(still=True, bend=0.6)),  # axe (or hammer) brought down
+    ("Carve", ("carve.fbx", "mine.fbx"), (10, 115), 0.8, dict(still=True, bend=0.6)),
+    ("Spear", ("spear.fbx",), (20, 120), 0.8, dict(still=True, bend=0.6)),  # a bayonet stab
+    ("Shake", ("shake.fbx",), (95, 200), 1.2, dict(still=True, bend=0.4, ease=(0.25, 0.3))),  # a shove at the trunk
+    ("Kindle", ("kindle.fbx",), (30, 270), 2.5, dict(still=True, bend=0.4, ease=(0.4, 0.4))),  # kneel, work the ground
+    ("Cook", ("cook.fbx",), (55, 480), 2.4, dict(still=True, bend=0.5, cut=(230, 395))),  # kneel, hands to the fire
+    ("Eat", ("eat.fbx",), (125, 345), 2.0, dict(still=True)),  # a drink from the hand
+    ("Fasten", ("fasten.fbx",), (40, 250), 2.0, dict(still=True, bend=0.45, face=True, ease=(0.35, 0.35))),  # kneel, pull tight
+    ("Draw", ("draw.fbx",), (30, 150), 1.2, dict(still=True, bend=0.35, ease=(0.3, 0.3))),  # crouch, scratch the sand
+    ("Talk", ("talk.fbx",), (15, 140), 1.6, dict(still=True)),  # asking, with both hands
+    ("WakeUp", ("wake_up.fbx",), (250, 390), 2.2, dict(still=True, ease=(0.35, 0))),  # up from lying on the back
+    ("Jump", ("jump.fbx",), (44, 72), None, dict(loop=True, still=True, settle=True, pingpong=True)),  # take-off
+    ("Fall", ("fall.fbx",), (133, 205), None, dict(loop=True, still=True, upright=True, face=True)),  # flailing
+    ("Climb", ("climb.fbx",), None, 1.0, dict(loop=True, still=True, settle=True, face=True)),  # a ladder, hand over hand
+]
 
 # Mesh detail (segments, rings). Smooth shading hides the facets at the size Godling is seen.
 BEAN = (16, 10)  # torso, mittens, boots
@@ -152,6 +192,19 @@ def keep_frames(action, first, last):
         fc.update()
 
 
+def cut_frames(action, a, b):
+    """Leave out the keys between frames a and b and close the gap, so frame b follows straight after frame a."""
+    for fc in fcurves(action):
+        for kp in reversed(list(fc.keyframe_points)):
+            if a < kp.co.x < b:
+                fc.keyframe_points.remove(kp)
+        for kp in fc.keyframe_points:
+            if kp.co.x >= b:
+                for point in (kp.co, kp.handle_left, kp.handle_right):
+                    point.x -= b - a - 1
+        fc.update()
+
+
 def retime(action, factor):
     """Play the clip `factor` times faster (keys move closer together, starting at frame 1)."""
     for fc in fcurves(action):
@@ -183,9 +236,12 @@ def hips_location_curves(action):
     return [fc for fc in fcurves(action) if fc.data_path == 'pose.bones["mixamorig:Hips"].location']
 
 
-def remove_drift(action):
-    """Walk in place: take out the steady forward travel of the hips, keep the bob and sway."""
+def remove_drift(action, axes=(0, 1, 2)):
+    """Walk in place: take out the steady travel of the hips, keep the bob and sway. The hips bone points up, so
+    in its own space Y is up and X, Z run across the ground."""
     for fc in hips_location_curves(action):
+        if fc.array_index not in axes:
+            continue
         keys = list(fc.keyframe_points)
         (f0, v0), (f1, v1) = keys[0].co, keys[-1].co
         slope = (v1 - v0) / (f1 - f0)
@@ -193,6 +249,120 @@ def remove_drift(action):
             for point in (kp.co, kp.handle_left, kp.handle_right):
                 point.y -= slope * (point.x - f0)
         fc.update()
+
+
+def settle_hips(action, standing):
+    """Shift the hips' height so that on average they are where they are standing (Y is up in the bone's space)."""
+    for fc in hips_location_curves(action):
+        if fc.array_index != 1:
+            continue
+        keys = list(fc.keyframe_points)
+        shift = standing - sum(kp.co.y for kp in keys) / len(keys)
+        for kp in keys:
+            for point in (kp.co, kp.handle_left, kp.handle_right):
+                point.y += shift
+        fc.update()
+
+
+def turn_body(arm, action, rotation):
+    """Turn the whole body by `rotation` (in the armature's space) about the hips, on every key of the clip."""
+    rest = arm.pose.bones["mixamorig:Hips"].bone.matrix_local.to_quaternion()
+    turn = rest.inverted() @ rotation @ rest  # the same turn, in the hips' own space
+    path = 'pose.bones["mixamorig:Hips"].rotation_quaternion'
+    curves = {fc.array_index: fc for fc in fcurves(action) if fc.data_path == path}
+    frames = sorted({kp.co.x for fc in curves.values() for kp in fc.keyframe_points})
+    for f in frames:
+        turned = turn @ Quaternion([curves[i].evaluate(f) for i in range(4)])
+        for i in range(4):
+            curves[i].keyframe_points.insert(f, turned[i], options={"FAST", "REPLACE"})
+    for fc in curves.values():
+        fc.update()
+
+
+def average_direction(arm, action, direction):
+    """The sum over the clip's frames of direction(arm), a vector in the armature's space."""
+    use_clip(arm, action)
+    scene = bpy.context.scene
+    first, last = (int(round(f)) for f in action.frame_range)
+    total = Vector((0, 0, 0))
+    for f in range(first, last + 1):
+        scene.frame_set(f)
+        total += direction(arm)
+    return total
+
+
+def face_forward(arm, action):
+    """Turn the whole clip about the vertical so that on average the hips face forward (+Z in the armature's
+    space): some sources are acted facing sideways or away. Returns the turn in degrees."""
+    hips = arm.pose.bones["mixamorig:Hips"]
+    ahead = hips.bone.matrix_local.to_quaternion().inverted() @ Vector((0, 0, 1))  # the hips' forward axis at rest
+    total = average_direction(arm, action, lambda a: hips.matrix.to_3x3() @ ahead)
+    angle = math.atan2(total.x, total.z)
+    turn_body(arm, action, Quaternion((0, 1, 0), -angle))
+    return math.degrees(angle)
+
+
+def stand_upright(arm, action):
+    """Tip the whole clip so that on average the body stands upright (hips to head along +Y in the armature's
+    space): Mixamo's falls are acted lying flat in the air, which on Godling reads as a faint, not a fall.
+    Returns the tip in degrees."""
+    hips, head = arm.pose.bones["mixamorig:Hips"], arm.pose.bones["mixamorig:Head"]
+    total = average_direction(arm, action, lambda a: (head.head - hips.head).normalized())
+    tip = total.normalized().rotation_difference(Vector((0, 1, 0)))
+    turn_body(arm, action, tip)
+    return math.degrees(tip.angle)
+
+
+def first_pose(action):
+    """Each animated location and rotation at the clip's first frame: {data path: values}."""
+    curves = {}
+    for fc in fcurves(action):
+        curves.setdefault(fc.data_path, {})[fc.array_index] = fc
+    first = action.frame_range[0]
+    return {path: [comps[i].evaluate(first) for i in sorted(comps)] for path, comps in curves.items()}
+
+
+def ease_from(action, pose, seconds_in, seconds_out):
+    """Blend the clip's start from `pose` and its end back to it, smoothly over the given seconds."""
+    first, last = action.frame_range
+
+    def weight(x):  # how much of `pose`
+        w = 0.0
+        if seconds_in:
+            w = max(w, 1 - (x - first) / (seconds_in * FPS))
+        if seconds_out:
+            w = max(w, 1 - (last - x) / (seconds_out * FPS))
+        w = min(1.0, max(0.0, w))
+        return w * w * (3 - 2 * w)
+
+    curves = {}
+    for fc in fcurves(action):
+        curves.setdefault(fc.data_path, {})[fc.array_index] = fc
+    for path, comps in curves.items():
+        if path not in pose:
+            continue
+        if path.endswith("rotation_quaternion") and len(comps) == 4:
+            frames = sorted({kp.co.x for fc in comps.values() for kp in fc.keyframe_points})
+            target = Quaternion(pose[path])
+            for f in frames:
+                w = weight(f)
+                if not w:
+                    continue
+                q = Quaternion([comps[i].evaluate(f) for i in range(4)])
+                t = target.copy()
+                if q.dot(t) < 0:
+                    t.negate()
+                eased = q.slerp(t, w)
+                for i in range(4):
+                    comps[i].keyframe_points.insert(f, eased[i], options={"FAST", "REPLACE"})
+        elif path.endswith("location"):
+            for i, fc in comps.items():
+                for kp in fc.keyframe_points:
+                    shift = (pose[path][i] - kp.co.y) * weight(kp.co.x)
+                    for point in (kp.co, kp.handle_left, kp.handle_right):
+                        point.y += shift
+        for fc in comps.values():
+            fc.update()
 
 
 def soften(action, bones, keep):
@@ -210,6 +380,26 @@ def soften(action, bones, keep):
                 curves[i].keyframe_points.insert(f, softened[i], options={"FAST", "REPLACE"})
         for fc in curves.values():
             fc.update()
+
+
+ARM_SPREAD, FOREARM_SPREAD = 0.3, 0.15  # how far each bone's direction is pushed out to Godling's side
+
+
+def spread_arms(arm, action):
+    """Hold the arms a little out from the body: an adult's arms swing close to the body, and Godling's chubby
+    torso would swallow them (in the walk the hands crossed inside it). Every frame, each upper arm and forearm is
+    turned a little towards its own side; a raised arm goes out beside the big head too, instead of into it."""
+    use_clip(arm, action)
+    scene = bpy.context.scene
+    first, last = (int(round(f)) for f in action.frame_range)
+    for f in range(first, last + 1):
+        scene.frame_set(f)
+        for side, x in (("Left", 1.0), ("Right", -1.0)):  # armature space: +X is Godling's left
+            for bone, push in (("Arm", ARM_SPREAD), ("ForeArm", FOREARM_SPREAD)):
+                pb = arm.pose.bones[f"mixamorig:{side}{bone}"]
+                direction = (pb.matrix.to_3x3() @ Vector((0, 1, 0))).normalized()
+                aim(pb, direction + Vector((x * push, 0, 0)))
+                pb.keyframe_insert("rotation_quaternion", frame=f)
 
 
 def soften_hips(arm, action, keep):
@@ -453,31 +643,120 @@ def build_body(arm):
     join_and_skin(arm, [(part, "mixamorig:" + bone) for part, bone in parts])
 
 
+def leave_out_unused_bones(arm):
+    """Mark the bones no body part hangs on (the fingers inside the mittens, the end bones) as not deforming, so
+    the export leaves them and their animation out: they were more than half of godling.glb."""
+    used = {group.name for obj in bpy.data.objects if obj.type == "MESH" for group in obj.vertex_groups}
+
+    def needed(bone):
+        return bone.name in used or any(needed(child) for child in bone.children)
+
+    unused = [bone for bone in arm.data.bones if not needed(bone)]
+    for bone in unused:
+        bone.use_deform = False
+    return len(unused)
+
+
+def source_file(candidates):
+    return next((SOURCE / f for f in candidates if (SOURCE / f).exists()), None)
+
+
+def make_clip(arm, raw, name, frames, seconds, opts, standing):
+    """One game clip from a Mixamo source: trimmed, kept on the spot, its bend softened, retimed. `standing` is the
+    hips' height when standing, in the source's units."""
+    action = raw.copy()
+    action.name = name
+    first, last = frames or (int(round(raw.frame_range[0])), int(round(raw.frame_range[1])))
+    keep_frames(action, first, last)
+    span = last - first
+    if "cut" in opts:
+        a, b = opts["cut"]
+        cut_frames(action, a - first + 1, b - first + 1)
+        span -= b - a - 1
+    if opts.get("pingpong"):
+        ping_pong(action, span + 1)
+        span *= 2
+    if opts.get("still"):
+        remove_drift(action, axes=(0, 2))
+    if opts.get("settle"):
+        settle_hips(action, standing)
+    if opts.get("upright"):
+        print(f"UPRIGHT {name}: tipped {stand_upright(arm, action):.0f} degrees")
+    if opts.get("face"):
+        print(f"FACE {name}: turned {face_forward(arm, action):.0f} degrees")
+    if "bend" in opts:
+        soften(action, BENDING, opts["bend"])
+        soften_hips(arm, action, opts["bend"])
+    if seconds:
+        retime(action, span / FPS / seconds)
+    action.use_fake_user = True
+    return action
+
+
+def stride_speed(arm, walk):
+    """How fast the Walk clip's planted foot slides back, in model units per second: the speed the body must move
+    for the feet not to slide (the renderer's WALK_STRIDE_SPEED)."""
+    use_clip(arm, walk)
+    scene = bpy.context.scene
+    first, last = (int(round(f)) for f in walk.frame_range)
+    speeds = []
+    for side in ("Left", "Right"):
+        toe = arm.pose.bones[f"mixamorig:{side}ToeBase"]
+        track = []
+        for f in range(first, last + 1):
+            scene.frame_set(f)
+            track.append(arm.matrix_world @ toe.head)
+        low = min(p.z for p in track)
+        for a, b in zip(track, track[1:]):
+            if a.z < low + 0.01 and b.z < low + 0.01:
+                speeds.append((b.xy - a.xy).length * FPS)
+    speeds.sort()
+    return speeds[len(speeds) // 2] if speeds else 0.0
+
+
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
-    scene.render.fps = 60
+    scene.render.fps = FPS
 
-    arm, walk = import_clip(SOURCE / "walking.fbx", "Walk")
+    arm, old_walk = import_clip(SOURCE / "walking.fbx", "WalkingSource")  # the skeleton every clip shares
     arm.name = "Godling"
-    other, raw = import_clip(SOURCE / "picking_up.fbx", "PickUpSource")
-    bpy.data.objects.remove(other, do_unlink=True)
+    raws = {"walking.fbx": old_walk}
+    for _, candidates, *_ in CLIPS:
+        path = source_file(candidates)
+        if path and path.name not in raws:
+            other, raws[path.name] = import_clip(path, path.stem + "Source")
+            bpy.data.objects.remove(other, do_unlink=True)
 
-    pick = raw.copy()
-    pick.name = "PickUp"
-    keep_frames(pick, PICKUP_FROM, PICKUP_TO)
-    soften(pick, BENDING, PICKUP_BEND)
-    soften_hips(arm, pick, PICKUP_BEND)
-    retime(pick, PICKUP_SPEEDUP)
-    idle = raw.copy()
-    idle.name = "Idle"
-    keep_frames(idle, 1, IDLE_FRAMES)
-    ping_pong(idle, IDLE_FRAMES)
-    remove_drift(walk)
-    for action in (walk, pick, idle):
+    standing = next(fc for fc in hips_location_curves(old_walk) if fc.array_index == 1).keyframe_points[0].co.y
+    clips = []
+    for name, candidates, frames, seconds, opts in CLIPS:
+        path = source_file(candidates)
+        if not path:
+            print("SKIP", name, "(no source in art/source:", ", ".join(candidates) + ")")
+            continue
+        if name == "Walk" and path.name == "walking.fbx":
+            action = old_walk.copy()
+            action.name = "Walk"
+            remove_drift(action)
+        else:
+            action = make_clip(arm, raws[path.name], name, frames, seconds, opts, standing)
+        spread_arms(arm, action)
+        if "ease" in opts and clips and clips[0].name == "Idle":
+            ease_from(action, first_pose(clips[0]), *opts["ease"])
+        clips.append(action)
+    names = [a.name for a in clips]
+    if "Idle" not in names:  # a calm stance from the start of the pick-up clip, played forth and back
+        idle = raws["picking_up.fbx"].copy()
+        idle.name = "Idle"
+        keep_frames(idle, 1, IDLE_FRAMES)
+        ping_pong(idle, IDLE_FRAMES)
+        clips.insert(0, idle)
+    for action in clips:
         scale_hips(action, LEG)
         action.use_fake_user = True
-    bpy.data.actions.remove(raw)
+    for raw in raws.values():
+        bpy.data.actions.remove(raw)
 
     arm.animation_data.action = None
     for pb in arm.pose.bones:  # parts are built and attached in the rest pose
@@ -489,11 +768,13 @@ def main():
     arm.data.pose_position = "REST"
     build_body(arm)
     arm.data.pose_position = "POSE"
-    strike = posed_clip(arm, "Strike", STRIKE, idle)
-    climb = posed_clip(arm, "Climb", CLIMB, idle)
+    idle = next(a for a in clips if a.name == "Idle")
+    clips.append(posed_clip(arm, "Strike", STRIKE, idle))  # what the renderer plays for a strike with no clip of its own
+    if "Climb" not in names:
+        clips.append(posed_clip(arm, "Climb", CLIMB, idle))
 
     # One NLA track per clip, so the exporter writes them all as separate animations.
-    for action in (idle, walk, pick, strike, climb):
+    for action in clips:
         track = arm.animation_data.nla_tracks.new()
         track.name = action.name
         strip = track.strips.new(action.name, 1, action)
@@ -501,16 +782,23 @@ def main():
         if hasattr(strip, "action_slot") and action.slots:
             strip.action_slot = action.slots[0]
         track.mute = True
+    stride = stride_speed(arm, next(a for a in clips if a.name == "Walk"))
     use_clip(arm, idle)
+
+    unused = leave_out_unused_bones(arm)
 
     OUT_GLB.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT_BLEND))
+    # Sampled at 30 fps (frame step 2): the renderer interpolates between keys, and it halves the clips' size.
     bpy.ops.export_scene.gltf(filepath=str(OUT_GLB), export_format="GLB", export_apply=True,
                               export_animations=True, export_animation_mode="NLA_TRACKS",
-                              export_force_sampling=True, export_yup=True)
-    print("WROTE", OUT_GLB, OUT_GLB.stat().st_size, "bytes")
-    for action in (idle, walk, pick, strike, climb):
-        print("CLIP", action.name, tuple(action.frame_range))
+                              export_force_sampling=True, export_frame_step=2, export_def_bones=True,
+                              export_yup=True)
+    print("WROTE", OUT_GLB, OUT_GLB.stat().st_size, "bytes", f"({unused} unused bones left out)")
+    for action in clips:
+        first, last = action.frame_range
+        print(f"CLIP {action.name}: frames {first:.0f}-{last:.0f}, {(last - first) / FPS:.2f} s")
+    print(f"WALK_STRIDE_SPEED {stride:.3f} model units per second")
 
 
 main()
