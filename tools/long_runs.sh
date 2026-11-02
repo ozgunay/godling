@@ -38,8 +38,9 @@ if [ "$START_AT" != "now" ]; then
 fi
 # The ports (and Hindsight's 8888) must be free: wait for an earlier run to finish shutting down.
 while ss -ltn | grep -q -E ':(8090|8091|8092|8888) '; do echo "Waiting for ports 8090-8092 and 8888 to be free..."; sleep 15; done
-# Frozen at start time, so fixes made while the run was armed are in it.
-mkdir -p "$CODE" && cp -r /mnt/c/Work/godling/mind /mnt/c/Work/godling/world "$CODE" \
+# Frozen at start time, so fixes made while the run was armed are in it. GODLING_SRC runs another checkout (a worktree).
+SRC="${GODLING_SRC:-/mnt/c/Work/godling}"
+mkdir -p "$CODE" && cp -r "$SRC/mind" "$SRC/world" "$CODE" \
   && rm -rf "$CODE"/mind/godling/__pycache__ "$CODE"/world/renderer/.build.lock || exit 1
 
 PIDS=()

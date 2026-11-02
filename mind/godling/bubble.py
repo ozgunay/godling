@@ -23,9 +23,10 @@ THINGS = {
     "rescue": "being rescued, a ship, going home", "sea": "the sea", "lightning": "the sky's doings: lightning, "
     "falling stones", "tower": "a tower, stacking high", "wall": "a wall", "shelter": "a shelter, a hut, a home",
     "explore": "exploring, seeing more of the island", "night": "the night, the dark, sleep",
+    "rain": "the rain, getting wet, keeping dry",
 }
 FEELINGS = ("happy", "proud", "hopeful", "curious", "calm", "determined", "focused", "tired", "lonely", "worried",
-            "frustrated", "scared", "hungry", "sad")
+            "frustrated", "scared", "hungry", "sad", "cold")
 
 SYSTEM = ("You read the thoughts of Godling, a castaway alone on an island, and choose what its thought bubble "
           "shows, as in The Sims: the one thing on its mind right now, as a picture, and how it feels about it.\n"
@@ -91,6 +92,12 @@ class Bubble:
             body.append(f"{snap.hunger:.0f}% fed, health {snap.health:.0f} of 100")
         held = snap.held()
         body.append(f"holding {held.name}" if held else "hands empty")
+        if snap.rain >= 0.3:
+            body.append("out in the rain" if snap.in_rain else "it is raining, but it is under a roof")
+        if snap.wet >= 50:
+            body.append("soaked")
+        if snap.cold:
+            body.append("cold")
         if snap.time_of_day is not None:
             body.append(f"the time is {int(snap.time_of_day):02d}:{int(snap.time_of_day % 1 * 60):02d}")
         user = (f"Its latest thoughts (most recent last):\n...{thoughts[-TAIL:]}\n\n"

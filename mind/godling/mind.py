@@ -92,6 +92,20 @@ def _fmt_pos3(p):
     return f"({p[0]:.1f}, {p[1]:.2f}, {p[2]:.1f})"
 
 
+def _how_it_feels(snap):
+    """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
+    parts = []
+    if snap.rain >= 0.3:
+        parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
+    if snap.wet >= 15:
+        parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
+    if snap.cold:
+        parts.append("You are cold, and it is wearing your health down")
+    if snap.sheltered:
+        parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else ""))
+    return ". ".join(parts) + "." if parts else ""
+
+
 @dataclass
 class _Seen:
     """A loose thing as the mind knows it: where it is, or where it was last seen (`old`)."""
@@ -151,17 +165,22 @@ want to make next). You do not know how this world's physics works yet: find out
 watch what happens, and write down what you learn.
 
 What your body knows about itself: it is 2 units wide and 5 tall, reaches things a few units away and
-walks around obstacles. Its legs take no step higher than a low one, but it can climb a ladder that
-stands against something, walk on anything flat it gets onto, and hop down a drop of one block.
+walks around obstacles. Its legs step up onto anything one block high and hop down a drop of one block;
+anything higher needs a ladder that stands against something. It walks on anything flat it gets onto.
 You can build. A building block is 2.5 units on every side, half your height, and whatever you set down
 settles into a grid of cells 2.5 apart. Things you can build with: stone blocks, which a hammer breaks
-off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back); boulders,
-which are very heavy. The ladder is three blocks tall. Pieces you set down can be turned a quarter round
-or stood on end, and fastened in place, like mortar.
+off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back) and
+which sometimes wash up on the beach; boulders, which are very heavy. The ladder is three blocks tall.
+Pieces you set down can be turned a quarter round or stood on end, and fastened in place, like mortar.
 Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. Lightning, or a
 stone falling from the sky, hurts you if you are close when it strikes. Fed at least half full, you heal. You eat what
-you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Fire can be rubbed into a log, and
-cooked fish fills you far more than raw. Days turn into nights, and nights are dark.
+you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Cooked fish fills you far more than raw.
+Fire is hard to make: wood rubbed hard and long against wood grows hot, and something dry and fine beside it may
+catch. Rain puts fires out, and nothing catches while it rains or while the wood is still damp after it.
+Days turn into nights; nights are dark and cold. The weather turns: showers, spells of rain that last for days,
+thunderstorms, fog some mornings. Rain soaks you and slows your walking. Being cold wears your health down and stops
+you healing. A roof over your head keeps the rain off; walls around you with a roof over you, or a fire close by,
+keep the cold off.
 Everything else about the world, and how to build well, is yours to discover.
 
 ## Your body's moves
@@ -221,6 +240,7 @@ thought and in that project's intention."""
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
                + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
+            *([_how_it_feels(snap)] if _how_it_feels(snap) else []),
             f"Others: {others}.",
             f"Loose objects (nearest first): {loose_txt or 'none'}.",
             f"Stacks: {stacks}.",
