@@ -5,10 +5,11 @@ __pycache__/
 # Blender backups
 *.blend1
 
-# Clawblox build state and renderer dependencies
+# Clawblox build state, renderer dependencies, the relay's build
 .clawblox/
 .build.lock
 node_modules/
+relay/target/
 
 # Run output (runs live in ~/godling-runs; these only appear if a run points here)
 mind/log.jsonl
