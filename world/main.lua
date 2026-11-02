@@ -2741,13 +2741,9 @@ local function looseGroundCubes()
 end
 
 local function clearSupplySpot(x, z)
-    local onGround = false
-    for _, g in ipairs(groundParts) do
-        if within(x, z, g, -3) then -- well inside the island, away from the shore
-            onGround = true
-        end
-    end
-    if not onGround then
+    -- Well inside the island, away from the shore: land 3 units out every way. (Inside one ground part with a margin
+    -- worked on the old island; the castaway island's ground is many narrow strips, so no spot ever qualified.)
+    if not (overLand(x, z) and overLand(x + 3, z) and overLand(x - 3, z) and overLand(x, z + 3) and overLand(x, z - 3)) then
         return false
     end
     for _, m in ipairs(mesas) do
