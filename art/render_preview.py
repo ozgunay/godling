@@ -95,24 +95,30 @@ def clip(action_name, frame):
 
 setup()
 if name == "godling":
-    clip("Idle", 1)
-    shoot("front", 20)
-    shoot("side", 90)
-    clip("Walk", 16)
-    shoot("walk", 35)
-    for frame in (20, 40, 70):
-        clip("PickUp", frame)
-        shoot(f"pickup{frame}", 35)
-    for frame in (20, 31):
-        clip("Strike", frame)
-        shoot(f"strike{frame}", 40)
-    for frame in (1, 31):
-        clip("Climb", frame)
-        shoot(f"climb{frame}", 30)
+    wanted = sys.argv[sys.argv.index("--") + 2:]  # clip names; each is shot at four moments, e.g. -- godling Chop
+    if not wanted:
+        clip("Idle", 1)
+        shoot("front", 20)
+        shoot("side", 90)
+    scene.render.resolution_x = scene.render.resolution_y = 500 if wanted else 900
+    for clip_name in wanted:
+        action = bpy.data.actions.get(clip_name)
+        if not action:
+            print("NO CLIP", clip_name)
+            continue
+        first, last = (int(round(f)) for f in action.frame_range)
+        for k in range(4):
+            frame = first + round((last - first) * k / 4)
+            clip(clip_name, frame)
+            shoot(f"{clip_name.lower()}{k}", 35)
 else:
-    shoot("all", 25, 18)
+    only = {n.lower() for n in sys.argv[sys.argv.index("--") + 2:]} if "--" in sys.argv else set()  # e.g. quarry palm
+    if not only:
+        shoot("all", 25, 18)
     models = [o for o in scene.objects if o.type == "MESH" and not o.name.startswith("Preview")]
     for model in models:
+        if only and model.name.lower() not in only:
+            continue
         for other in models:
             other.hide_render = other is not model
         shoot(model.name.lower(), 30, 20)

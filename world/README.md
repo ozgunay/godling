@@ -39,7 +39,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - **Spawning.** New stones and logs appear at a free spot (`freeSpawn`), along the face or higher up so they drop onto the pile. They never appear inside another piece.
   - **Sky supply.** The cube supply from the sky (ADR-003 O7) is off (`SUPPLY_FROM_SKY = false`). The quarry replaces it; the code stays for viewer drops.
 - **Godling's look (art session; build scripts and previews in `art/`, details in `art/README.md`).**
-  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle, Walk, PickUp, Strike and Climb clips.
+  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the Jump, Fall and Climb loops, and Strike (see `art/README.md`).
   - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (1.4 x 7–9 x 1.4) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
     - The mind treats trees and the quarry as terrain too high to climb (`godling/world.py`).
   - The `ART` table in `main.lua` maps objects to `assets/*.glb`: hammer, quarry, stone, brick, axe, log and ladder. Boulders have no model yet.
