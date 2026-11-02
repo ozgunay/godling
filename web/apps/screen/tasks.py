@@ -16,11 +16,12 @@ from apps.credits import services as credits
 from apps.credits.models import PowerCall
 from apps.screen import island
 
-# A queued call the island has not answered in this long is given up: its credits come back and the screen says so.
-# The worker skips a call that waited this long, so a late worker never calls a power its viewer was refunded for.
-STALE = timedelta(seconds=60)
+# A queued call the worker has not taken in this long is given up: its credits come back and the screen says so. The
+# worker skips a call that waited this long, so a late worker never calls a power its viewer was refunded for. Long
+# enough for a burst: the island takes about one power a second, so a hundred queued at once still go through.
+STALE = timedelta(minutes=3)
 # A call the worker took to the island but never settled (the worker died with it): given up too, credits back.
-LOST = timedelta(seconds=120)
+LOST = timedelta(minutes=4)
 REPLY_KEYS = ("ok", "text", "id", "kind", "name", "power", "time", "wait")
 
 

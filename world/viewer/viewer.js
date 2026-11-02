@@ -360,15 +360,20 @@ async function post(path, body) {
   }
 }
 
-// Behind the site a power is queued for the island and the answer is `pending` (its call's id): ask how it went every
-// half second until the world has answered. The panel on its own answers at once.
-const PENDING_MS = 500
-const PENDING_TRIES = 80 // the site gives a call up after a minute, so this always ends with an answer
+// Behind the site a power is queued for the island and the answer is `pending` (its call's id): ask how it went, every
+// half second at first and then every two, until the world has answered. The panel on its own answers at once.
+const PENDING_DEADLINE_MS = 4.5 * 60 * 1000 // the site gives a call up after 3 minutes (4 once sent), so this ends
 async function settled(answer) {
-  for (let tries = 0; answer.pending && tries < PENDING_TRIES; tries++) {
-    await new Promise((done) => setTimeout(done, PENDING_MS))
+  const deadline = Date.now() + PENDING_DEADLINE_MS
+  for (let tries = 0; answer.pending && Date.now() < deadline; tries++) {
+    await new Promise((done) => setTimeout(done, tries < 20 ? 500 : 2000))
     try {
       const res = await fetch(`api/power/${encodeURIComponent(answer.pending)}`, { cache: 'no-store' })
+      if (res.status === 401) {
+        nudgeSignIn()
+        return { ok: false, text: 'You were signed out; sign in again to see how your power went.' }
+      }
+      if (res.status === 404) return { ok: false, text: 'That power is no longer on its way.' }
       if (res.ok) answer = await res.json()
     } catch { /* a blip: ask again */ }
   }

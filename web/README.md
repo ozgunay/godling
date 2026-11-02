@@ -10,7 +10,7 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
   - The panel hears them as the account (`user000042`, its username).
   - The site keeps each account's pace from the database: one power every 2 s and one note every 3 minutes, as the site rules say. The turn is taken before the island is asked, in one database update, so two requests at once cannot both pass. The keyed panel defers to it and keeps only the island's own pace: one note a minute, a short queue.
   - A power's credits are taken first, and given back if the world refuses it. Every call is logged.
-  - A power goes to the island from the worker (Celery), not from the viewer's request; the screen asks how it went every half second. A call the island never answers is given up after a minute, its credits back (ADR-014).
+  - A power goes to the island from the worker (Celery), not from the viewer's request; the screen asks how it went. A call the worker never takes is given up after 3 minutes, its credits back (ADR-014).
 - **20 free credits** when the email is confirmed (the site rules, in the admin), once per inbox: `me+2@…` and, at Gmail, `m.e@…` are the same inbox as `me@…`.
 - **More credits** through Stripe Checkout (`/credits/`). Without Stripe keys, in development only, a test checkout stands in.
   - A refund in Stripe takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
@@ -57,6 +57,7 @@ What someone running the site changes lives in the database, not in settings or 
 ```bash
 python3 -m venv ~/.venvs/godling-web && ~/.venvs/godling-web/bin/pip install -r web/requirements.txt
 ```
+A venv made before ADR-014 needs the same `pip install -r` again: the site now loads Celery, Redis's client and allauth's two-factor sign-in.
 Start the world and the panel with a key (the panel then takes powers and notes only from this site). With `--run-dir`, the panel reads the run's world key (`world.key`):
 ```bash
 export GODLING_PANEL_KEY=$(python3 -c "import secrets; print(secrets.token_hex(16))")

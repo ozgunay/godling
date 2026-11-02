@@ -183,6 +183,13 @@ class StripeTests(TestCase):
         self.charge("charge.dispute.closed", status="lost")
         self.assertEqual(services.balance_of(self.user), 0)
 
+    def test_a_refund_during_a_dispute_is_not_given_back_when_the_dispute_is_won(self):
+        self.paid()
+        self.charge("charge.dispute.created", status="needs_response")
+        self.charge("charge.refunded", amount=500, amount_refunded=100)  # a fifth refunded meanwhile
+        self.charge("charge.dispute.closed", status="won")
+        self.assertEqual(services.balance_of(self.user), 80)
+
     def test_a_payment_credited_before_its_intent_was_kept_is_found_through_stripe(self):
         self.buy()
         services.credit_payment("cs_test_1")  # as the return page did before payment intents were kept

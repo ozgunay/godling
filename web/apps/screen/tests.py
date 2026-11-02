@@ -1,6 +1,7 @@
 """The screen behind accounts: anyone watches; powers cost credits and go to the panel as the signed-in account; notes
 are kept and can be reported, and hidden ones vanish from every screen. No request waits on the island for long: the
 news is shared, powers are queued for the worker."""
+import http.client
 from datetime import timedelta
 from unittest import mock
 
@@ -17,6 +18,7 @@ from apps.screen import island, tasks
 from apps.users.models import User
 
 PANEL_STATUS = {"world": True, "watching": 0, "popups": [], "view": "http://localhost:8080/?spectator_token=t"}
+REAL_RELAY = island.relay  # the tests below talk to a fake panel; this one is the real thing
 
 
 def make_user(name, email=None, days_old=0):
@@ -82,13 +84,26 @@ class ScreenTests(TestCase):
 
     def test_the_news_is_fetched_once_for_every_viewer(self):
         """However many pages poll, the panel is asked about once a second (island.shared)."""
-        with mock.patch("apps.screen.island.FRESH", 60):
+        with mock.patch("apps.screen.island.FRESH", 60), mock.patch("apps.screen.island.PER_ADDRESS", 8):
             for n in range(12):
                 status = self.client.get(f"/api/status?client=page{n:04d}").json()
-        self.assertEqual(len([c for c in self.calls if c[1] == "/api/status"]), 1)
-        self.assertEqual(status["watching"], 8)  # all from one address: a handful count, not a script's thousands
-        other = self.client.get("/api/status?client=farpage01", REMOTE_ADDR="198.51.100.9").json()
-        self.assertEqual(other["watching"], 9)
+            self.assertEqual(len([c for c in self.calls if c[1] == "/api/status"]), 1)
+            self.assertEqual(status["watching"], 8)  # all from one address: up to the cap, not a script's thousands
+            other = self.client.get("/api/status?client=farpage01", REMOTE_ADDR="198.51.100.9").json()
+            self.assertEqual(other["watching"], 9)
+            self.viewer()  # an account always counts, whatever address it shares
+            self.assertEqual(self.client.get("/api/status").json()["watching"], 10)
+
+    def test_the_first_viewers_wait_for_the_first_copy_of_the_news(self):
+        """On a cold start the requests that do not fetch wait for the copy being fetched, rather than say Offline."""
+        cache.add(island.STATUS_LOCK, 1, timeout=10)  # another request is fetching
+        copy = {"at": 0, "status": {"world": True, "popups": [], "free": False}}
+        with mock.patch.object(island.cache, "get", side_effect=[None, copy]), mock.patch("time.sleep"):
+            self.assertTrue(island.shared(lambda: {"world": "not fetched here"})["world"])
+
+    def test_a_panel_cut_off_mid_answer_is_out_of_reach(self):
+        with mock.patch("urllib.request.urlopen", side_effect=http.client.IncompleteRead(b"{")):
+            self.assertIs(REAL_RELAY("GET", "/api/status"), island.PANEL_DOWN)
 
     @override_settings(ALLAUTH_TRUSTED_PROXY_COUNT=1)
     def test_the_address_is_the_one_caddy_saw(self):
@@ -144,7 +159,7 @@ class ScreenTests(TestCase):
         self.client.force_login(make_user("nosy"))
         self.assertEqual(self.client.get(url).status_code, 404)  # one viewer's calls are theirs
         self.client.force_login(user)
-        PowerCall.objects.update(created=timezone.now() - timedelta(minutes=2))
+        PowerCall.objects.update(created=timezone.now() - timedelta(minutes=5))
         later = self.client.get(url).json()
         self.assertFalse(later["ok"])
         self.assertIn("did not answer", later["text"])

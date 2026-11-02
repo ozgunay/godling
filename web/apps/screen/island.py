@@ -5,20 +5,26 @@ copy more than a second old fetches a fresh one (holding a short lock in the cac
 request reads the copy. However many watch, the panel hears from the site about once a second.
 
 Who is watching is counted here, across every web worker, in windows of WINDOW seconds: each page counts once a
-window, and one address counts at most PER_ADDRESS pages, so a script making up client ids cannot inflate the count.
+window. A signed-in viewer always counts (an account is one viewer). Pages without an account count up to
+PER_ADDRESS from one address, enough for a phone network's shared address, but not for a script inventing client ids.
 """
+import http.client
 import json
 import time
 import urllib.error
 import urllib.request
 
+from allauth.core.internal.httpkit import get_client_ip
 from django.conf import settings
 from django.core.cache import cache
 
 STATUS_KEY, STATUS_LOCK = "island:status", "island:status:lock"
 FRESH = 1.0  # seconds a shared copy of the news is good for
+COLD_WAIT = 3.0  # seconds a request waits for the first copy while another request fetches it
 WINDOW = 20  # seconds: a page that has not asked for news in this long has left (as the panel's WATCHING_FOR)
-PER_ADDRESS = 8  # pages counted from one address in a window: a household, not a farm
+# Pages without an account counted from one address in a window. Phone networks put many people behind one address
+# (carrier-grade NAT), so this is generous; a script making up client ids still stops here.
+PER_ADDRESS = 64
 PANEL_DOWN = {"ok": False, "text": "The island is out of reach. Try again in a moment."}
 
 
@@ -37,7 +43,7 @@ def relay(method, path, body=None, timeout=15):
             return json.loads(err.read() or b"{}") or PANEL_DOWN
         except ValueError:
             return PANEL_DOWN
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):  # unreachable, garbled, or cut off mid-answer
         return PANEL_DOWN
 
 
@@ -53,18 +59,20 @@ def shared(build):
             return status
         finally:
             cache.delete(STATUS_LOCK)
-    return held["status"] if held else {"world": False}
+    if held:
+        return held["status"]
+    deadline = time.time() + COLD_WAIT  # no copy yet (a cold start): wait for the one being fetched
+    while time.time() < deadline:
+        time.sleep(0.1)
+        held = cache.get(STATUS_KEY)
+        if held:
+            return held["status"]
+    return {"world": False}
 
 
 def address(request):
-    """The viewer's address: the one Caddy saw, given the proxies the site trusts (as allauth reads it)."""
-    trusted = settings.ALLAUTH_TRUSTED_PROXY_COUNT
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if trusted > 0 and forwarded:
-        hops = [hop.strip() for hop in forwarded.split(",")]
-        if len(hops) >= trusted:
-            return hops[-trusted]
-    return request.META.get("REMOTE_ADDR", "")
+    """The viewer's address: the one Caddy saw, read as allauth reads it for its rate limits."""
+    return get_client_ip(request) or ""
 
 
 def _count(key):
@@ -76,11 +84,11 @@ def _count(key):
         return 1
 
 
-def watching(client, where):
+def watching(client, where, signed_in=False):
     """Count this page (`client`, from `where`) as watching, and return how many watch."""
     window = int(time.time() // WINDOW)
     if client and cache.add(f"watch:{window}:page:{client}", 1, WINDOW * 3):  # first time this window
-        if _count(f"watch:{window}:from:{where}") <= PER_ADDRESS:
+        if signed_in or _count(f"watch:{window}:from:{where}") <= PER_ADDRESS:
             _count(f"watch:{window}:count")
     return max(cache.get(f"watch:{window}:count", 0), cache.get(f"watch:{window - 1}:count", 0))
 

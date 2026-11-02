@@ -123,13 +123,19 @@ def refunded(payment, amount_refunded):
     if payment.status in (Payment.OPEN, Payment.EXPIRED) or not payment.amount_cents:
         return 0
     share = -(-payment.credits * min(amount_refunded, payment.amount_cents) // payment.amount_cents)
-    due = min(max(0, share - payment.refund_taken), _held(payment))
+    owed = max(0, share - payment.refund_taken)
+    # Credits a dispute holds back are already out of the viewer's hands: the refund's share comes from them first,
+    # so a dispute won later does not give back credits whose money was refunded.
+    held = _held(payment)
+    from_dispute = min(owed, payment.dispute_taken)
+    payment.dispute_taken -= from_dispute
+    due = min(owed - from_dispute, held)
     if due:
         take_back(payment.user, due, f"refund of {payment.pack} ({payment.session[:60]})")
-        payment.refund_taken += due
+    payment.refund_taken += from_dispute + due
     if payment.refund_taken >= payment.credits or amount_refunded >= payment.amount_cents:
         payment.status = Payment.REFUNDED
-    payment.save(update_fields=["refund_taken", "status"])
+    payment.save(update_fields=["refund_taken", "dispute_taken", "status"])
     return due
 
 

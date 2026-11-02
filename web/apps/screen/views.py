@@ -46,8 +46,9 @@ def wait_after(last, every):
     return max(0, int(every - (timezone.now() - last).total_seconds() + 0.999))
 
 
-def note_wait(user, rules):
-    return wait_after(user.last_note_at, rules.note_every)
+def note_wait(user, every):
+    """Seconds until this viewer's next note may go, one every `every` seconds (the site rules' note_every)."""
+    return wait_after(user.last_note_at, every)
 
 
 def take_turn(user, field, every):
@@ -145,12 +146,12 @@ def api_status(request):
     if request.user.is_authenticated:
         client = request.user.client_id
         island.seen(request.user)
-        notes_now["wait"] = wait_after(request.user.last_note_at, notes_now.get("every") or 0)
+        notes_now["wait"] = note_wait(request.user, notes_now.get("every") or 0)
     else:
         client = request.GET.get("client", "")
         client = client if re.fullmatch(r"[A-Za-z0-9]{6,40}", client) and not client.startswith("user") else ""
     status["notes"] = notes_now
-    status["watching"] = island.watching(client, island.address(request))
+    status["watching"] = island.watching(client, island.address(request), request.user.is_authenticated)
     return JsonResponse({**status, "account": account(request, free)})
 
 
@@ -238,7 +239,7 @@ def api_note(request):
     rules = Rules.get()
     # Checked as it will be delivered: the panel makes the same text of it (words.plain), so ｂｌｏｃｋｅｄ is blocked.
     text = words.plain(body.get("text"))
-    wait = note_wait(user, rules)
+    wait = note_wait(user, rules.note_every)
     if wait:
         return note_later(wait)
     if len(text) > rules.note_limit:

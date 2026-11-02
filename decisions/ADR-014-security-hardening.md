@@ -48,12 +48,12 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
 ### The site
 - **B1:** the tooltip is built from text nodes. Checked in a browser with a power whose label, words and rule were markup: shown as words, nothing ran.
 - **B3:**
-  - `apps/screen/island.py`: the shared news, and who is watching. Counted across workers in 20 s windows, at most 8 pages per address, so a script inventing client ids cannot inflate the count.
+  - `apps/screen/island.py`: the shared news, and who is watching. Counted across workers in 20 s windows. A signed-in viewer always counts; pages without an account count up to 64 per address (phone networks share addresses), so a script inventing client ids cannot inflate the count.
   - `apps/screen/tasks.py` and `PowerCall.status`:
     - a power is queued, its price taken;
     - the worker relays it once and settles it;
     - the screen asks `api/power/<id>` every half second.
-  - A call nobody took in a minute is given up and refunded. The worker skips such a call, so nothing is called after its refund.
+  - A call nobody took in 3 minutes is given up and refunded (long enough for a burst: the island takes about one power a second). The worker skips such a call, so nothing is called after its refund.
   - A queue out of reach refunds at once.
   - Notes, which the panel only queues, get 5 s.
 - **B5:**
