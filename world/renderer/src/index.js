@@ -11,6 +11,8 @@ import { createFires } from './fire.js'
 import { createFishLayer } from './fish.js'
 import { bubbleSheet, createBubbles } from './bubble.js'
 import { createRain } from './rain.js'
+import { createCameraShake } from './shake.js'
+import { createDust } from './dust.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createAim } from './aim.js'
@@ -482,6 +484,15 @@ export function createRenderer(ctx) {
   const FOG_WHITE = new THREE.Color(0xd3d8dc)
   const FOG_NEAR = scene.fog.near
   const FOG_FAR = scene.fog.far
+  // Earthquakes: the Clock's Quake (0 to 1) shakes the camera, and QuakePhase names the stage. `?quake=0.8` forces it.
+  // Dust rises where loose pieces land or, in a quake, slide.
+  const shake = createCameraShake(tier)
+  const dust = createDust(scene, tier)
+  const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
+  let worldQuake = Number.isFinite(forcedQuake) ? forcedQuake : 0
+  let quakeNow = worldQuake
+  let quakePhase = ''
+  let lastSeaLevel = null
 
   // Time of day: `?time=17.5` holds the sun at that hour; `?dayMinutes=20` runs a whole day in 20 minutes.
   // Without either the sun stands where the light always stood.
@@ -874,6 +885,11 @@ export function createRenderer(ctx) {
       if (entity.attributes?.WindX !== undefined) wind.read(entity.attributes)
       const mist = Number(entity.attributes?.Fog)
       if (Number.isFinite(mist) && !Number.isFinite(forcedFog)) worldFog = mist
+      const quake = Number(entity.attributes?.Quake)
+      if (Number.isFinite(quake) && !Number.isFinite(forcedQuake)) {
+        worldQuake = quake
+        quakePhase = String(entity.attributes?.QuakePhase ?? '')
+      }
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -902,6 +918,9 @@ export function createRenderer(ctx) {
         landKey.push(`${entity.id}:${position.join(',')}:${entity.size.join(',')}`)
       }
 
+      if (record.kind === 'parts' && !record.swims && shown) {
+        dust.watch(entity, dt, quakeNow, lastSeaLevel)
+      }
       if (record.kind === 'parts') {
         if (moved || record.fresh !== false || record.swims) {
           // A swimming fish sits on the water as it is drawn now, its back out and its belly under.
@@ -971,6 +990,7 @@ export function createRenderer(ctx) {
       }
     }
     bubbles.prune(activeIds)
+    dust.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -1067,6 +1087,8 @@ export function createRenderer(ctx) {
     latestObs = obs
     elapsed += dt
     const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt)
+    if (seaLevel != null) lastSeaLevel = seaLevel
+    quakeNow += (worldQuake - quakeNow) * Math.min(1, dt * 3)
     updateSunAndLights(dt, cameraTarget)
     sky.update(camera, elapsed)
     sea.update({ camera, time: elapsed, seaLevel, land, landKey, light })
@@ -1074,9 +1096,12 @@ export function createRenderer(ctx) {
     rain.update({ rain: rainNow, time: elapsed, camera, wind: wind.update(dt) })
     fires.update({ time: elapsed, camera, daylight: sky.daylight, night: sky.night })
     fish.update(swimming, sea, elapsed)
+    dust.update({ time: elapsed, daylight: sky.daylight })
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
+    shake.apply(camera, quakeNow, elapsed)
     renderer.render(scene, camera)
+    shake.restore(camera)
     stats?.tick(dt)
   }
 
@@ -1086,6 +1111,7 @@ export function createRenderer(ctx) {
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
+    quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
     bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
@@ -1151,6 +1177,7 @@ export function createRenderer(ctx) {
       terrain.dispose()
       fires.dispose()
       fish.dispose()
+      dust.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()

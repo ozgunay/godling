@@ -80,9 +80,10 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
 // - "Gesture" names a clip and "Gestures" counts the body's actions (world/main.lua). Each new count plays that clip
 //   once at its own speed (the art pipeline cuts each to the world's timing). A model without that clip falls back
 //   to the older counters (ONE_SHOTS), as before there were gestures.
-// - Climb loops while "Climbing" is true; Jump and Fall loop while the body jumps or falls, if the model has them.
+// - Climb loops while "Climbing" is true, and Brace (crouched, holding on through an earthquake) while "Bracing" is;
+//   Jump and Fall loop while the body jumps or falls. Each only if the model has the clip.
 // - Walk plays at the body's real speed, Idle when nothing else does.
-// A new one-shot cuts the one in progress short.
+// A new one-shot cuts the one in progress short. Stagger holds its last pose while "KnockedDown" is true.
 const WALK_STRIDE_SPEED = 0.667 // model metres per second the Walk clip covers at normal speed
 const ONE_SHOTS = [
   { attribute: 'Reaches', clip: 'PickUp', seconds: 1.1 }, // the world lifts a block in 1.0 s, lowers one in 1.2 s
@@ -129,6 +130,7 @@ export function createCharacterController(models) {
     state.idle = state.action('Idle')
     state.walk = state.action('Walk')
     state.climb = state.action('Climb')
+    state.brace = state.action('Brace')
     state.airborne = Object.fromEntries(Object.entries(AIRBORNE_CLIPS).map(([humanoid, clip]) => [humanoid, state.action(clip)]))
     state.oneShots = ONE_SHOTS.map((spec) => ({ ...spec, action: state.action(spec.clip, true), count: null }))
     state.gestures = new Map() // clip name -> one-shot, made the first time that gesture is seen
@@ -181,13 +183,17 @@ export function createCharacterController(models) {
     }
     if (state.current) {
       state.current.left -= dt
-      if (state.current.left <= 0) state.current = null
+      // Knocked down (an earthquake), the body stays on the ground in Stagger's last pose until it gets up (WakeUp).
+      const down = attributes.KnockedDown === true && state.current === state.gestures.get('stagger')
+      if (state.current.left <= 0 && !down) state.current = null
     }
     const playing = state.current
     const climbing = attributes.Climbing === true && Boolean(state.climb)
+    const bracing = attributes.Bracing === true && Boolean(state.brace) && !climbing
+    const holding = climbing || bracing // a held loop: nothing else plays over it
     const airborne = humanoidState === 'Jumping' || humanoidState === 'Freefall'
-    const inAir = airborne && !climbing && !playing ? state.airborne[humanoidState] : null
-    const moving = speed > 0.5 && !airborne && !playing && !climbing
+    const inAir = airborne && !holding && !playing ? state.airborne[humanoidState] : null
+    const moving = speed > 0.5 && !airborne && !playing && !holding
     const blend = (action, target, rate) => {
       if (!action) return
       const w = action.getEffectiveWeight()
@@ -196,11 +202,12 @@ export function createCharacterController(models) {
     // A gesture and an older counter can name the same clip, and so share one action: blend each action once.
     const shotActions = new Set(state.oneShots.map((shot) => shot.action))
     for (const shot of state.gestures.values()) if (shot) shotActions.add(shot.action)
-    for (const action of shotActions) blend(action, action && action === playing?.action && !climbing ? 1 : 0, 14)
+    for (const action of shotActions) blend(action, action && action === playing?.action && !holding ? 1 : 0, 14)
     for (const loop of Object.values(state.airborne)) blend(loop, loop && loop === inAir ? 1 : 0, 10)
     blend(state.climb, climbing ? 1 : 0, 10)
+    blend(state.brace, bracing ? 1 : 0, 10)
     blend(state.walk, moving || !state.idle ? 1 : 0, 8)
-    blend(state.idle, moving || playing || climbing || inAir ? 0 : 1, 8)
+    blend(state.idle, moving || playing || holding || inAir ? 0 : 1, 8)
     if (state.walk && moving) {
       // Feet keep pace with the body: the clip's stride, scaled with the model, at the body's real speed.
       state.walk.setEffectiveTimeScale(Math.min(3, Math.max(0.5, speed / (WALK_STRIDE_SPEED * state.scale))))

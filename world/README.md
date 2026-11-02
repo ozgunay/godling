@@ -48,7 +48,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - **Spawning.** New logs appear at a free spot (`freeSpawn`), along the fall or higher up. They never appear inside another piece.
   - **Sky supply.** The cube supply from the sky (ADR-003 O7) is off (`SUPPLY_FROM_SKY = false`). The quarry replaces it; the code stays for viewer drops.
 - **Godling's look (art session; build scripts and previews in `art/`, details in `art/README.md`).**
-  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the Jump, Fall and Climb loops, and Strike (see `art/README.md`).
+  - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the earthquake's Stagger, GetUp and LookAround, the Jump, Fall, Climb and Brace loops, and Strike (see `art/README.md`).
   - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (2.5 x 20 x 2.5, on grid cells about 10 apart) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
     - A felled tree falls along the grid into two logs side by side, in the cells next to its stump (2.5 x 1.25 x 2.5, `RenderRole` "Stump"). The body walks round stumps as terrain.
   - **Terrain on the block grid (ADR-005).** Mesa and quarry heights are whole blocks (2.5, 5, 7.5, 10, 20), and their faces lie on cell boundaries, so blocks set against them sit flush.
@@ -157,6 +157,8 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Gesture` (a clip name) and `Gestures` (a counter) on the player: each new count plays that clip once at its own speed, cutting any one-shot in progress. It is not played on first sight.
     - A model without the clip keeps the older counters: `Reaches` plays PickUp and `Strikes` plays Strike.
     - Jump and Fall loop while the body is jumping or falling, if the model has them. Climb loops while `Climbing` is true.
+    - Brace (crouched, holding on) loops while `Bracing` is true; without the clip the body stays in Idle. Climb wins over Brace, and while either holds, nothing else plays.
+    - Knocked down by an earthquake (`KnockedDown`), the body stays in Stagger's last pose until it is false, and WakeUp gets it up.
     - `__godlingRenderer.animations()` lists each character's one-shot and clip weights, for checking a new model.
   - **Models** (`models.js`): each loads once.
     - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
@@ -167,6 +169,14 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Its rim is tinted by `Feeling`: green when glad, red when troubled, grey in between.
     - Each thought pops up, stays 10 s and fades. The bubble is hidden in the body's own first-person view.
   - **Rain** (`rain.js`, ADR-010): falling streaks round the camera while the Clock's `Rain` is up, with dimmer light, greyer fog and heavier clouds. `?rain=1` forces it.
+  - **Earthquakes** (`shake.js`): the camera shakes with the Clock's `Quake` (0–1). `?quake=0.8` forces it.
+    - The shake is a smooth tremor, put on the camera only for the frame being drawn.
+    - It is half as strong on low and 0.8 on medium. With reduced motion asked for, it is a quarter of that.
+    - The server's capture never shakes: those frames are Godling's own view, and the mind gets the quake from the Clock.
+  - **Dust** (`dust.js`): pixel puffs where a loose piece lands hard (a dropped stone, a sky drop), and where a quake moves pieces.
+    - In a quake, a piece rocking where it lies raises a little dust now and then. One sliding fast leaves a trail.
+    - The stream doesn't say which parts are anchored. So every piece up to 12 long is watched, and only a stopped fall or movement during a quake makes dust; nothing makes dust over the sea.
+    - The puffs are a fixed pool (48, 96 or 160 by tier), drawn in one call.
   - **Wind** (`wind.js`, ADR-010): the Clock's `WindX`/`WindZ`, with gusts added here.
     - It slants the rain along each drop's velocity.
     - It sways the palms in the vertex shader: the bend grows with height, a gust wave sweeps the grove, and the fronds flutter.
@@ -175,7 +185,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - **Checks.**
     - `?stats=1` shows frame rate, draw calls, triangles and the tier.
     - `?quality=low|medium|high` forces a tier.
-    - `globalThis.__godlingRenderer` has the same counts for scripts.
+    - `globalThis.__godlingRenderer` has the same counts for scripts. Its `quake()` gives the quake, its phase and the live dust.
 
 The mind's thinking is not shown in the world. It goes to the run's `mind/thinking.jsonl`, for a separate viewer. Only
 the thought bubble's two words (`Thought`, `Feeling`, set with the input `Think`) reach the world.
