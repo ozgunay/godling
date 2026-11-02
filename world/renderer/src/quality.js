@@ -10,6 +10,11 @@ export const TIERS = {
     smokePuffs: 28, // per fire
     shake: 0.5, // how much of an earthquake's camera shake (none in the capture)
     dustPuffs: 48, // dust puffs alive at once, where pieces land or slide
+    blastDetail: 0.4, // how much of a meteor's blast is drawn: fireball, embers, smoke, chunks (blast.js)
+    blastGlow: 128, // fire, embers and flashes alive at once
+    blastSoft: 96, // smoke, sand and dust alive at once
+    blastChunks: 8, // charred chunks thrown out at once
+    blastLight: false, // the flash lights the ground with a light of its own; without one, the ambient light flares
     pixelRatio: 1.25, // the most device pixels per CSS pixel
     antialias: false,
     shadowMapSize: 1024,
@@ -29,6 +34,11 @@ export const TIERS = {
     smokePuffs: 56,
     shake: 0.8,
     dustPuffs: 96,
+    blastDetail: 0.7,
+    blastGlow: 256,
+    blastSoft: 160,
+    blastChunks: 16,
+    blastLight: true,
     pixelRatio: 1.5,
     antialias: true,
     shadowMapSize: 2048,
@@ -48,6 +58,11 @@ export const TIERS = {
     smokePuffs: 84,
     shake: 1,
     dustPuffs: 160,
+    blastDetail: 1,
+    blastGlow: 384,
+    blastSoft: 256,
+    blastChunks: 24,
+    blastLight: true,
     pixelRatio: 2,
     antialias: true,
     shadowMapSize: 2048,

@@ -42,7 +42,8 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
       template.animations = gltf.animations || []
       template.animated = skinned || template.animations.length > 0
       template.box = new THREE.Box3().setFromObject(scene) // every part, in the rest pose
-      template.height = Math.max(template.box.getSize(new THREE.Vector3()).y, 1e-6)
+      template.extent = template.box.getSize(new THREE.Vector3())
+      template.height = Math.max(template.extent.y, 1e-6)
       template.center = template.box.getCenter(new THREE.Vector3())
       if (!template.animated) template.parts = flatten(scene)
       else scene.traverse((node) => node.isMesh && onMaterial?.(node.material))
@@ -62,11 +63,16 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
       const template = templates.get(url) || load(url)
       return template.ready ? template : null
     },
-    // The model's transform inside its part: turned by the yaw offset, scaled to the part's height, centred.
-    fit(template, size, yawOffsetDeg, out) {
+    // True once the model has failed to load (a missing file, say): the part is then drawn as if it had none.
+    failed: (url) => Boolean(templates.get(url)?.failed),
+    // The model's transform inside its part: turned by the yaw offset, scaled to the part's height, centred. A
+    // stretched model (a crater) is scaled to the part's whole size instead, each way on its own.
+    fit(template, size, yawOffsetDeg, out, stretch = false) {
       const scale = (size?.[1] ?? 5) / template.height
-      out.makeScale(scale, scale, scale)
-      out.setPosition(-template.center.x * scale, -template.center.y * scale, -template.center.z * scale)
+      const sx = stretch ? (size?.[0] ?? 1) / Math.max(template.extent.x, 1e-6) : scale
+      const sz = stretch ? (size?.[2] ?? 1) / Math.max(template.extent.z, 1e-6) : scale
+      out.makeScale(sx, scale, sz)
+      out.setPosition(-template.center.x * sx, -template.center.y * scale, -template.center.z * sz)
       if (yawOffsetDeg) out.premultiply(new THREE.Matrix4().makeRotationY(THREE.MathUtils.degToRad(yawOffsetDeg)))
       return out
     },

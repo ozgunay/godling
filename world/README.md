@@ -177,6 +177,19 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - In a quake, a piece rocking where it lies raises a little dust now and then. One sliding fast leaves a trail.
     - The stream doesn't say which parts are anchored. So every piece up to 12 long is watched, and only a stopped fall or movement during a quake makes dust; nothing makes dust over the sea.
     - The puffs are a fixed pool (48, 96 or 160 by tier), drawn in one call.
+  - **Meteors** (`blast.js`): the explosion where one lands, and the fire trail of one falling.
+    - The world marks the contact point with `Blast_<n>` (RenderRole `Blast`, `Radius`, `SkyId`), an invisible part that lives about 3 s. The blast plays once, when the marker is first seen.
+    - The blast:
+      - a flash that lights the ground (a point light on medium and high; on low the ambient light flares);
+      - a fireball whose puffs burn white, yellow, orange and red, then turn to smoke;
+      - a shock ring along the ground out to `Radius`, with a ring of dust;
+      - smoke that drifts with the wind, sand and embers thrown in arcs, and charred chunks that bounce once and sink away;
+      - coals and a thin smoke in the crater for 4 s;
+      - a camera jolt that is weaker with distance (none in the capture).
+    - The crater (`Crater_<n>`, same `SkyId`) gives the ground, so a hit on a wall top still lands its debris on the ground. Its model is fitted to the part's whole size each way, not by height alone. Without the model, a scorch, a pit and a rim of sand are drawn instead.
+    - A falling meteor (RenderRole `Stone` with `SkyEvent` `Meteor`, falling faster than 10) trails glowing puffs and a thin smoke.
+    - Puffs are two fixed pools by tier, each one draw call: added light (fire's glow, embers, the flash) and blended (fireball, smoke, sand). Low draws 40% of the puffs and 8 chunks, medium 70% and 16, high all and 24.
+  - **Missing models.** A part whose `ModelUrl` fails to load is drawn as if it had none, not left out.
   - **Wind** (`wind.js`, ADR-010): the Clock's `WindX`/`WindZ`, with gusts added here.
     - It slants the rain along each drop's velocity.
     - It sways the palms in the vertex shader: the bend grows with height, a gust wave sweeps the grove, and the fronds flutter.
@@ -186,6 +199,8 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `?stats=1` shows frame rate, draw calls, triangles and the tier.
     - `?quality=low|medium|high` forces a tier.
     - `globalThis.__godlingRenderer` has the same counts for scripts. Its `quake()` gives the quake, its phase and the live dust.
+    - Its `blasts()` gives the renderer's clock, the blasts in play, the live puffs and chunks, and the flash's light.
+    - A script may set its `afterDraw(time)`, called right after each frame is drawn, to grab frames at given times on the renderer's clock. The effects run on that clock, so this works even in a throttled background tab.
 
 The mind's thinking is not shown in the world. It goes to the run's `mind/thinking.jsonl`, for a separate viewer. Only
 the thought bubble's two words (`Thought`, `Feeling`, set with the input `Think`) reach the world.
