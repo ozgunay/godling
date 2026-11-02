@@ -10,6 +10,7 @@ again.
 | Quarrying: hammer, quarry outcrop, stone cube, stone brick, boulder | `hammer.glb`, `quarry.glb`, `stone.glb`, `brick.glb`, `boulder.glb` | `build_props.py` |
 | Ladder | `world/assets/ladder.glb` | `build_props.py` |
 | Castaway: raft, coconut, spear, fish (raw and cooked), volleyball | `raft.glb`, `coconut.glb`, `spear.glb`, `fish.glb`, `fish_cooked.glb`, `volleyball.glb` | `build_props.py` |
+| Meteor: the stone it leaves and its crater | `meteor.glb`, `crater.glb` | `build_props.py` |
 
 The survival pieces, with the way each one lies in its part:
 - **Coconut:** a brown husk with three faint ridges, mottled with vertex colours, for a 0.9 ball part.
@@ -116,6 +117,14 @@ Preview stills of any clip, four moments each:
   - An inflatable ring, round at one end and collapsed flat and wrinkled at the other.
   - A sagging floor, a canopy fallen in over the inflated end, and a slack grab line.
 - **Ladder:** two rails and 8 rungs along X, coral caps, standing upright. Its proportions are those of the 1.5 × 7.5 × 0.4 part (Minecraft scale, ADR-005).
+- **Meteor:** the stone a meteor leaves, for its cube part (`Meteor_<n>`, a building stone like the others).
+  - Charred, pitted rock, squared off enough to stack. Its faces bulge out to the part's faces at most, so it never pokes out of its part.
+  - Glowing veins: the facets a wandering zero line of noise crosses, in an orange emissive material (`ember`), so they join up into cracks.
+  - It is heavier than a stone (1280 facets, about 150 KB), for the veins to run smoothly; there are only ever a few.
+- **Crater:** where a meteor struck, for its 8 × 0.6 × 8 part lying on the ground (`Crater_<n>`).
+  - A dish of scorched sand inside a raised rim of thrown-up sand, dark rays of ash across the apron, and charred chunks of rock about it.
+  - The ground is not dug, so the dish is only the rim's inside slope down to a near-flat burnt floor. The apron's foot is round, on the part's edge, at ground level.
+  - Sand and soot are vertex colours, in the same matte material as the rocks.
 
 At Minecraft scale (ADR-005) every part grew evenly except the ladder's, so only the ladder was rebuilt. `brick.glb` is no longer used by the world.
 
