@@ -3,11 +3,13 @@
     blender --background --factory-startup --python art/build_props.py
 
 Props in the same soft vinyl-toy style as Godling: a tree, a log and an axe; for quarrying a hammer, the
-quarry outcrop, a rough stone cube and a long stone brick. Each is one mesh, exported on its own. The world's
+quarry outcrop, a rough stone cube and a long stone brick; a meteor's stone and the crater it leaves. Each is one
+mesh, exported on its own. The world's
 renderer scales a model so its height matches the height of the part that carries it, so each model keeps
 its part's proportions (and long axis; Blender Y becomes the model's Z).
 
-Writes world/assets/{tree,palm,stump,log,axe,hammer,quarry,stone,brick,boulder,ladder}.glb and art/props.blend.
+Writes world/assets/{tree,palm,stump,log,axe,hammer,quarry,stone,brick,boulder,ladder,meteor,crater}.glb (and the
+castaway pieces) and art/props.blend.
 """
 import math
 from pathlib import Path
@@ -55,6 +57,13 @@ PALETTE = {  # as seen on screen (sRGB)
     "fresh_cut": dict(color=(0.93, 0.89, 0.81), roughness=0.8),
     "moss": dict(color=(0.47, 0.6, 0.3), roughness=0.9),
     "cut_stone": dict(color=(0.78, 0.76, 0.71), roughness=0.9),
+    # A meteor: charred rock with embers in its cracks, and the crater of scorched and thrown-up sand it leaves.
+    "char": dict(color=(0.42, 0.37, 0.34), roughness=0.9),
+    "char_dark": dict(color=(0.3, 0.27, 0.25), roughness=0.9),
+    "ember": dict(color=(1.0, 0.4, 0.08), roughness=0.6, emission=1.2),  # bright, but still orange
+    "scorch": dict(color=(0.32, 0.28, 0.25), roughness=1.0),
+    "sand_dark": dict(color=(0.64, 0.56, 0.45), roughness=1.0),
+    "sand_thrown": dict(color=(0.84, 0.75, 0.59), roughness=1.0),
 }
 
 
@@ -70,6 +79,9 @@ def material(name):
     bsdf.inputs["Base Color"].default_value = (*linear(spec["color"]), 1)
     bsdf.inputs["Roughness"].default_value = spec["roughness"]
     bsdf.inputs["Metallic"].default_value = spec.get("metallic", 0.0)
+    if spec.get("emission"):
+        bsdf.inputs["Emission Color"].default_value = (*linear(spec["color"]), 1)
+        bsdf.inputs["Emission Strength"].default_value = spec["emission"]
     return mat
 
 
@@ -810,6 +822,114 @@ def quarry():
     return obj
 
 
+METEOR_BOX = ((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5))  # its part is a cube, like a stone's
+CRATER_SIZE, CRATER_HEIGHT = 8.0, 0.6  # its part, 8 x 0.6 x 8, lies on the ground where the meteor struck
+CRATER_BOX = ((-CRATER_SIZE / 2, -CRATER_SIZE / 2, 0), (CRATER_SIZE / 2, CRATER_SIZE / 2, CRATER_HEIGHT))
+
+
+def meteor():
+    """The stone a meteor leaves, for its cube part (a building stone like the others): charred, pitted rock,
+    squared off enough to stack, with embers glowing in the cracks. Its faces bulge out to the part's faces at most,
+    so it never pokes out of its part."""
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=4, radius=1.0)  # 1280 facets: fine enough for cracks to run through
+    offset = Vector((41.0, 15.2, 29.1))
+    for v in bm.verts:
+        squared = v.co.lerp(v.co / max(abs(c) for c in v.co), 0.55)  # halfway out to the cube; 1 at face centres
+        pits = 0.08 * (0.5 + 0.5 * noise.noise(v.co * 2.2 + offset)) + 0.06 * abs(noise.noise(v.co * 6.0 + offset))
+        v.co = squared * 0.5 * (1 - pits)
+    # Cracks: the facets a wandering line of zero crosses, so they join up into veins (a threshold on the noise
+    # instead left loose specks).
+    vein = {v: noise.noise(v.co * 3.2 + offset * 0.5) for v in bm.verts}
+    bm.faces.index_update()
+    cracks = {f.index for f in bm.faces if min(vein[v] for v in f.verts) < 0 < max(vein[v] for v in f.verts)}
+    obj = _mesh_object("Meteor", bm)
+    obj.data.materials.append(material("char"))
+    obj.data.materials.append(material("char_dark"))
+    for poly in obj.data.polygons:  # darker patches where it burned most
+        poly.material_index = 1 if noise.noise(poly.center * 1.7 + offset) > 0.2 else 0
+    rock_colours(obj, seed=41.0, shade=0.15, jitter=0.15)
+    obj.data.materials.append(material("ember"))  # the cracks glow: their own emissive material
+    for poly in obj.data.polygons:
+        if poly.index in cracks:
+            poly.material_index = 1
+    return obj
+
+
+def _crater_height(r):
+    """The crater's surface at distance r from its centre: a near-flat burnt floor, the rim's inside slope up to its
+    crest, and the apron of thrown sand down to the ground at the part's edge. (The ground is not dug: no depth.)"""
+    floor, crest, rim = 2.3, 3.25, CRATER_SIZE / 2
+    if r < floor:
+        return 0.03 + 0.1 * (r / floor) ** 2
+    if r < crest:
+        t = (r - floor) / (crest - floor)
+        return 0.13 + 0.4 * t * t * (3 - 2 * t)
+    t = min(1.0, (r - crest) / (rim - crest))
+    return 0.53 * (1 - t * t * (3 - 2 * t))
+
+
+def crater():
+    """Where a meteor struck, for its 8 x 0.6 x 8 part lying on the ground: a dish of scorched sand inside a raised
+    rim of thrown-up sand, dark rays of ejecta across the apron, and charred chunks of rock about it."""
+    bm = bmesh.new()
+    segments, rings = 48, [0.5, 1.0, 1.5, 2.0, 2.3, 2.6, 2.85, 3.05, 3.25, 3.45, 3.65, 3.85, 4.0]
+    offset = Vector((7.0, 3.0, 0.0))
+    tone = {name: Vector(linear(PALETTE[name]["color"])) for name in ("scorch", "sand_dark", "sand_thrown")}
+    colour_of = {}
+
+    def colour(r, a):
+        def blend(c0, c1, r0, r1):
+            t = min(1.0, max(0.0, (r - r0) / (r1 - r0)))
+            return tone[c0].lerp(tone[c1], t * t * (3 - 2 * t))
+        c = blend("scorch", "sand_dark", 1.4, 2.7) if r < 2.7 else blend("sand_dark", "sand_thrown", 2.7, 3.2)
+        ray = min(1.0, max(0.0, 3.0 * noise.noise(Vector((math.cos(a), math.sin(a), 0)) * 2.2 + offset)))  # radial
+        ray *= min(1.0, max(0.0, (r - 2.0) / 0.8)) * (1 - 0.5 * max(0.0, (r - 3.4) / 0.6))  # fading at the foot
+        return c.lerp(tone["scorch"], 0.75 * ray)
+
+    centre = bm.verts.new((0, 0, _crater_height(0)))
+    colour_of[centre] = colour(0, 0)
+    grid = []
+    for r in rings:
+        ring = []
+        for k in range(segments):
+            a = 2 * math.pi * k / segments
+            wobble = 1 - 0.07 * (0.5 + 0.5 * noise.noise(Vector((math.cos(a), math.sin(a), 0)) * 1.8 + offset))
+            rr = r * wobble if r < rings[-1] else r  # the apron's foot stays round, on the part's edge
+            z = _crater_height(rr) + (0.03 * noise.noise(Vector((rr * math.cos(a), rr * math.sin(a), 0)) * 2.0)
+                                      if 0.5 < rr < rings[-1] - 0.1 else 0.0)
+            v = bm.verts.new((rr * math.cos(a), rr * math.sin(a), max(0.0, z)))
+            colour_of[v] = colour(rr, a)
+            ring.append(v)
+        grid.append(ring)
+    for k in range(segments):
+        bm.faces.new((centre, grid[0][k], grid[0][(k + 1) % segments]))
+    for inner, outer in zip(grid, grid[1:]):
+        for k in range(segments):
+            bm.faces.new((inner[k], outer[k], outer[(k + 1) % segments], inner[(k + 1) % segments]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    obj = _mesh_object("Crater", bm)
+    colors = obj.data.color_attributes.new("Col", "FLOAT_COLOR", "CORNER")
+    verts = list(colour_of.values())  # in the order the vertices were made, which the mesh keeps
+    for poly in obj.data.polygons:
+        poly.use_smooth = True
+        for li, vi in zip(poly.loop_indices, poly.vertices):
+            colors.data[li].color = (*verts[vi], 1.0)
+    obj.data.materials.append(vertex_colour_material())
+    # Charred chunks: thrown onto the floor and out over the apron (low enough to stay inside the part).
+    parts = [obj]
+    chunks = [(1.1, 0.4, 0.3), (1.7, 2.3, 0.24), (0.6, 4.0, 0.22), (2.0, 5.3, 0.28), (1.4, 3.3, 0.18),
+              (3.55, 0.9, 0.16), (3.7, 2.9, 0.13), (3.5, 4.6, 0.17), (3.75, 5.8, 0.12), (3.0, 1.9, 0.14),
+              (3.05, 3.9, 0.12)]
+    for i, (r, a, size) in enumerate(chunks):
+        x, y = r * math.cos(a), r * math.sin(a)
+        rock = boulder((x, y, _crater_height(r) + size * 0.45), (size * 1.3, size, size * 0.75), 60.0 + i,
+                       "char_dark" if i % 2 else "char", detail=1)
+        rock_colours(rock, seed=60.0 + i, shade=0.1)
+        parts.append(rock)
+    return join(parts, "Crater")
+
+
 def rock_colours(obj, seed=0.0, moss=0.0, shade=0.22, jitter=0.09):
     """Paint rock per facet, in face-corner colours, and give the mesh one material that shows them.
 
@@ -839,6 +959,11 @@ def rock_colours(obj, seed=0.0, moss=0.0, shade=0.22, jitter=0.09):
         poly.material_index = 0
         poly.use_smooth = False
     mesh.materials.clear()
+    mesh.materials.append(vertex_colour_material())
+
+
+def vertex_colour_material():
+    """The one material of rock (and the crater's sand): its colour is the mesh's "Col" face-corner colours."""
     mat = bpy.data.materials.get("rock_vc") or bpy.data.materials.new("rock_vc")
     mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
@@ -848,7 +973,7 @@ def rock_colours(obj, seed=0.0, moss=0.0, shade=0.22, jitter=0.09):
     links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
     bsdf.inputs["Roughness"].default_value = 0.95
     bsdf.inputs["Metallic"].default_value = 0.0
-    mesh.materials.append(mat)
+    return mat
 
 
 def export(obj, filename):
@@ -868,9 +993,10 @@ def main():
             "brick.glb": stone_block("Brick", (1.5, 0.75, 0.75), 5.0), "ladder.glb": ladder(),
             "boulder.glb": boulder_ball(), "stump.glb": stump(), "palm.glb": palm(), "raft.glb": raft(),
             "coconut.glb": coconut(), "spear.glb": spear(), "fish.glb": fish(), "fish_cooked.glb": fish(cooked=True),
-            "volleyball.glb": volleyball()}
+            "volleyball.glb": volleyball(), "meteor.glb": meteor(), "crater.glb": crater()}
     boxes = {"raft.glb": ((-RAFT_LENGTH / 2, -RAFT_WIDTH / 2, 0), (RAFT_LENGTH / 2, RAFT_WIDTH / 2, RAFT_HEIGHT)),
-             "spear.glb": SPEAR_BOX, "fish.glb": FISH_BOX, "fish_cooked.glb": FISH_BOX}
+             "spear.glb": SPEAR_BOX, "fish.glb": FISH_BOX, "fish_cooked.glb": FISH_BOX, "meteor.glb": METEOR_BOX,
+             "crater.glb": CRATER_BOX}
     for filename, obj in made.items():
         fit_bounds(obj, foot_centred=filename in ("tree.glb", "palm.glb"), box=boxes.get(filename))
         obj.location = (0, 0, 0)
@@ -883,7 +1009,8 @@ def main():
               "hammer.glb": (4.2, -1.2), "stone.glb": (5.2, -1.6), "brick.glb": (6.6, -1.4), "ladder.glb": (-3.2, 1.2),
               "boulder.glb": (3.0, 2.0), "stump.glb": (-1.6, 2.6), "palm.glb": (-5.5, -2.0), "raft.glb": (-4.0, -7.0),
               "coconut.glb": (0.5, -4.0), "spear.glb": (2.0, -4.5), "fish.glb": (-1.0, -4.0),
-              "fish_cooked.glb": (-1.0, -5.0), "volleyball.glb": (1.0, -5.5)}
+              "fish_cooked.glb": (-1.0, -5.0), "volleyball.glb": (1.0, -5.5), "meteor.glb": (11.0, -9.0),
+              "crater.glb": (11.0, -9.0)}
     for filename, (x, y) in layout.items():
         obj = made[filename]
         obj.location = (x, y, 0)
