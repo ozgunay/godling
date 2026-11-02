@@ -158,6 +158,12 @@ class Attention:
             by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
             out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
                         f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+        if after.quake_phase and not before.quake_phase:  # an earthquake: the rumble before the shaking
+            out.append(("The ground is rumbling under you: an earthquake is coming", 5, [],
+                        {"sky": "Earthquake", "sky_id": int(after.quake_id or 0), "sky_stage": "warning"}))
+        elif before.quake_phase and not after.quake_phase:
+            out.append(("The ground has stopped shaking", 4, [],
+                        {"sky": "Earthquake", "sky_id": int(after.quake_id or 0), "sky_stage": "arrived"}))
         if (after.rain >= 0.3) != (before.rain >= 0.3):  # the weather turns (ADR-010)
             out.append(("It has started to rain" if after.rain >= 0.3 else "The rain has stopped", 3, [], {}))
         if (after.fog >= 0.5) != (before.fog >= 0.5):

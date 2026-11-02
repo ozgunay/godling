@@ -33,6 +33,8 @@ POWERS = [
     ("Regrow", "Regrow a tree", "The stump nearest Godling grows back at once.", "gift"),
     ("Lightning", "Lightning", "Strikes the tree nearest Godling and fells it into two logs.", "mid"),
     ("Meteor", "Meteor", "A shadow spreads near Godling; 40 s later a dark stone lands in it.", "mid"),
+    ("Earthquake", "Earthquake", "The ground rumbles, then shakes for 20 s. Loose pieces near Godling can fall; fastened "
+     "ones hold. Godling braces itself.", "big"),
 ]
 WHY_NOT = {
     "NoClearSpot": "No clear spot near Godling right now.",
@@ -40,6 +42,9 @@ WHY_NOT = {
     "NoStump": "No stump to regrow: every tree is standing.",
     "NobodyHere": "Godling is not in the world.",
     "UnknownPower": "The world does not know that power (is it running an older copy of main.lua?).",
+    "AlreadyShaking": "The ground is already shaking.",
+    "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after a faint.",
+    "NothingBuiltYet": "Nothing built yet: an earthquake needs at least 15 pieces standing near Godling.",
 }
 DONE = {
     "Stone": "dropped near Godling.",
@@ -47,6 +52,7 @@ DONE = {
     "Regrow": "a tree grew back.",
     "Lightning": "struck a tree.",
     "Meteor": "a shadow spreads near Godling; the stone lands in 40 s.",
+    "Earthquake": "the ground rumbles; the shaking starts in 8 s.",
 }
 LOG_TAIL_BYTES = 400_000
 
@@ -85,6 +91,9 @@ def describe(power, result):
         number = result.rsplit(":", 1)[1]
         return True, f"{label} #{number}: {DONE.get(power, 'done.')}"
     why = result.split(":", 1)[1] if ":" in result else result
+    if why.startswith("TooSoon:"):  # disasters have a cooldown; the world says how long is left
+        minutes, seconds = divmod(int(why.split(":")[1]), 60)
+        return False, f"{label}: too soon after the last disaster; try again in {minutes}:{seconds:02d}."
     if why.startswith("World"):
         return False, f"{label}: could not reach the world ({why[6:] or 'no answer'}). If it says the game is full, " \
                       "the world needs max_players = 2 in world.toml."
@@ -235,7 +244,7 @@ h2:first-child { margin-top: 0; }
 .power small { grid-column: 1 / -1; color: var(--muted); }
 .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 99px;
   border: 1px solid currentColor; }
-.tag.gift { color: var(--gift); } .tag.mid { color: var(--mid); }
+.tag.gift { color: var(--gift); } .tag.mid { color: var(--mid); } .tag.big { color: var(--warn); }
 ul { list-style: none; margin: 0; padding: 0; }
 li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 li time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }

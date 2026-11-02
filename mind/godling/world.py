@@ -182,6 +182,13 @@ class Snapshot:
         self.rain = (clock.attrs.get("Rain") or 0) if clock else 0  # 0 dry .. 1 pouring
         self.fog = (clock.attrs.get("Fog") or 0) if clock else 0  # 0 clear .. 1 thick (ADR-010)
         self.wind = math.hypot(clock.attrs.get("WindX") or 0, clock.attrs.get("WindZ") or 0) if clock else 0  # 0 .. 1 gale
+        # An earthquake (main.lua EARTHQUAKE): its strength 0-1, its phase ("rumble", "shaking", "fade" or "" when the
+        # ground is still), its number, and how many pieces the last one brought down.
+        self.quake = (clock.attrs.get("Quake") or 0) if clock else 0
+        self.quake_phase = (clock.attrs.get("QuakePhase") or "") if clock else ""
+        self.quake_id = clock.attrs.get("QuakeId") if clock else None
+        self.quake_fell = (clock.attrs.get("QuakeFell") or 0) if clock else 0
+        self.bracing, self.knocked_down = bool(attrs.get("Bracing")), bool(attrs.get("KnockedDown"))
         self._held, self._held_known = None, False
 
     @property

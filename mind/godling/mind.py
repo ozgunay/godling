@@ -183,6 +183,8 @@ Days turn into nights; nights are dark and cold. The weather turns: showers, spe
 thunderstorms, fog some mornings. Rain soaks you and slows your walking. Being cold wears your health down and stops
 you healing. A roof over your head keeps the rain off; walls around you with a roof over you, or a fire close by,
 keep the cold off.
+Now and then the ground shakes. Loose pieces can fall; fastened pieces hold where they are, and a wide base stands
+better than a thin one. When the ground rumbles, your body braces by itself until it is still.
 Everything else about the world, and how to build well, is yours to discover.
 
 ## Your body's moves

@@ -69,6 +69,24 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - Every piece a power leaves carries `SkyEvent` (its kind) and `SkyId`. The world log prints a `SKY <kind> #<id>` line for each.
   - Powers come only from the bodiless player `Sky` (`SKY_PLAYER`), which `tools/guest_panel.py` joins as. It is parked under the island, and the mind leaves it out of what it sees. `max_players` is 2 for it.
   - `SKY_TEST_EVERY` (seconds, 0 = off) drops a meteor near Godling on a timer, to measure reactions without the panel. `run_godling.py --sky-test-minutes` sets it.
+- **Earthquake** (`sky.quake`; plan: `research/god-powers-and-disasters-plan.md` §5). A guest-panel power, `Earthquake`.
+  - **Phases:** an 8 s rumble, 20 s of shaking, a 5 s fade. The Clock carries `Quake` (0–1), `QuakePhase` ("rumble", "shaking", "fade" or ""), `QuakeId`, and afterwards `QuakeFell`.
+  - **Physics:** the ground stays still. Every loose piece within 60 of Godling (at most 200) is woken out of its settled state and gets the ground's motion turned round: each tick an impulse of -a(t) × its mass × dt at its centre.
+    - The peak is about 0.65 g, in slow swings (0.45, 0.8 and 1.5 Hz).
+    - Rapier decides what falls. Settling waits (`Quaking`) until the shaking stops, then squares everything back into cells.
+  - **Never moved:** fastened pieces, boulders, terrain, held pieces, and the column of pieces under any body's feet.
+  - **Bodies:**
+    - `Brace` makes a body crouch and hold on (`Bracing`; the root part is anchored) until 1.5 s after the shaking.
+    - At the rumble a body looks around (gesture `LookAround`).
+    - A body not braced when the shaking starts is knocked down (`KnockedDown`, gesture `Stagger`) for 2.5 s, then gets up (gesture `GetUp`). It is unhurt.
+  - **Gates:**
+    - not while one is under way;
+    - 10 minutes between disasters in test mode;
+    - not while Godling's health is under 30, or within 15 minutes of a faint;
+    - at least 15 settled pieces within reach.
+  - **The world log** prints `SKY Earthquake #n rumbling / shaking / over: woke W, moved M, fell F`, and `QUAKE knocked … down`.
+- **One table for the sky's parts** (`local sky`: `turners`, `power`, `quake`, `pedestal`, `parkGuest`). The main chunk is at Luau's limit of 200 locals; one more stopped the world with "Out of local registers".
+- **The guest panel's "Sky" body stays parked.** A character's body does not stay anchored. The parked Sky body fell out of the world and was put back on the spawn spot, on Godling's head (since PR #3; found by the renderer session). It now stands on an invisible `SkyPedestal` at (0, -40, 0) under the island, and is put back there every half second if it drifts.
 - **Weather (ADR-010).** Showers every 20–50 minutes, 4–10 long; the Clock carries `Rain` (0–1).
   - Out in the rain, a body walks at 0.65 of its pace and gets soaked (`Wet` 0–100).
   - At night, or soaked in the rain, a body in the open is `Cold`: it loses health and does not heal.
