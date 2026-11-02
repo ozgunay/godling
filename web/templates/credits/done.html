@@ -3,7 +3,18 @@
 {% block content %}
 {% if payment and payment.status == "paid" %}
   <h1>Thank you</h1>
-  <p>{{ payment.credits }} credits are in your purse. You hold <b>{{ balance }}</b> now.</p>
+  <p>{{ payment.granted }} credits are in your purse. You hold <b>{{ balance }}</b> now.</p>
+  {% if owed %}<p>{{ owed }} credits are still owed from a refunded or disputed payment.</p>{% endif %}
+{% elif payment and payment.status == "held" %}
+  <h1>We are checking this payment</h1>
+  <p>Stripe's charge did not match the pack, so its {{ payment.credits }} credits wait until we have looked at it.
+    If it is not right, the money goes back to you. You hold <b>{{ balance }}</b> now.</p>
+{% elif payment and payment.status == "refunded" %}
+  <h1>Refunded</h1>
+  <p>This payment was refunded, so its credits are not in your purse. You hold <b>{{ balance }}</b>.</p>
+{% elif payment and payment.status == "disputed" %}
+  <h1>Disputed</h1>
+  <p>This payment is disputed with your bank; its credits wait until the bank decides. You hold <b>{{ balance }}</b>.</p>
 {% elif payment %}
   <h1>Almost there</h1>
   <p>The payment is on its way. Your {{ payment.credits }} credits arrive as soon as Stripe confirms it; this can take

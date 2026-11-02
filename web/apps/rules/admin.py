@@ -11,7 +11,7 @@ class RulesAdmin(admin.ModelAdmin):
     fieldsets = [
         ("Credits", {"fields": ["welcome_credits", "free_powers"]}),
         ("Pace", {"fields": ["power_every", "note_every"]}),
-        ("Notes", {"fields": ["note_limit", "reports_to_hide"]}),
+        ("Notes", {"fields": ["note_limit", "reports_to_hide", "report_min_age_hours", "reports_per_hour"]}),
     ]
 
     def changelist_view(self, request, extra_context=None):

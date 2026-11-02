@@ -8,7 +8,10 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.http import JsonResponse
 from django.shortcuts import render
 
-LOGS = {"world": "world.log", "mind": "console.log", "thoughts": "mind/log.jsonl", "panel": "panel.log"}
+# The stream relay is a service of its own when deployed (docker compose logs relay); a local run with --relay writes
+# relay.log beside these.
+LOGS = {"world": "world.log", "mind": "console.log", "thoughts": "mind/log.jsonl", "panel": "panel.log",
+        "relay": "relay.log"}
 TAIL_BYTES = 200_000
 TAIL_LINES = 200
 
