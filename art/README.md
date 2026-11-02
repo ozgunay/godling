@@ -5,10 +5,20 @@ again.
 
 | Model | File | Built by |
 |---|---|---|
-| Godling, the mascot (clips: Idle, Walk, PickUp, Strike, Climb) | `world/assets/godling.glb` | `build_godling.py` |
-| Tree, stump, log, axe | `world/assets/tree.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
+| Godling, the mascot (clips: Idle, Walk, a gesture for each action, Jump, Fall, Climb, Strike) | `world/assets/godling.glb` | `build_godling.py` |
+| Tree, palm, stump, log, axe | `world/assets/tree.glb`, `palm.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
 | Quarrying: hammer, quarry outcrop, stone cube, stone brick, boulder | `hammer.glb`, `quarry.glb`, `stone.glb`, `brick.glb`, `boulder.glb` | `build_props.py` |
 | Ladder | `world/assets/ladder.glb` | `build_props.py` |
+| Castaway: raft, coconut, spear, fish (raw and cooked), volleyball | `raft.glb`, `coconut.glb`, `spear.glb`, `fish.glb`, `fish_cooked.glb`, `volleyball.glb` | `build_props.py` |
+
+The survival pieces, with the way each one lies in its part:
+- **Coconut:** a brown husk with three faint ridges, mottled with vertex colours, for a 0.9 ball part.
+- **Spear:** an eight-sided whittled shaft that wanders a little, with knots and a paler carved point. It is 4.5 long along the model's Z, with the point at the part's local −Z (its LookVector), like the axe and hammer heads.
+- **Fish:** a chubby reef fish, dark blue back to silver belly in vertex colours, with blue fins and eyes.
+  - It lies on its side like its 1.3 × 0.35 × 0.5 part: head at +X, back towards local −Z.
+  - A swimming fish rolls its part 90° about X, which puts the back up.
+  - `fish_cooked.glb` is the same fish browned, with grill marks.
+- **Volleyball:** a plain white ball with the classic crossing panels and soft seam grooves, for a 1.1 ball part. It has no face and no brand mark; Godling is to name it itself.
 
 ```powershell
 $blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
@@ -40,34 +50,101 @@ Being a god, it levitates what it carries above its head, which is how the world
 - The head and screen are rounded boxes: a 4-segment bevel with hardened normals instead of an 8-segment bevel under level-2 subdivision.
 - At the size Godling is seen, the previews look the same as before.
 
-**Clips** (60 fps). The runtime model controller picks Walk and Idle by name:
-- **Walk:** `source/walking.fbx`, with its forward travel removed (the world moves the body). The bob and sway are kept and scaled to the shorter legs.
-- **Idle:** frames 1–30 of `source/picking_up.fbx` (a calm stance), played forth and back.
-- **PickUp:** frames 40–370 of `source/picking_up.fbx`, sped up 2.6× to 2.1 s.
-  - The back and hips bend is cut to 35%: an adult's 90° scoop makes a big-headed chibi face-plant.
-  - The thighs are re-solved every frame so the feet stay planted.
-  - The runtime does not play this clip on its own; the world renderer has to trigger it on a pick-up.
-- **Strike** and **Climb** have no Mixamo source. Each pose in them aims Godling's own bones in a direction (`posed_clip`), on top of Idle's stance:
-  - **Strike** (1.0 s): a two-handed swing. The arms wind up wide and high, then come down in front with a 26° bow, then recover.
-  - **Climb** (1.0 s, loops): hand over hand. One hand reaches up beside the head, the other grips at the chest, and the opposite knee steps up.
-  - Every bone is keyed, so no bone falls back to the T-pose while either plays alone.
-- The arms are 0.65× an adult's. At 0.5× a raised hand stayed hidden under the big head.
+**Clips** (60 fps) come from Mixamo, listed in `CLIPS` in `build_godling.py`.
+- Every source is in `art/source`: skeleton only, 60 fps, all from the same Mixamo character, so all share one skeleton and drop straight onto Godling.
+- Each entry gives a source file, the frames to keep, the length in game, and options:
+  - `loop`: the clip repeats.
+  - `bend`: keeps only part of the back's bend, because a deep bend makes the big-headed chibi face-plant. The thighs are re-solved so the feet stay planted.
+  - `still`: removes the root's drift across the ground, because the world moves the body.
+  - `cut`: leaves out the middle of a long hold (Cook's warming of hands), so the clip keeps its start and end at less speed-up.
+  - `ease`: eases from the standing pose into the clip and back out of it. A clip that starts or ends kneeling or lying then drops into it, where the renderer's 0.2 s cross-fade would snap.
+  - `settle`: keeps the hips at standing height on average (the in-place ladder climb hangs the body in the air).
+  - `face`: turns the clip about the vertical so the body faces forward on average (the ladder climb is acted facing away).
+  - `upright`: tips the clip so the body stands upright on average (Mixamo's falls are acted lying flat in the air, which on Godling reads as a faint).
+  - `pingpong`: plays the kept frames forth and back, a seamless loop from part of a one-off motion (Jump's take-off).
+- Frames are chosen so each clip keeps just the action and the speed-up stays near 2x where the world allows; the lift and lowering must fit 1.0–1.2 s, so they run about 5x.
+- On every clip, `spread_arms` holds the arms a little out from the body. An adult's arm swing passes inside Godling's chubby torso, and a raised hand would vanish into the head.
+- A clip whose file is missing is left out (the build prints `SKIP`).
+- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 21 clips, `godling.glb` is about 750 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
+- **Idle** is `happy_idle.fbx`. **Walk** is `happy_walk.fbx`, downloaded with "In Place". The build prints the walk's stride speed for the renderer's `WALK_STRIDE_SPEED`; Happy Walk's is 0.667.
+- **PickUp** is frames 40–370 of `picking_up.fbx`, retimed to 1.1 s, with its bend cut to 35%.
+- **Gestures**, each timed to the world (a strike at most every 0.8 s, a lift 1.0 s, a lowering 1.2 s, a rub for fire every 4 s or more). The Mixamo animation behind each:
+  - PutDown: Putting Down. Throw: Throw (from a standard pose).
+  - Chop: Standing Melee Attack Horizontal (an axe, right to left). Mine and Carve: Standing Melee Attack Downward. Spear: Bayonet Stab.
+  - Shake: Pushing (an object forward), a shove at the trunk.
+  - Kindle: Kneeling Inspecting. Cook: Kneel (warming hands over a campfire). Fasten: Pull Plant (kneeling). Draw: Dig And Plant Seeds.
+  - Eat: Drinking. Talk: Talking (asking a question with two hands). WakeUp: Getting Up (from the back).
+- **Loops:** Jump is Jump (in place), its take-off played forth and back. Fall is Falling (in the air), stood upright: flailing. Climb is Climbing Ladder, downloaded with "In Place".
+- **How the world plays them:** at each action the world sets the player's `Gesture` (a clip name) and bumps `Gestures`. The renderer plays that clip once. If `godling.glb` has no such clip, it falls back to PickUp (`Reaches`) or Strike (`Strikes`). Jump and Fall loop while the body's humanoid state is Jumping or Freefall, and Climb while `Climbing` is true.
+- **Strike**, and **Climb** while there is no `climb.fbx`, are posed by hand (`posed_clip`), each pose aiming Godling's own bones in a direction:
+  - **Strike** (1.0 s) is a two-handed swing: wind up wide and high, come down in front with a bow, recover.
+  - The posed **Climb** (1.0 s, loops) is hand over hand, the opposite knee stepping up.
+- The arms are 0.65× an adult's.
+
+Preview stills of any clip, four moments each:
+```powershell
+& $blender --background art\godling.blend --python art\render_preview.py -- godling Walk Chop
+```
 
 ## Props
-- **Tree:** about 3.6 m, trunk with a root flare, and a canopy of five soft green blobs.
-- **Log:** lies along X, six times as long as thick (its part is a 3.0 × 0.5 × 0.5 cylinder), with bark sides and cut ends showing growth rings.
+- **Tree:** a trunk with a root flare and a canopy of five soft green blobs.
+  - The clear trunk is about 60% of the height, and the trunk is about a ninth as thick as the tree is tall.
+  - So a tree part 22–26 tall and 2.5 wide holds the two 7.5 × 2.5 logs it is felled into (Minecraft scale).
+- **Palm:** a coconut palm for the same 2.5 × 20 × 2.5 part as the trees. The style reference is Cast Away's island, as the user asked; it copies no artwork.
+  - A slim grey-brown trunk that leans out (+X) and curves back up near the top.
+  - Its rings are vertex colours: each segment shades from pale bark to a darker scar under the next, like overlapping leaf bases. Alternating pale and dark segments read as candy stripes.
+  - A tuft of long arching fronds and coconuts.
+  - The trunk's foot is at the part's centre: see "fit by the whole outline" below. Rotating the part turns the lean, so a beach cluster can lean every which way.
+- **Log:** a squared timber beam along X, exactly 3 : 1 : 1 like its 7.5 × 2.5 × 2.5 block part (ADR-005: a full block thick and three long, since round logs rolled off what they were set on). It has four alike hewn faces, since a beam stood on end shows them all, rough bark left along the corners, and growth rings on both square ends.
 - **Stump:** what a felled tree leaves, 1.4 across its roots and 0.6 tall, with a ringed cut top.
 - **Axe:** lies on its side like its 0.4 × 0.4 × 1.0 part, handle along the model's Z and blade up. It has a wooden handle, coral grip, and a steel head with a bright edge.
-- **Boulder:** a heavy, lumpy rock with a few worn flat facets, round enough for its 1.6 ball part.
+- **Boulder:** a heavy, lumpy rock with a few worn flat facets, round enough for its ball part. It is flat-shaded, with chunky facets, shade towards the ground and a little moss on top.
 - **Hammer:** a stonemason's sledge lying on its side, 1.2 long (the model's Z), with a dark iron head and bright striking faces.
-- **Quarry:** a rocky outcrop, 6 × 3.5 × 5, with pale freshly cut faces and a bench, and rubble and broken chunks at its foot.
-- **Stone and brick:** rough-cut granite, 0.75 cube and 1.5 × 0.75 × 0.75 (long along X), chiselled with dents only, so they never poke out of their part.
+- **Quarry:** a stratified outcrop that fills its 10 × 5 × 7.5 part.
+  - Ledges of warm grey and tan rock, with moss on their tops, in the style of the terraced peaks.
+  - Its front is quarried back into stepped benches with sheer, pale cut faces, with cut blocks and rubble at its foot.
+  - The working face points to the model's −Z, south, out of the peak's foot the quarry is cut into.
+- **Stone and brick:** cut stone blocks (`cut_stone`), a cube and a 2 : 1 : 1 brick.
+  - Chamfered edges worn pale, each face dressed into a few flat facets, and a knocked corner or two.
+  - They are chiselled with dents only, so they never poke out of their part.
+  - Each facet has its own flat tone. The earlier softly mottled granite blurred into a "ghost box" in game.
+- **Rock colours (`rock_colours`):** quarry, boulder and stones are painted per facet in face-corner vertex colours (`COLOR_0`), in one matte material.
+  - Each face's tone comes from the material that tagged it while building (rock, rock_band, fresh_cut, …), varied a little per facet.
+  - Tones darken towards the ground, and moss grows on faces that look up.
+- **Raft:** the busted yellow life raft Godling starts beside, after the castaway film the user referenced. It fits its {5, 1.25, 3.75} part exactly: the outline is pinned to the part's box.
+  - An inflatable ring, round at one end and collapsed flat and wrinkled at the other.
+  - A sagging floor, a canopy fallen in over the inflated end, and a slack grab line.
 - **Ladder:** two rails and 8 rungs along X, coral caps, standing upright. Its proportions are those of the 1.5 × 7.5 × 0.4 part (Minecraft scale, ADR-005).
 
 At Minecraft scale (ADR-005) every part grew evenly except the ladder's, so only the ladder was rebuilt. `brick.glb` is no longer used by the world.
 
 The world renderer fits each model to the *height* of the part carrying it (uniform scale) and centres it.
 So each model has to share its part's proportions and long axis; a part 3×8×3 makes an 8-unit tree.
+
+**Fit by the whole outline (`fit_bounds`).**
+- The runtime takes that height and centre from the model's *first mesh primitive* only, and a glTF mesh has one primitive per material.
+- Until this fix, models whose first material covered only part of them were drawn wrong in game:
+  - the axe about 5.2× too big and the hammer about 4.4×;
+  - the tree 1.44× too tall;
+  - the ladder centred on one rail.
+- Every prop now gets a first material, `bounds`, holding just two specks of triangles at the corners of its whole outline, too small to see.
+- For the tree and the palm, that outline is also made symmetric about the trunk's foot, so a leaning crown doesn't pull the trunk off its collider.
+- Godling uses its own controller in the renderer, which measures every part, so it needs none of this.
+
+**Triangle budget.**
+- Trees and palms are drawn many times a frame, shadows included, so keep them near 1.3k triangles each.
+- Blobs are 16 × 8 spheres by default, and small ones (coconuts, caps, roots, quarry pebbles) fewer.
+- Current counts, in triangles:
+
+| Model | Triangles |
+|---|---|
+| palm | 1,370 |
+| tree | 1,334 |
+| stump | 1,002 |
+| ladder | 1,050 |
+| raft | 3,150 |
+| quarry | 3,690 |
+| stone | 434 |
 
 The renderer uses filmic tone mapping, which darkens greys a lot. So the stone colours are set much lighter
 than they look right in these previews, otherwise they come out charcoal in the game. They were checked in
@@ -96,5 +173,5 @@ draw call per kind of prop, however many of that prop stand in the world.
 The log and the axe are not in the world yet; they wait for a way to fell trees.
 
 ## Sources
-`source/walking.fbx` and `source/picking_up.fbx` are Mixamo animations the user downloaded (skeleton only,
-no character mesh).
+`source/walking.fbx` and `source/picking_up.fbx` are Mixamo animations the user downloaded (skeleton only, no character mesh).
+The others were downloaded from Mixamo the same way, on the same character (CH02), as the `CLIPS` table names them: FBX Binary, Without Skin, 60 fps, no keyframe reduction, "In Place" for the walk and the ladder climb. The Mixamo animation behind each file is listed under Gestures above. To change a gesture, download another animation with these settings under the same file name and rebuild.
