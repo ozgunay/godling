@@ -110,9 +110,19 @@ def main():
     home = Path.home()
     # The world's snapshot route asks for this token (IslandSave); the world started below inherits it.
     os.environ.setdefault("WORLD_OPERATOR_TOKEN", secrets.token_urlsafe(24))
-    # Under WSL the Windows PATH leaks in (Windows npx hangs on Linux paths); children get Linux tools only.
-    clean_env = {**os.environ, "PATH": ":".join([str(home / ".local/bin"), str(home / ".cargo/bin")] + [
-        p for p in os.environ.get("PATH", "").split(":") if p and not p.startswith("/mnt/")])}
+    # Joining the world asks for this key (patches/v2: a name is not free for anyone to claim, ADR-014). The world,
+    # the guest panel and this mind inherit it; with --attach, export the attached world's own.
+    os.environ.setdefault("WORLD_AGENT_KEY", secrets.token_urlsafe(24))
+    if not args.attach:  # for tools that join this run's world later (tools/god_bot.py --run-dir): readable only by you
+        key_file = run / "world.key"
+        key_file.touch(mode=0o600)
+        key_file.chmod(0o600)
+        key_file.write_text(os.environ["WORLD_AGENT_KEY"])
+    # Under WSL the Windows PATH leaks in (Windows npx hangs on Linux paths); children get Linux tools only. None of
+    # them gets the DeepSeek key: Hindsight is handed it on its own (start_hindsight).
+    clean_env = {**{k: v for k, v in os.environ.items() if k != "DEEPSEEK_API_KEY"},
+                 "PATH": ":".join([str(home / ".local/bin"), str(home / ".cargo/bin")] + [
+                     p for p in os.environ.get("PATH", "").split(":") if p and not p.startswith("/mnt/")])}
     # Installed by cargo (~/.cargo/bin) on a development machine, or on the PATH (the island image: /usr/local/bin);
     # CLAWBLOX_BIN names another build.
     clawblox = (os.environ.get("CLAWBLOX_BIN") or shutil.which("clawblox", path=clean_env["PATH"])

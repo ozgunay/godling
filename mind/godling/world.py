@@ -5,6 +5,7 @@ never has to guess them.
 """
 import json
 import math
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -309,14 +310,16 @@ class Snapshot:
 
 
 class World:
-    def __init__(self, base_url="http://localhost:8080", name="Godling", timeout=10):
+    def __init__(self, base_url="http://localhost:8080", name="Godling", timeout=10, key=None):
         self.base = base_url.rstrip("/")
         self.name = name
         self.timeout = timeout
         self.session = None
+        # The world's join key (patches/v2, ADR-014): run_godling.py makes one per run and its children inherit it.
+        self.key = key if key is not None else os.environ.get("WORLD_AGENT_KEY", "")
 
-    def _request(self, method, path, body=None):
-        headers = {"Content-Type": "application/json"}
+    def _request(self, method, path, body=None, headers=None):
+        headers = {"Content-Type": "application/json", **(headers or {})}
         if self.session:
             headers["X-Session"] = self.session
         data = json.dumps(body).encode() if body is not None else None
@@ -339,7 +342,8 @@ class World:
         raise WorldError(f"world at {self.base} did not come up within {seconds}s")
 
     def join(self):
-        reply = self._request("POST", "/join?name=" + urllib.parse.quote(self.name))
+        reply = self._request("POST", "/join?name=" + urllib.parse.quote(self.name),
+                              headers={"X-Agent-Key": self.key} if self.key else None)
         self.session = reply["session"]
         return reply
 

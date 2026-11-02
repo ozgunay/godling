@@ -52,17 +52,23 @@ class CreditPack(models.Model):
 class Purse(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="purse")
     balance = models.PositiveIntegerField(default=0)
+    # Credits a refunded or disputed payment took back that the purse no longer held (spent already). Whatever comes
+    # in next pays this first (services.change), so refunded credits cannot be spent twice.
+    owed = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-        return f"{self.user}: {self.balance} cr"
+        return f"{self.user}: {self.balance} cr" + (f", {self.owed} owed" if self.owed else "")
 
 
 class Entry(models.Model):
-    """One change to a purse: bought, given, spent on a power, or given back when the world refused the power."""
+    """One change to a purse: bought, given, spent on a power, given back when the world refused the power, or taken
+    back when Stripe refunded the payment or the buyer disputed it."""
 
     PURCHASE, WELCOME, POWER, REFUND, GRANT, ADJUST = "purchase", "welcome", "power", "refund", "grant", "adjust"
+    CLAWBACK = "clawback"
     KINDS = [(PURCHASE, "Bought"), (WELCOME, "Welcome credits"), (POWER, "Spent on a power"),
-             (REFUND, "Given back"), (GRANT, "Granted by staff"), (ADJUST, "Changed by staff")]
+             (REFUND, "Given back"), (GRANT, "Granted by staff"), (ADJUST, "Changed by staff"),
+             (CLAWBACK, "Taken back (payment refunded or disputed)")]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="credit_entries")
     amount = models.IntegerField()
@@ -81,30 +87,52 @@ class Entry(models.Model):
         return f"{self.user} {self.amount:+d} ({self.kind})"
 
 
+class Welcome(models.Model):
+    """The welcome gift, once per inbox (users.User.email_key): me+1@ and me+2@ are one viewer's two accounts."""
+
+    email_key = models.CharField(max_length=254, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    created = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.email_key} (first: {self.user})"
+
+
 class PowerCall(models.Model):
-    """Every power a viewer called through the site: what, where, what it cost, and what the world said."""
+    """Every power a viewer called through the site: what, where, what it cost, and what the world said.
+
+    Queued when called, with its price already taken; the worker takes it to the island (apps.screen.tasks) and
+    settles it: done with the world's answer, or expired when the island never answered (its credits come back)."""
+
+    QUEUED, SENDING, DONE, EXPIRED = "queued", "sending", "done", "expired"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="power_calls")
     power = models.CharField(max_length=30)
     price = models.PositiveIntegerField(help_text="Credits taken (0 in test mode).")
     at_x = models.FloatField(null=True, blank=True)
     at_z = models.FloatField(null=True, blank=True)
-    ok = models.BooleanField(help_text="The world did it.")
+    ok = models.BooleanField(default=False, help_text="The world did it.")
     refunded = models.BooleanField(default=False)
     answer = models.CharField(max_length=200, blank=True, help_text="What the world said.")
+    status = models.CharField(max_length=8, default=DONE, choices=[(QUEUED, "Queued"), (SENDING, "With the island"),
+                                                                    (DONE, "Done"), (EXPIRED, "No answer")])
+    reply = models.JSONField(default=dict, blank=True, help_text="The answer as the viewer's screen shows it.")
     created = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         ordering = ["-created"]
 
     def __str__(self):
+        if self.status in (self.QUEUED, self.SENDING):
+            return f"{self.user} {self.power} (on its way)"
         return f"{self.user} {self.power} ({'done' if self.ok else 'refused'})"
 
 
 class Payment(models.Model):
-    """A credit pack bought through Stripe Checkout; credited once, when Stripe says it is paid."""
+    """A credit pack bought through Stripe Checkout; credited once, when Stripe says it is paid, and taken back when
+    Stripe refunds it or the buyer disputes it (services.refunded, services.disputed)."""
 
-    OPEN, PAID, EXPIRED = "open", "paid", "expired"
+    OPEN, PAID, EXPIRED, REFUNDED, DISPUTED = "open", "paid", "expired", "refunded", "disputed"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="payments")
     pack = models.CharField(max_length=40)
@@ -113,8 +141,12 @@ class Payment(models.Model):
     currency = models.CharField(max_length=3)
     session = models.CharField(max_length=255, unique=True, help_text="Stripe Checkout Session id (test_… for the "
                                                                        "development checkout).")
-    status = models.CharField(max_length=8, default=OPEN, choices=[(OPEN, "Open"), (PAID, "Paid"),
-                                                                   (EXPIRED, "Expired")])
+    payment_intent = models.CharField(max_length=255, blank=True, db_index=True,
+                                      help_text="Stripe's PaymentIntent: how its refunds and disputes find this.")
+    status = models.CharField(max_length=8, default=OPEN, choices=[(OPEN, "Open"), (PAID, "Paid"), (EXPIRED, "Expired"),
+                                                                   (REFUNDED, "Refunded"), (DISPUTED, "Disputed")])
+    refund_taken = models.PositiveIntegerField(default=0, help_text="Credits taken back for refunds.")
+    dispute_taken = models.PositiveIntegerField(default=0, help_text="Credits held back while a dispute is open.")
     created = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)
 

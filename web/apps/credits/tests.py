@@ -34,6 +34,17 @@ class WelcomeTests(TestCase):
         self.assertFalse(services.welcome(user))
         self.assertEqual(services.balance_of(user), 20)
 
+    def test_one_welcome_per_inbox(self):
+        """me+2@ is me@'s inbox: a second account from it may watch and buy, but gets no second gift."""
+        first = User.objects.create_user(username="sam", email="sam@gmail.com", password=PASSWORD)
+        again = User.objects.create_user(username="sam2", email="S.am+island@googlemail.com", password=PASSWORD)
+        other = User.objects.create_user(username="ana", email="ana@gmail.com", password=PASSWORD)
+        self.assertEqual(again.email_key, "sam@gmail.com")
+        self.assertTrue(services.welcome(first))
+        self.assertFalse(services.welcome(again))
+        self.assertTrue(services.welcome(other))
+        self.assertEqual([services.balance_of(u) for u in (first, again, other)], [20, 0, 20])
+
 
 class LedgerTests(TestCase):
     def test_every_change_is_an_entry_and_the_balance_never_goes_below_zero(self):
@@ -125,6 +136,69 @@ class StripeTests(TestCase):
             page = self.client.get(reverse("credits_done") + "?session_id=cs_test_1")
         self.assertContains(page, "100 credits are in your purse")
         self.assertEqual(services.balance_of(self.user), 100)
+
+    def paid(self):
+        self.buy()
+        self.webhook({"type": "checkout.session.completed",
+                      "data": {"object": {"id": "cs_test_1", "payment_status": "paid", "payment_intent": "pi_1"}}})
+        return Payment.objects.get()
+
+    def charge(self, kind, **fields):
+        return self.webhook({"type": kind, "data": {"object": {"payment_intent": "pi_1", **fields}}})
+
+    def test_a_refund_takes_its_share_of_the_credits_back(self):
+        payment = self.paid()
+        self.assertEqual(payment.payment_intent, "pi_1")
+        self.charge("charge.refunded", amount=500, amount_refunded=100)  # a fifth of the €5.00
+        self.assertEqual(services.balance_of(self.user), 80)
+        self.charge("charge.refunded", amount=500, amount_refunded=100)  # Stripe retries: taken once
+        self.assertEqual(services.balance_of(self.user), 80)
+        self.charge("charge.refunded", amount=500, amount_refunded=500)  # the rest, later
+        self.assertEqual(services.balance_of(self.user), 0)
+        self.assertEqual(Payment.objects.get().status, Payment.REFUNDED)
+        self.assertEqual(Entry.objects.filter(user=self.user, kind=Entry.CLAWBACK).count(), 2)
+
+    def test_spent_credits_are_owed_and_paid_from_what_comes_next(self):
+        self.paid()
+        services.spend(self.user, 70, "Meteor")
+        self.charge("charge.refunded", amount=500, amount_refunded=500)
+        purse = self.user.purse
+        purse.refresh_from_db()
+        self.assertEqual((purse.balance, purse.owed), (0, 70))
+        with self.assertRaises(services.NotEnough):
+            services.spend(self.user, 4, "Stone")
+        services.change(self.user, 100, Entry.GRANT, "a later pack")
+        purse.refresh_from_db()
+        self.assertEqual((purse.balance, purse.owed), (30, 0))
+
+    def test_a_dispute_holds_the_credits_until_the_bank_decides(self):
+        self.paid()
+        self.charge("charge.dispute.created", status="needs_response")
+        self.assertEqual(services.balance_of(self.user), 0)
+        self.assertEqual(Payment.objects.get().status, Payment.DISPUTED)
+        self.charge("charge.dispute.closed", status="won")
+        self.assertEqual(services.balance_of(self.user), 100)
+        self.assertEqual(Payment.objects.get().status, Payment.PAID)
+        self.charge("charge.dispute.created", status="needs_response")
+        self.charge("charge.dispute.closed", status="lost")
+        self.assertEqual(services.balance_of(self.user), 0)
+
+    def test_a_refund_during_a_dispute_is_not_given_back_when_the_dispute_is_won(self):
+        self.paid()
+        self.charge("charge.dispute.created", status="needs_response")
+        self.charge("charge.refunded", amount=500, amount_refunded=100)  # a fifth refunded meanwhile
+        self.charge("charge.dispute.closed", status="won")
+        self.assertEqual(services.balance_of(self.user), 80)
+
+    def test_a_payment_credited_before_its_intent_was_kept_is_found_through_stripe(self):
+        self.buy()
+        services.credit_payment("cs_test_1")  # as the return page did before payment intents were kept
+        listed = SimpleNamespace(data=[SimpleNamespace(id="cs_test_1")])
+        with mock.patch("stripe.checkout.Session.list", return_value=listed) as lookup:
+            self.charge("charge.refunded", amount=500, amount_refunded=500)
+        self.assertEqual(lookup.call_args.kwargs["payment_intent"], "pi_1")
+        self.assertEqual(services.balance_of(self.user), 0)
+        self.assertEqual(Payment.objects.get().payment_intent, "pi_1")
 
     def test_packs_come_from_the_admin(self):
         CreditPack.objects.filter(key="handful").update(active=False)

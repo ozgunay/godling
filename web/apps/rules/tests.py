@@ -1,10 +1,12 @@
 """The site's rules and blocked words, read from the database: changed in the admin, they hold at once."""
 import re
+from datetime import timedelta
 
 from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.credits import services as credits
 from apps.notes import services as notes
@@ -39,6 +41,7 @@ class RulesTests(TestCase):
         Rules.objects.filter(pk=1).update(reports_to_hide=1)
         author = User.objects.create_user(username="mara_k", email="m@example.org", password=PASSWORD)
         reporter = User.objects.create_user(username="tomv", email="t@example.org", password=PASSWORD)
+        User.objects.filter(pk=reporter.pk).update(date_joined=timezone.now() - timedelta(days=2))  # old enough to count
         note = Note.objects.create(author=author, text="hello")
         notes.report(note, reporter, "spam")
         note.refresh_from_db()
