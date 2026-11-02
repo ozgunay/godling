@@ -95,6 +95,8 @@ def _fmt_pos3(p):
 def _how_it_feels(snap):
     """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
     parts = []
+    if snap.wind >= 0.75:
+        parts.append("A storm wind is blowing")
     if snap.rain >= 0.3:
         parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
     if snap.wet >= 15:

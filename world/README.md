@@ -152,6 +152,10 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Its rim is tinted by `Feeling`: green when glad, red when troubled, grey in between.
     - Each thought pops up, stays 10 s and fades. The bubble is hidden in the body's own first-person view.
   - **Rain** (`rain.js`, ADR-010): falling streaks round the camera while the Clock's `Rain` is up, with dimmer light, greyer fog and heavier clouds. `?rain=1` forces it.
+  - **Wind** (`wind.js`, ADR-010): the Clock's `WindX`/`WindZ`, with gusts added here.
+    - It slants the rain along each drop's velocity.
+    - It sways the palms in the vertex shader: the bend grows with height, a gust wave sweeps the grove, and the fronds flutter.
+    - `?wind=1` forces a gale.
   - **Terrain** (`terrain.js`): Clawblox voxel terrain, drawn as blocks, when the patched server sends it.
   - **Checks.**
     - `?stats=1` shows frame rate, draw calls, triangles and the tier.
