@@ -86,17 +86,41 @@ def done(request):
         try:
             found = stripe.checkout.Session.retrieve(session, api_key=settings.GODLING_STRIPE_SECRET_KEY)
             if found.payment_status == "paid":
-                services.credit_payment(session)
+                services.credit_payment(session, getattr(found, "payment_intent", None) or "")
         except stripe.StripeError:
             pass  # the webhook will still come
         payment.refresh_from_db()
     return render(request, "credits/done.html", {"payment": payment, "balance": services.balance_of(request.user)})
 
 
+def payment_for(payment_intent):
+    """The pack bought with this Stripe PaymentIntent. A payment credited before its intent was kept is found through
+    Stripe: the checkout session that made it."""
+    if not payment_intent:
+        return None
+    payment = Payment.objects.filter(payment_intent=payment_intent).first()
+    if payment is None and settings.GODLING_STRIPE_SECRET_KEY:
+        try:
+            sessions = stripe.checkout.Session.list(payment_intent=payment_intent, limit=1,
+                                                    api_key=settings.GODLING_STRIPE_SECRET_KEY)
+        except stripe.StripeError:
+            return None
+        for found in sessions.data:
+            payment = Payment.objects.filter(session=found.id).first()
+            if payment:
+                Payment.objects.filter(pk=payment.pk).update(payment_intent=payment_intent)
+    return payment
+
+
 @csrf_exempt
 @require_POST
 def stripe_webhook(request):
-    """Stripe tells the site a checkout finished. Signed with GODLING_STRIPE_WEBHOOK_SECRET; anything else is refused."""
+    """Stripe tells the site a checkout finished, or that a payment was refunded or disputed. Signed with
+    GODLING_STRIPE_WEBHOOK_SECRET; anything else is refused.
+
+    A refund (from the Stripe dashboard, say) takes back that share of the pack's credits; a dispute holds back all of
+    them until the bank decides, and a won dispute gives them back. Credits already spent are owed, and paid from what
+    comes in next (services.take_back)."""
     if not settings.GODLING_STRIPE_WEBHOOK_SECRET:
         return HttpResponseBadRequest("not set up")
     try:
@@ -104,10 +128,22 @@ def stripe_webhook(request):
                                                settings.GODLING_STRIPE_WEBHOOK_SECRET)
     except (ValueError, stripe.SignatureVerificationError):
         return HttpResponseBadRequest("bad signature")
-    session = event["data"]["object"]
-    if event["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
-        if session.get("payment_status") == "paid":
-            services.credit_payment(session["id"])
-    elif event["type"] in ("checkout.session.expired", "checkout.session.async_payment_failed"):
-        Payment.objects.filter(session=session["id"], status=Payment.OPEN).update(status=Payment.EXPIRED)
+    kind, thing = event["type"], event["data"]["object"]
+    if kind in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        if thing.get("payment_status") == "paid":
+            services.credit_payment(thing["id"], thing.get("payment_intent") or "")
+    elif kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
+        Payment.objects.filter(session=thing["id"], status=Payment.OPEN).update(status=Payment.EXPIRED)
+    elif kind == "charge.refunded":  # a charge: its running refunded total
+        payment = payment_for(thing.get("payment_intent"))
+        if payment:
+            services.refunded(payment, int(thing.get("amount_refunded") or 0))
+    elif kind == "charge.dispute.created":
+        payment = payment_for(thing.get("payment_intent"))
+        if payment:
+            services.disputed(payment)
+    elif kind == "charge.dispute.closed":
+        payment = payment_for(thing.get("payment_intent"))
+        if payment:
+            services.dispute_closed(payment, won=thing.get("status") == "won")
     return HttpResponse("ok")

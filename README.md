@@ -12,21 +12,22 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 | `deploy/` | Running it all on one server with Docker Compose: Postgres, the site, the island (world, mind, panel) and Caddy for HTTPS, with the island's spectator page public under `/island`. See [`deploy/README.md`](deploy/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |
 | `tools/` | Long-run launcher, run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`) and the guest panel (`guest_panel.py`), which serves the viewers' screen with sky powers and notes, free in test mode. |
-| `decisions/` | Decision records, ADR-002 to ADR-013. |
+| `decisions/` | Decision records, ADR-002 to ADR-014. |
 | `research/` | Design notes and screenshots. |
 | `reports/`, `research_notes/` | Research reports and the notes behind them (god games: what Godling can use). |
-| `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001). |
+| `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001, SEC-001). |
 
 ## Running
 Everything runs inside WSL (Ubuntu 22.04), because Clawblox's agent mode needs tmux.
 
-1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with both patches applied:
+1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with the three patches applied in order:
    - `patches/v0-fix-cli-sandbox.patch` (BUG-001);
-   - `patches/v1-viewer-terrain-and-offline.patch` (VIEWER-001): terrain for viewers, a viewer with no CDN, fresh world files.
+   - `patches/v1-viewer-terrain-and-offline.patch` (VIEWER-001): terrain for viewers, a viewer with no CDN, fresh world files;
+   - `patches/v2-private-agent-api.patch` (SEC-001): joining takes the run's key, the spectator token only watches, the world listens on loopback.
 
-   The world still runs on Clawblox without v1, but its page then needs esm.sh for one icon set.
+   The world still runs on Clawblox without v1, but its page then needs esm.sh for one icon set. Without v2 it runs too, but anyone who reaches its port, or has a viewer's link, can act as Godling (ADR-014).
    ```bash
-   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && git apply /path/to/godling/patches/v1-viewer-terrain-and-offline.patch && cargo install --path . --locked
+   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && git apply /path/to/godling/patches/v1-viewer-terrain-and-offline.patch && git apply /path/to/godling/patches/v2-private-agent-api.patch && cargo install --path . --locked
    ```
 2. A DeepSeek key: run `tools/setup_deepseek.sh`, or set `DEEPSEEK_API_KEY`.
 3. One run: `python3 mind/run_godling.py --run-dir ~/godling-runs/<name>`.

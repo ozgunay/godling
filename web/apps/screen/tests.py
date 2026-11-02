@@ -1,37 +1,50 @@
 """The screen behind accounts: anyone watches; powers cost credits and go to the panel as the signed-in account; notes
-are kept and can be reported, and hidden ones vanish from every screen."""
+are kept and can be reported, and hidden ones vanish from every screen. No request waits on the island for long: the
+news is shared, powers are queued for the worker."""
+from datetime import timedelta
 from unittest import mock
 
+from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from apps.credits import services as credits
 from apps.credits.models import Entry, Power, PowerCall
 from apps.notes.models import Note, Report
 from apps.rules import words
 from apps.rules.models import BlockedWord, Rules
+from apps.screen import island, tasks
 from apps.users.models import User
 
-PANEL_STATUS = {"world": True, "watching": 3, "popups": [], "view": "http://localhost:8080/?spectator_token=t"}
+PANEL_STATUS = {"world": True, "watching": 0, "popups": [], "view": "http://localhost:8080/?spectator_token=t"}
 
 
-def make_user(name):
-    return User.objects.create_user(username=name, email=f"{name}@example.org", password="an-island-test-pass-4127")
+def make_user(name, email=None, days_old=0):
+    user = User.objects.create_user(username=name, email=email or f"{name}@example.org",
+                                    password="an-island-test-pass-4127")
+    if days_old:
+        User.objects.filter(pk=user.pk).update(date_joined=timezone.now() - timedelta(days=days_old))
+    return user
 
 
 @override_settings(GODLING_PANEL_KEY="secret-test-key")
 class ScreenTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.calls = []
         self.panel = {"ok": True, "text": "done"}
         self.status = dict(PANEL_STATUS)
 
-        def fake_relay(method, path, body=None):
+        def fake_relay(method, path, body=None, timeout=None):
             self.calls.append((method, path, body))
             return dict(self.status) if path.startswith("/api/status") else dict(self.panel)
 
-        patcher = mock.patch("apps.screen.views.relay", side_effect=fake_relay)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # Each poll fetches afresh here, so a test sees what it just changed (the sharing has its own test), and the
+        # watching window never turns over in the middle of a test.
+        for patcher in (mock.patch("apps.screen.island.relay", side_effect=fake_relay),
+                        mock.patch("apps.screen.island.FRESH", 0), mock.patch("apps.screen.island.WINDOW", 10 ** 6)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def viewer(self, name="tomv", credit=0):
         user = make_user(name)
@@ -52,20 +65,37 @@ class ScreenTests(TestCase):
 
     def test_anyone_watches_and_the_status_carries_the_account_and_prices(self):
         status = self.client.get("/api/status?client=abcdef123").json()
-        self.assertEqual(status["watching"], 3)
+        self.assertEqual(status["watching"], 1)  # counted by the site, across its workers (island.watching)
         self.assertFalse(status["account"]["signedIn"])
         self.assertEqual(status["prices"]["Meteor"], 300)
         self.assertEqual(status["powers"]["Meteor"]["kind"], "Disaster")
         self.assertTrue(status["powers"]["Meteor"]["harms"])
         self.assertIn("crater", status["powers"]["Meteor"]["does"])
         self.assertEqual(status["notes"]["limit"], 140)
-        self.assertEqual(self.calls[-1][1], "/api/status?client=abcdef123")
+        self.assertEqual(self.calls[-1][1], "/api/status")  # the panel gives the shared news, not one viewer's
         self.client.get("/api/status?client=user000001")  # a page cannot pass itself off as an account
-        self.assertEqual(self.calls[-1][1], "/api/status?client=")
-        user = self.viewer(credit=25)
+        self.assertEqual(self.client.get("/api/status?client=abcdef123").json()["watching"], 1)
+        self.viewer(credit=25)
         status = self.client.get("/api/status?client=abcdef123").json()
         self.assertEqual((status["account"]["username"], status["account"]["credits"]), ("tomv", 25))
-        self.assertEqual(self.calls[-1][1], f"/api/status?client={user.client_id}")
+        self.assertEqual(status["watching"], 2)
+
+    def test_the_news_is_fetched_once_for_every_viewer(self):
+        """However many pages poll, the panel is asked about once a second (island.shared)."""
+        with mock.patch("apps.screen.island.FRESH", 60):
+            for n in range(12):
+                status = self.client.get(f"/api/status?client=page{n:04d}").json()
+        self.assertEqual(len([c for c in self.calls if c[1] == "/api/status"]), 1)
+        self.assertEqual(status["watching"], 8)  # all from one address: a handful count, not a script's thousands
+        other = self.client.get("/api/status?client=farpage01", REMOTE_ADDR="198.51.100.9").json()
+        self.assertEqual(other["watching"], 9)
+
+    @override_settings(ALLAUTH_TRUSTED_PROXY_COUNT=1)
+    def test_the_address_is_the_one_caddy_saw(self):
+        for n in range(10):
+            self.client.get(f"/api/status?client=caddy{n:04d}", REMOTE_ADDR="172.18.0.5",
+                            HTTP_X_FORWARDED_FOR=f"203.0.113.{n}")
+        self.assertEqual(self.client.get("/api/status").json()["watching"], 10)
 
     def test_prices_and_words_come_from_the_admin(self):
         Power.objects.filter(key="Stone").update(price=7, description="A test stone.", did="threw a stone")
@@ -99,8 +129,48 @@ class ScreenTests(TestCase):
         self.assertEqual(self.calls[-1], ("POST", "/api/power", {"client": user.client_id, "name": "tomv",
                                                                  "power": "Meteor", "at": [1.5, -2]}))
         call = PowerCall.objects.get()
-        self.assertEqual((call.power, call.price, call.at_x, call.at_z, call.ok, call.refunded),
-                         ("Meteor", 300, 1.5, -2.0, True, False))
+        self.assertEqual((call.power, call.price, call.at_x, call.at_z, call.ok, call.refunded, call.status),
+                         ("Meteor", 300, 1.5, -2.0, True, False, PowerCall.DONE))
+
+    def test_a_queued_power_is_asked_after_and_given_up_when_the_island_never_answers(self):
+        """With the worker on its own (Redis), a call is queued; the screen asks after it until it is settled."""
+        user = self.viewer(credit=50)
+        with mock.patch.object(tasks.call_power, "delay"):  # queued, and the worker is slow to take it
+            answer = self.post("/api/power", {"power": "Stone"}).json()
+        self.assertTrue(answer["pending"])
+        self.assertEqual(answer["credits"], 46)
+        url = f"/api/power/{answer['pending']}"
+        self.assertTrue(self.client.get(url).json()["pending"])
+        self.client.force_login(make_user("nosy"))
+        self.assertEqual(self.client.get(url).status_code, 404)  # one viewer's calls are theirs
+        self.client.force_login(user)
+        PowerCall.objects.update(created=timezone.now() - timedelta(minutes=2))
+        later = self.client.get(url).json()
+        self.assertFalse(later["ok"])
+        self.assertIn("did not answer", later["text"])
+        self.assertEqual(later["credits"], 50)
+        self.assertEqual(PowerCall.objects.get().status, PowerCall.EXPIRED)
+        tasks.call_power(answer["pending"])  # the worker comes round at last: it calls nothing
+        self.assertEqual([c for c in self.calls if c[1] == "/api/power"], [])
+
+    def test_the_worker_settles_a_queued_power(self):
+        self.viewer(credit=50)
+        with mock.patch.object(tasks.call_power, "delay"):
+            pending = self.post("/api/power", {"power": "Log", "at": [3, 4]}).json()["pending"]
+        tasks.call_power(pending)
+        tasks.call_power(pending)  # delivered twice: called once
+        self.assertEqual(len([c for c in self.calls if c[1] == "/api/power"]), 1)
+        done = self.client.get(f"/api/power/{pending}").json()
+        self.assertTrue(done["ok"])
+        self.assertEqual(done["text"], "done")
+
+    def test_the_queue_out_of_reach_gives_the_credits_back(self):
+        self.viewer(credit=50)
+        with mock.patch.object(tasks.call_power, "delay", side_effect=OSError("no broker")):
+            answer = self.post("/api/power", {"power": "Stone"}).json()
+        self.assertFalse(answer["ok"])
+        self.assertEqual(answer["credits"], 50)
+        self.assertEqual(PowerCall.objects.get().status, PowerCall.EXPIRED)
 
     def test_one_power_at_a_time_as_the_rules_say(self):
         self.viewer(credit=50)
@@ -156,6 +226,7 @@ class ScreenTests(TestCase):
         self.assertNotIn("ref", popups[0])
         self.assertNotIn("noteId", popups[1])  # no id came with it: nothing to report
         self.client.force_login(make_user("r1"))
+        self.client.get("/api/status")  # watching the island
         self.post("/api/report", {"note": popups[0]["noteId"]})
         self.assertEqual(list(Report.objects.values_list("note__author__username", flat=True)), ["mara+foo"])
 
@@ -192,19 +263,19 @@ class ScreenTests(TestCase):
         self.viewer(credit=50)
         inner = []
 
-        def overlapping(method, path, body=None):  # the island is slow: a second request arrives meanwhile
+        def overlapping(method, path, body=None, timeout=None):  # the island is slow: a second request meanwhile
             if not inner:
                 inner.append(None)  # only one overlap, even if the second request got through
                 inner[0] = self.post(path, {"power": "Log"} if path == "/api/power" else {"text": "me too"}).json()
             return {"ok": True, "text": "done"}
 
-        with mock.patch("apps.screen.views.relay", side_effect=overlapping):
+        with mock.patch("apps.screen.island.relay", side_effect=overlapping):
             self.assertTrue(self.post("/api/power", {"power": "Stone"}).json()["ok"])
         self.assertIn("One power at a time", inner[0]["text"])
         self.assertEqual(credits.balance_of(User.objects.get(username="tomv")), 46)
         self.assertEqual(PowerCall.objects.count(), 1)
         inner.clear()
-        with mock.patch("apps.screen.views.relay", side_effect=overlapping):
+        with mock.patch("apps.screen.island.relay", side_effect=overlapping):
             self.assertTrue(self.post("/api/note", {"text": "hello Godling"}).json()["ok"])
         self.assertFalse(inner[0]["ok"])
         self.assertGreater(inner[0]["wait"], 100)
@@ -236,11 +307,12 @@ class ScreenTests(TestCase):
                                   "ref": note.pk}]
         self.status["mind"] = {"feed": [{"who": "notice", "text": f"A paper glider … It reads: '{note.text}'"}]}
         self.client.force_login(author)
-        self.assertIn("own note", self.post("/api/report", {"note": note.pk}).json()["text"])
         popup = self.client.get("/api/status").json()["popups"][0]
         self.assertEqual(popup["noteId"], note.pk)  # so viewers can report it
+        self.assertIn("own note", self.post("/api/report", {"note": note.pk}).json()["text"])
         for name in ("r1", "r2", "r3"):
-            self.client.force_login(make_user(name))
+            self.client.force_login(make_user(name, days_old=2))
+            self.client.get("/api/status")
             self.assertTrue(self.post("/api/report", {"note": note.pk, "reason": "spam"}).json()["ok"])
         self.assertIn("already", self.post("/api/report", {"note": note.pk}).json()["text"])
         note.refresh_from_db()
@@ -250,6 +322,45 @@ class ScreenTests(TestCase):
         status = self.client.get("/api/status").json()
         self.assertEqual(status["popups"], [])
         self.assertIn("hidden", status["mind"]["feed"][0]["text"])
+
+    def report_as(self, user, note):
+        self.client.force_login(user)
+        self.client.get("/api/status")  # watching the island
+        return self.post("/api/report", {"note": note.pk}).json()
+
+    def test_fresh_accounts_and_one_inbox_cannot_hide_a_note(self):
+        """Accounts are cheap: only reports from accounts a day old count, and one inbox counts once."""
+        author = make_user("mara_k")
+        note = Note.objects.create(author=author, text="hello island")
+        for name in ("fresh1", "fresh2", "fresh3"):
+            self.assertTrue(self.report_as(make_user(name), note)["ok"])  # kept for moderators, but not counted
+        for n, email in enumerate(("sam+a@gmail.com", "s.am@gmail.com", "sam+b@googlemail.com")):
+            self.assertTrue(self.report_as(make_user(f"sam{n}", email=email, days_old=3), note)["ok"])
+        note.refresh_from_db()
+        author.refresh_from_db()
+        self.assertEqual((note.status, author.notes_muted), (Note.SENT, False))
+        self.assertEqual(note.reports.count(), 6)
+        self.report_as(make_user("ana", days_old=3), note)
+        self.report_as(make_user("ben", days_old=3), note)
+        note.refresh_from_db()
+        self.assertEqual(note.status, Note.HIDDEN)  # three inboxes, old enough: sam, ana and ben
+
+    def test_reports_come_from_watching_viewers_on_recent_notes_at_a_pace(self):
+        author = make_user("mara_k")
+        note = Note.objects.create(author=author, text="hello island")
+        self.client.force_login(make_user("lurker"))
+        self.assertIn("watch the island", self.post("/api/report", {"note": note.pk}).json()["text"])
+        old = Note.objects.create(author=author, text="an old note")
+        Note.objects.filter(pk=old.pk).update(created=timezone.now() - timedelta(hours=2))
+        self.assertIn("left the screen", self.report_as(User.objects.get(username="lurker"), old)["text"])
+        Rules.objects.filter(pk=1).update(reports_per_hour=2)
+        busy = make_user("busy")
+        for n in range(2):
+            self.assertTrue(self.report_as(busy, Note.objects.create(author=author, text=f"note {n}"))["ok"])
+        answer = self.report_as(busy, Note.objects.create(author=author, text="note 3"))
+        self.assertFalse(answer["ok"])
+        self.assertIn("this hour", answer["text"])
+        self.assertEqual(Report.objects.filter(reporter=busy).count(), 2)
 
     def test_posts_need_the_csrf_token(self):
         strict = Client(enforce_csrf_checks=True)

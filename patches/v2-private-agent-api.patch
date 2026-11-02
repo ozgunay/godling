@@ -1,0 +1,178 @@
+diff --git a/src/bin/cli.rs b/src/bin/cli.rs
+index 09625ee..c26e52c 100644
+--- a/src/bin/cli.rs
++++ b/src/bin/cli.rs
+@@ -2168,6 +2168,19 @@ fn run_game(
+         let (playback_done_tx, _) = broadcast::channel::<PlaybackDoneEvent>(64);
+         let (chat_tx, _) = broadcast::channel::<LocalChatMessage>(128);
+         let spectator_token = resolve_spectator_token();
++        // Godling SEC-001: the agent API is the world's control plane. It listens on loopback unless
++        // WORLD_HOST says otherwise, and beyond loopback only with a join key (WORLD_AGENT_KEY).
++        let agent_key = resolve_agent_key();
++        let bind_ip = resolve_bind_ip();
++        if !bind_ip.is_loopback() && agent_key.is_none() {
++            delete_pid_file(&pid_file);
++            eprintln!(
++                "Error: WORLD_HOST={} listens beyond this machine, so set WORLD_AGENT_KEY too: without it \
++                 anyone who reaches the port can join under any name.",
++                bind_ip
++            );
++            std::process::exit(1);
++        }
+         let capture = config.agent_api.vision_observation.then(|| {
+             Arc::new(CaptureManager::new(format!(
+                 "http://127.0.0.1:{}{}?viewport=1&spectator_token={}",
+@@ -2195,6 +2208,7 @@ fn run_game(
+             started_at: Instant::now(),
+             base_path: base_path.clone(),
+             spectator_token: spectator_token.clone(),
++            agent_key: agent_key.clone(),
+             skill_md,
+             renderer_manifest,
+             sessions: Arc::new(DashMap::new()),
+@@ -2408,7 +2422,10 @@ fn run_game(
+             .allow_methods(Any)
+             .allow_headers(Any);
+ 
+-        let app = mount_router_at_base_path(Router::new()
++        // Godling SEC-001: only the watching side answers other origins. The agent API (join, input,
++        // observe, reset, snapshot, chat, audio) sends no CORS headers, so a web page in a browser on this
++        // machine cannot read its answers.
++        let spectating = Router::new()
+             .route("/", get(local_ui_index))
+             .route("/ui", get(local_ui_index))
+             .route("/ui/{*path}", get(local_ui_file))
+@@ -2417,24 +2434,25 @@ fn run_game(
+             .route("/spectate/chat/messages", get(local_spectate_chat_messages))
+             .route("/renderer/manifest", get(local_renderer_manifest))
+             .route("/replay/info", get(live_replay_info_probe))
++            .route("/api.md", get(local_skill))
++            .route("/skill.md", get(local_skill))
++            .nest_service("/renderer-files", revalidated(path.join("renderer")))
++            .nest_service("/assets", revalidated(path.join("assets")))
++            .nest_service("/static", ServeDir::new(path.join("static")))
++            .layer(cors);
++        let agent_api = Router::new()
+             .route("/join", post(local_join))
+             .route("/input", post(local_input))
+             .route("/observe", get(local_observe))
+             .route("/observe/image", get(local_observe_image))
+             .route("/reset", post(local_reset))
+             .route("/snapshot", get(local_snapshot))
+-            .route("/api.md", get(local_skill))
+-            .route("/skill.md", get(local_skill))
+             .route("/audio", post(local_audio))
+             .route("/chat", post(local_chat))
+-            .route("/chat/messages", get(local_chat_messages))
+-            .nest_service("/renderer-files", revalidated(path.join("renderer")))
+-            .nest_service("/assets", revalidated(path.join("assets")))
+-            .nest_service("/static", ServeDir::new(path.join("static")))
+-            .with_state(state)
+-            .layer(cors), &base_path);
++            .route("/chat/messages", get(local_chat_messages));
++        let app = mount_router_at_base_path(spectating.merge(agent_api).with_state(state), &base_path);
+ 
+-        let addr = SocketAddr::from(([0, 0, 0, 0], port));
++        let addr = SocketAddr::from((bind_ip, port));
+         println!();
+         println!("Server running on http://localhost:{}", port);
+         println!("Local frontend: http://localhost:{}{}", port, join_base_path(&base_path, "/"));
+@@ -3950,6 +3968,8 @@ struct LocalState {
+     started_at: Instant,
+     base_path: String,
+     spectator_token: String,
++    /// Godling SEC-001: the key /join asks for, when set (WORLD_AGENT_KEY).
++    agent_key: Option<String>,
+     skill_md: Option<String>,
+     renderer_manifest: LocalRendererManifest,
+     sessions: Arc<DashMap<String, (Uuid, String)>>, // token -> (agent_id, name)
+@@ -4931,17 +4951,17 @@ fn capture_local_runtime_snapshot(state: &LocalState) -> Result<LocalRuntimeSnap
+ async fn local_snapshot(
+     State(state): State<LocalState>,
+     headers: axum::http::HeaderMap,
+-    Query(query): Query<SpectatorAccessQuery>,
+ ) -> Result<Json<LocalRuntimeSnapshot>, (axum::http::StatusCode, String)> {
+     if let Some(err) = check_halted(&state) {
+         return Err((axum::http::StatusCode::SERVICE_UNAVAILABLE, err));
+     }
++    // Godling SEC-001: a snapshot holds every player's session token, so it is the operator's alone. The
++    // spectator token is handed to everyone watching and only ever opens the watching side.
+     if !operator_token_matches(&headers) {
+-        require_spectator_access(
+-            &state.spectator_token,
+-            &headers,
+-            query.spectator_token.as_deref(),
+-        )?;
++        return Err((
++            axum::http::StatusCode::UNAUTHORIZED,
++            "The snapshot needs the operator token (X-Operator-Token)".to_string(),
++        ));
+     }
+ 
+     let snapshot = capture_local_runtime_snapshot(&state)
+@@ -5099,6 +5119,22 @@ async fn local_join(
+         }
+     }
+ 
++    // Godling SEC-001: with WORLD_AGENT_KEY set, only callers holding the key may join. A world script
++    // trusts player names (Godling's "Sky"), so a name must not be free for anyone to claim.
++    if let Some(expected) = state.agent_key.as_deref() {
++        let given = headers
++            .get("X-Agent-Key")
++            .and_then(|h| h.to_str().ok())
++            .map(str::trim)
++            .unwrap_or("");
++        if !constant_time_eq(given.as_bytes(), expected.as_bytes()) {
++            return Err((
++                axum::http::StatusCode::UNAUTHORIZED,
++                "Joining this world needs its agent key (X-Agent-Key)".to_string(),
++            ));
++        }
++    }
++
+     let agent_id = Uuid::new_v4();
+     let session_token = Uuid::new_v4().to_string();
+ 
+@@ -5157,6 +5193,33 @@ fn resolve_spectator_token() -> String {
+         .unwrap_or_else(|| Uuid::new_v4().to_string())
+ }
+ 
++/// Godling SEC-001: the key /join asks for (WORLD_AGENT_KEY); None leaves joining open, as upstream.
++fn resolve_agent_key() -> Option<String> {
++    std::env::var("WORLD_AGENT_KEY")
++        .ok()
++        .map(|key| key.trim().to_string())
++        .filter(|key| !key.is_empty())
++}
++
++/// Godling SEC-001: the address the server listens on (WORLD_HOST); loopback unless told otherwise.
++fn resolve_bind_ip() -> std::net::IpAddr {
++    match std::env::var("WORLD_HOST") {
++        Ok(host) if !host.trim().is_empty() => host.trim().parse().unwrap_or_else(|_| {
++            eprintln!("Error: WORLD_HOST={host:?} is not an IP address (e.g. 127.0.0.1 or 0.0.0.0).");
++            std::process::exit(1);
++        }),
++        _ => std::net::IpAddr::from([127, 0, 0, 1]),
++    }
++}
++
++/// Compares two secrets in time that does not depend on where they first differ.
++fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
++    if a.len() != b.len() {
++        return false;
++    }
++    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
++}
++
+ /// Accept the save/load protocol's operator token as an alternative to
+ /// spectator access: clawblox sets WORLD_OPERATOR_TOKEN when it launches a
+ /// world and presents it via X-Operator-Token when pulling snapshots.
+@@ -5172,7 +5235,7 @@ fn operator_token_matches(headers: &axum::http::HeaderMap) -> bool {
+         .get("X-Operator-Token")
+         .and_then(|h| h.to_str().ok())
+         .map(str::trim)
+-        .is_some_and(|token| token == expected)
++        .is_some_and(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
+ }
+ 
+ fn require_spectator_access(

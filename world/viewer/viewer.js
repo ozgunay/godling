@@ -87,8 +87,11 @@ function showView(url) {
   view.src = src
 }
 
+// The island has its own origin behind the site (ADR-014): keys and camera wishes go to that origin only, never to
+// whatever page the frame might have been sent to instead.
 function tellView(message) {
-  view.contentWindow?.postMessage({ source: 'godling-viewer', ...message }, '*')
+  if (!viewSrc) return
+  view.contentWindow?.postMessage({ source: 'godling-viewer', ...message }, new URL(viewSrc, location.href).origin)
 }
 view.addEventListener('load', () => tellView({ type: 'godling-camera', mode: camera }))
 
@@ -309,13 +312,22 @@ function pick(id) {
   const s = slots[POWERS.indexOf(p)]
   tip = el('div', 'tip b-tip stone')
   tip.setAttribute('role', 'tooltip')
-  const wait = cooling[p.id] > Date.now() ? `<dt>Ready</dt><dd>in ${minutesText((cooling[p.id] - Date.now()) / 1000)}</dd>` : ''
+  // Words only, never markup: behind the site a power's name, words and rule are what the admin typed (its Power
+  // rows), and this page shares the admin's origin.
+  const head = el('div', 'tip-head', icon(p.icon, 2))
+  head.append(text('strong', '', p.name), text('em', p.harm ? 'harm' : '', p.kind))
+  const facts = el('dl')
+  const fact = (term, words, after = null) => {
+    const dd = text('dd', '', words)
+    if (after) dd.append(after)
+    facts.append(text('dt', '', term), dd)
+  }
   // Free only in test mode: the panel on its own (no accounts), or the site's rules saying so (drawPurse).
-  const free = !account || account.free ? '<span class="free">free while testing</span>' : ''
-  tip.innerHTML = `<div class="tip-head">${icon(p.icon, 2)}<strong>${p.name}</strong><em class="${p.harm ? 'harm' : ''}">${p.kind}</em></div>
-    <p>${p.does}</p>
-    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}${free}</dd>`}
-    ${p.rule ? `<dt>Rule</dt><dd>${p.rule}</dd>` : ''}${wait}</dl>`
+  if (p.note) fact('Price', `Free · ${status?.notes?.limit || 140} characters`)
+  else fact('Price', `${p.price} credits · ${EURO(p.price)}`, !account || account.free ? text('span', 'free', 'free while testing') : null)
+  if (p.rule) fact('Rule', p.rule)
+  if (cooling[p.id] > Date.now()) fact('Ready', `in ${minutesText((cooling[p.id] - Date.now()) / 1000)}`)
+  tip.append(head, text('p', '', p.does), facts)
   stage.append(tip)
   const r = s.getBoundingClientRect(), sr = stage.getBoundingClientRect()
   tip.style.left = `${Math.max(16, Math.min(sr.width - tip.offsetWidth - 16, r.left - sr.left + r.width / 2 - tip.offsetWidth / 2))}px`
@@ -348,11 +360,26 @@ async function post(path, body) {
   }
 }
 
+// Behind the site a power is queued for the island and the answer is `pending` (its call's id): ask how it went every
+// half second until the world has answered. The panel on its own answers at once.
+const PENDING_MS = 500
+const PENDING_TRIES = 80 // the site gives a call up after a minute, so this always ends with an answer
+async function settled(answer) {
+  for (let tries = 0; answer.pending && tries < PENDING_TRIES; tries++) {
+    await new Promise((done) => setTimeout(done, PENDING_MS))
+    try {
+      const res = await fetch(`api/power/${encodeURIComponent(answer.pending)}`, { cache: 'no-store' })
+      if (res.ok) answer = await res.json()
+    } catch { /* a blip: ask again */ }
+  }
+  return answer.pending ? { ok: false, text: 'The island is slow to answer; your power is still on its way.' } : answer
+}
+
 async function call(p, s, at = null) {
   if (s.classList.contains('calling')) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   s.classList.add('calling')
-  const answer = await post('api/power', { power: p.id, ...(at ? { at } : {}) })
+  const answer = await settled(await post('api/power', { power: p.id, ...(at ? { at } : {}) }))
   s.classList.remove('calling')
   if (account && Number.isFinite(answer.credits)) drawPurse({ ...account, credits: answer.credits })
   if (answer.ok) popup(answer)
@@ -635,8 +662,9 @@ function takePowers(powers) {
     const row = powers[p.id]
     slots[i].hidden = !row
     if (!row) return
-    Object.assign(p, { name: row.label, price: row.price, kind: row.kind, harm: row.harms, does: row.does,
-      rule: row.rule || undefined, did: row.did || p.did, after: row.after || p.after })
+    Object.assign(p, { name: String(row.label), price: Number(row.price) || 0, kind: String(row.kind),
+      harm: Boolean(row.harms), does: String(row.does || ''), rule: row.rule ? String(row.rule) : undefined,
+      did: row.did || p.did, after: row.after || p.after })
     slots[i].classList.toggle('harm', Boolean(row.harms))
     slots[i].setAttribute('aria-label', `${p.name}, ${p.price} credits`)
   })

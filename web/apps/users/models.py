@@ -53,12 +53,23 @@ class User(AbstractUser):
     # update before the island is asked, so two requests at once cannot both pass.
     last_power_at = models.DateTimeField(null=True, blank=True, editable=False)
     last_note_at = models.DateTimeField(null=True, blank=True, editable=False)
+    # The inbox behind the email (validators.canonical_email): accounts made from one inbox (me+1@, me+2@…) share one
+    # welcome gift and count once in reports. Not unique: making another account is allowed, farming it is not.
+    email_key = models.CharField(max_length=254, blank=True, db_index=True, editable=False)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
 
     def __str__(self):
         return self.username
+
+    def save(self, *args, **kwargs):
+        from apps.users.validators import canonical_email
+
+        self.email_key = canonical_email(self.email)
+        if kwargs.get("update_fields") is not None and "email" in kwargs["update_fields"]:
+            kwargs["update_fields"] = {*kwargs["update_fields"], "email_key"}
+        super().save(*args, **kwargs)
 
     @property
     def client_id(self):
