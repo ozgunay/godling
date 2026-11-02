@@ -98,12 +98,7 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
       WORLD_BASE_PATH: /island
       WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
-      # The stream relay (relay/, ADR-015; island-start: --relay 8082), which Caddy sends the island's stream to. It
-      # takes sockets only from the island's own page, a few per viewer address (Caddy's X-Forwarded-For).
-      RELAY_LISTEN: 0.0.0.0:8082
-      RELAY_ORIGINS: https://${GODLING_ISLAND_DOMAIN}
-      RELAY_TRUSTED_PROXIES: "1"
-      # Reachable by Caddy inside Compose's network. The world then insists on a join key, which the launcher makes
+      # Reachable by Caddy and the relay inside Compose's network. The world then insists on a join key, which the launcher makes
       # for every start (patches/v2, ADR-014); Caddy passes only the watching side on.
       WORLD_HOST: 0.0.0.0
       GODLING_PANEL_HOST: 0.0.0.0
@@ -112,6 +107,25 @@ services:
       GODLING_MIND_ARGS: ${GODLING_MIND_ARGS:-}
     volumes:
       - runs:/runs
+
+  # The island's stream relay (relay/, ADR-015), which Caddy sends every viewer's socket to: one connection to the
+  # world, the same updates to everyone. In a container of its own, with the spectator token and nothing else: the
+  # part of the island that the whole internet talks to is kept apart from Godling's keys. It takes sockets only from
+  # the island's own page, at most RELAY_MAX_PER_IP per viewer address (read from Caddy's X-Forwarded-For).
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    restart: unless-stopped
+    environment:
+      RELAY_LISTEN: 0.0.0.0:8082
+      RELAY_UPSTREAM: ws://island:8080/island/spectate/ws
+      RELAY_BASE_PATH: /island
+      RELAY_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+      RELAY_ORIGINS: https://${GODLING_ISLAND_DOMAIN}
+      RELAY_TRUSTED_PROXIES: "1"
+    depends_on:
+      - island
 
   caddy:
     image: caddy:2
@@ -130,6 +144,7 @@ services:
     depends_on:
       - site
       - island
+      - relay
 
 volumes:
   pgdata:

@@ -10,7 +10,8 @@ Set by the environment:
   RELAY_BASE_PATH         served under this path, as the world is (e.g. /island)
   RELAY_ORIGINS           page origins viewers may connect from, comma-separated (default: any)
   RELAY_MAX_VIEWERS       viewers at once (default 5000)
-  RELAY_MAX_PER_IP        viewers from one address (default 8)
+  RELAY_MAX_PER_IP        viewers from one address, an IPv6 /64 as one (default 64)
+  RELAY_CONNECTS_PER_MINUTE  new sockets one address may open a minute after that burst (default 60)
   RELAY_TRUSTED_PROXIES   proxies of ours in front, whose X-Forwarded-For is believed (default 0)
   RELAY_BUFFER            frames a viewer may fall behind before a resync (default 256)
   RELAY_RESUME_FRAMES     updates kept for viewers coming back (default 300)";

@@ -98,6 +98,7 @@ async fn start_relay(world_port: u16, tweak: impl FnOnce(&mut Config)) -> u16 {
         origins: Vec::new(),
         max_viewers: 100,
         max_per_ip: 100,
+        connects_per_minute: 6000,
         trusted_proxies: 0,
         buffer: 64,
         resume_frames: 50,
@@ -291,7 +292,7 @@ async fn only_the_islands_page_and_a_few_sockets_per_address() {
     };
     assert_eq!(refused(connect(relay, "", None).await), 403, "no origin");
     assert_eq!(refused(connect(relay, "", Some("https://elsewhere.example")).await), 403, "another site's page");
-    let _one = connect(relay, "", Some("http://island.test")).await.unwrap();
+    let _one = connect(relay, "", Some("http://Island.TEST")).await.expect("a host name's case does not matter");
     let _two = connect(relay, "", Some("http://island.test")).await.unwrap();
     assert_eq!(refused(connect(relay, "", Some("http://island.test")).await), 429, "a third from the same address");
 }

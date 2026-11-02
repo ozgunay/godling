@@ -90,7 +90,7 @@ Tests: `~/.venvs/godling-web/bin/python manage.py test`. For the admin: `manage.
 | `GODLING_DB_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD` | | Postgres (production) instead of SQLite |
 | `GODLING_PANEL_URL` | `http://127.0.0.1:8081` | the guest panel |
 | `GODLING_PANEL_KEY` | | the panel's `--key` |
-| `GODLING_VIEW_URL` | | the island as the public reaches it, on its own origin: `https://<island domain>/island?spectator_token=…` |
+| `GODLING_VIEW_URL` | | the island as the public reaches it, on its own origin and with no token: `https://<island domain>/island` (empty: the panel's own link, which carries the token; development only) |
 | `GODLING_RUN_DIR` | | the live run, for the admin's log viewer |
 | `GODLING_TRUSTED_PROXIES` | `0` | proxies in front of the site (deploy/: Caddy, `1`), so rate limits see each viewer's address |
 | `GODLING_CURRENCY` | `eur` | the credit packs' currency |

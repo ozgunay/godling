@@ -34,9 +34,13 @@ pub struct Config {
     pub base_path: String,
     /// The page origins a viewer's socket may come from (RELAY_ORIGINS, comma-separated; empty: any).
     pub origins: Vec<String>,
-    /// Viewers at once (RELAY_MAX_VIEWERS, default 5000) and from one address (RELAY_MAX_PER_IP, default 8).
+    /// Viewers at once (RELAY_MAX_VIEWERS, default 5000) and from one address (RELAY_MAX_PER_IP, default 64: a phone
+    /// network puts many people behind one address; an IPv6 address counts by its /64).
     pub max_viewers: usize,
     pub max_per_ip: usize,
+    /// New sockets one address may open a minute, after a first burst of RELAY_MAX_PER_IP (RELAY_CONNECTS_PER_MINUTE,
+    /// default 60): each new socket is handed the whole island.
+    pub connects_per_minute: usize,
     /// Proxies of ours in front (RELAY_TRUSTED_PROXIES; deploy/: Caddy, 1): the viewer's address is then read from
     /// the X-Forwarded-For they add.
     pub trusted_proxies: usize,
@@ -64,7 +68,8 @@ impl Config {
             base_path: var("RELAY_BASE_PATH", "").trim_end_matches('/').to_string(),
             origins,
             max_viewers: number("RELAY_MAX_VIEWERS", 5000)?,
-            max_per_ip: number("RELAY_MAX_PER_IP", 8)?,
+            max_per_ip: number("RELAY_MAX_PER_IP", 64)?,
+            connects_per_minute: number("RELAY_CONNECTS_PER_MINUTE", 60)?,
             trusted_proxies: number("RELAY_TRUSTED_PROXIES", 0)?,
             buffer: number("RELAY_BUFFER", 256)?,
             resume_frames: number("RELAY_RESUME_FRAMES", 300)?,
@@ -93,7 +98,7 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
         }
     });
     let base = config.base_path.clone();
-    let seats = Arc::new(Seats::new(config.max_viewers, config.max_per_ip));
+    let seats = Arc::new(Seats::new(config.max_viewers, config.max_per_ip, config.connects_per_minute));
     let app = Arc::new(App { config, hub, seats });
     let router = Router::new()
         .route(&format!("{base}/spectate/ws"), get(viewer::stream))

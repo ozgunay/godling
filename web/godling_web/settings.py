@@ -177,9 +177,9 @@ GODLING_PANEL_KEY = os.environ.get("GODLING_PANEL_KEY", "")
 GODLING_CURRENCY = os.environ.get("GODLING_CURRENCY", "eur")
 GODLING_STRIPE_SECRET_KEY = os.environ.get("GODLING_STRIPE_SECRET_KEY", "")
 GODLING_STRIPE_WEBHOOK_SECRET = os.environ.get("GODLING_STRIPE_WEBHOOK_SECRET", "")
-# The island as the public reaches it, on its own origin (ADR-014), e.g.
-# https://island.godling.example/island?spectator_token=… (no slash after /island: that is where the world serves
-# its page under a base path); empty, the panel's own.
+# The island as the public reaches it, on its own origin (ADR-014) and with no token in it (ADR-015: Caddy and the
+# relay hold it), e.g. https://island.godling.example/island (no slash after /island: that is where the world serves
+# its page under a base path). Empty, the panel's own, which carries the token: development only.
 GODLING_VIEW_URL = os.environ.get("GODLING_VIEW_URL", "")
 # The live run, for the admin's log viewer (apps.users.log_views).
 GODLING_RUN_DIR = os.environ.get("GODLING_RUN_DIR", "")

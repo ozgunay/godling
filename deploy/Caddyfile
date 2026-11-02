@@ -20,7 +20,7 @@
 
 	@stream path /island/spectate/ws
 	handle @stream {
-		reverse_proxy island:8082
+		reverse_proxy relay:8082
 	}
 	# The page and what it fetches. Not /island/spectate: the page never asks for it, and each call would have the
 	# world build the whole island.
