@@ -1,0 +1,14 @@
+# The site (web/): accounts, credits, moderation and the viewer screen, on gunicorn. Build context: the repo root.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 GODLING_DEBUG=0
+WORKDIR /app/web
+COPY web/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY web/ ./
+COPY world/viewer/ /app/world/viewer/
+# The admin's files, fingerprinted for whitenoise (a throwaway key: collectstatic signs nothing).
+RUN GODLING_SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput -v 0
+
+EXPOSE 8000
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn godling_web.wsgi --bind 0.0.0.0:8000 --workers 3 --access-logfile - --forwarded-allow-ips '*'"]

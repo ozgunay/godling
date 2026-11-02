@@ -1,0 +1,102 @@
+{% load i18n %}<!doctype html>
+{% comment %}
+Every allauth page (sign in, sign up, confirm email, reset password, sign out) in the screen's Block HUD look: a stone
+slab over a still of the island (DESIGN.md). allauth fills the content block with plain elements; the style below
+dresses them.
+{% endcomment %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15191b">
+<title>{% block head_title %}{% endblock head_title %} · Godling</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Crect x='3' y='1' width='6' height='1' fill='%23f6c945'/%3E%3Crect x='2' y='4' width='8' height='7' fill='%23fff'/%3E%3Crect x='4' y='7' width='1' height='1' fill='%2315191b'/%3E%3Crect x='7' y='7' width='1' height='1' fill='%2315191b'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Tiny5&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #15191b; --white: #ffffff; --mist: #dfe6e8; --fog: #b9c5c9;
+    --gold: #f6c945; --gold-deep: #c9951c; --gold-ink: #2a1d00; --teal: #45d6cf; --heart: #ec4b4f;
+    --paper: #f6f3e8; --paper-ink: #2d2a22; --paper-shade: #d9d3bf;
+    --stone: #50585b; --stone-panel: rgba(44, 49, 51, 0.94); --moss: #63b544; --moss-deep: #3f8a2c;
+    --bevel: 0.1875rem; --pixel-shadow: 0.1rem 0.1rem 0 rgba(21, 25, 27, 0.9);
+    --speckle: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>");
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { font-size: 17px; }
+  ::selection { background: var(--gold); color: var(--ink); }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 1.5rem 1rem;
+    color: var(--white); font: 400 1.15rem/1.35 'Tiny5', sans-serif; letter-spacing: 0.02em; text-shadow: var(--pixel-shadow);
+    background: linear-gradient(rgba(11, 14, 16, 0.55), rgba(11, 14, 16, 0.7)), url("/demo/day.jpg") center / cover no-repeat fixed, #0b0e10;
+  }
+  .slab {
+    width: min(28rem, 100%); padding: 1.6rem 1.5rem 1.4rem;
+    background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.45rem, var(--moss-deep) 0.45rem 0.65rem, var(--stone-panel) 0.65rem);
+    border: var(--bevel) solid var(--ink);
+    box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.1), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.32);
+  }
+  .home { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0 1rem; color: var(--mist); text-decoration: none; font-size: 1rem; }
+  .home svg { image-rendering: pixelated; }
+  .home:hover { color: var(--white); }
+  h1 { margin: 0 0 0.6rem; font: 400 1.9rem/1.1 'Tiny5', sans-serif; color: var(--gold); }
+  h2 { margin: 1rem 0 0.4rem; font: 400 1.3rem/1.2 'Tiny5', sans-serif; color: var(--gold); }
+  p { margin: 0.5rem 0; color: var(--mist); }
+  a { color: var(--teal); text-underline-offset: 0.2em; }
+  a:hover { color: #7ff0ea; }
+  form p { margin: 0 0 0.75rem; }
+  label { display: block; margin-bottom: 0.3rem; font: 400 0.7rem/1.4 'Silkscreen', monospace; color: var(--fog); text-shadow: none; letter-spacing: 0.06em; }
+  input[type=email], input[type=text], input[type=password] {
+    width: 100%; padding: 0.55rem 0.65rem; background: var(--paper); color: var(--paper-ink); caret-color: var(--moss-deep);
+    border: var(--bevel) solid var(--ink); box-shadow: inset var(--bevel) var(--bevel) 0 var(--paper-shade);
+    font: 400 16px/1.2 'Tiny5', sans-serif; text-shadow: none;
+  }
+  input[type=checkbox] { width: 1.1rem; height: 1.1rem; accent-color: var(--gold); vertical-align: middle; }
+  input[type=checkbox] + label { display: inline; margin-left: 0.4rem; font: inherit; color: var(--mist); text-shadow: var(--pixel-shadow); }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+  p > span { display: block; margin-top: 0.3rem; font-size: 0.9rem; color: var(--fog); }
+  p > span ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+  button {
+    cursor: pointer; padding: 0.6rem 1rem; border: var(--bevel) solid var(--ink); background: var(--gold); color: var(--gold-ink);
+    font: 400 1.1rem/1 'Tiny5', sans-serif; text-shadow: none;
+    box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.45), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 var(--gold-deep);
+  }
+  button:hover { background: #ffd95e; }
+  button:active { box-shadow: inset var(--bevel) var(--bevel) 0 var(--gold-deep); }
+  form > button, form button[type=submit] { margin-top: 0.4rem; }
+  .errorlist { margin: 0 0 0.5rem; padding: 0.45rem 0.7rem; list-style: none; background: rgba(122, 31, 34, 0.55); border: var(--bevel) solid var(--ink); color: #ffd0d1; font-size: 1rem; }
+  .messages { margin: 0 0 1rem; padding: 0; list-style: none; }
+  .messages li { padding: 0.45rem 0.7rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); color: var(--teal); }
+  hr { border: 0; border-top: var(--bevel) solid rgba(0, 0, 0, 0.35); margin: 1.1rem 0; }
+  .menu { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 1.2rem; padding-top: 0.9rem; border-top: var(--bevel) solid rgba(0, 0, 0, 0.35); font-size: 1rem; }
+</style>
+{% block extra_head %}{% endblock extra_head %}
+</head>
+<body>
+<main class="slab">
+  <a class="home" href="/"><svg width="24" height="24" viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect x="3" y="1" width="6" height="1" fill="#f6c945"/><rect x="2" y="4" width="8" height="7" fill="#fff"/><rect x="4" y="7" width="1" height="1" fill="#15191b"/><rect x="7" y="7" width="1" height="1" fill="#15191b"/></svg>Back to the island</a>
+  {% block body %}
+    {% if messages %}
+      <ul class="messages">{% for message in messages %}<li>{{ message }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% block content %}{% endblock content %}
+    <nav class="menu" aria-label="{% trans 'Account' %}">
+      {% if user.is_authenticated %}
+        <span>{% blocktrans with name=user.username %}Signed in as {{ name }}{% endblocktrans %}</span>
+        <a href="{% url 'credits' %}">{% trans "Credits" %}</a>
+        {% url 'account_change_password' as change_password_url_ %}
+        {% if change_password_url_ %}<a href="{{ change_password_url_ }}">{% trans "Change password" %}</a>{% endif %}
+        <a href="{% url 'account_logout' %}">{% trans "Sign out" %}</a>
+      {% else %}
+        <a href="{% url 'account_login' %}">{% trans "Sign in" %}</a>
+        <a href="{% url 'account_signup' %}">{% trans "Create an account" %}</a>
+        <a href="{% url 'account_reset_password' %}">{% trans "Forgot your password?" %}</a>
+      {% endif %}
+    </nav>
+  {% endblock body %}
+  {% block extra_body %}{% endblock extra_body %}
+</main>
+</body>
+</html>

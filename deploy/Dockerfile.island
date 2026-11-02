@@ -1,0 +1,25 @@
+# The island: the world (Clawblox, built from source with Godling's two patches, as the README says), Godling's mind
+# and the guest panel, all started by mind/run_godling.py. Build context: the repo root.
+FROM rust:1-bookworm AS world
+ARG CLAWBLOX_REPO=https://github.com/nacloos/clawblox.git
+ARG CLAWBLOX_COMMIT=8be90a0
+RUN git clone "$CLAWBLOX_REPO" /src && git -C /src checkout "$CLAWBLOX_COMMIT"
+COPY patches/v0-fix-cli-sandbox.patch patches/v1-viewer-terrain-and-offline.patch /patches/
+RUN cd /src && git apply /patches/v0-fix-cli-sandbox.patch && git apply /patches/v1-viewer-terrain-and-offline.patch \
+    && cargo install --path . --locked --root /out
+
+FROM debian:bookworm-slim
+# tmux: Clawblox's agent mode needs it (README).
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=world /out/bin/clawblox /usr/local/bin/clawblox
+WORKDIR /app
+COPY mind/ ./mind/
+COPY tools/ ./tools/
+COPY world/ ./world/
+COPY deploy/island-start.sh /usr/local/bin/island-start
+RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs && chown island /runs
+USER island
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8080 8081
+CMD ["island-start"]

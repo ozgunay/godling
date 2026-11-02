@@ -1,0 +1,64 @@
+{% extends "admin/change_list.html" %}
+{% comment %}Borrowed from AgentOp (templates/admin/users/disposabledomain/change_list.html).{% endcomment %}
+{% load i18n %}
+
+{% block object-tools-items %}
+  {% if has_add_permission %}{# Godling: the imports add domains, so only for those who may add them #}
+  {# ── Sync from online sources ─────────────────────────────────── #}
+  <li>
+    <form method="post" action="{% url 'admin:users_disposabledomain_sync_online' %}" style="display:inline">
+      {% csrf_token %}
+      <button type="submit"
+              class="button"
+              style="background:#27ae60;color:#fff;border:none;padding:4px 12px;cursor:pointer;border-radius:4px"
+              onclick="return confirm('Download all 4 online sources and add any new domains to the DB?\n\nThis may take ~30 seconds.')">
+        ↻ Sync from Online Sources
+      </button>
+    </form>
+  </li>
+
+  {# ── Import from bundled file ─────────────────────────────────── #}
+  <li>
+    <form method="post" action="{% url 'admin:users_disposabledomain_import_bundled' %}" style="display:inline">
+      {% csrf_token %}
+      <button type="submit"
+              class="button"
+              style="background:#2980b9;color:#fff;border:none;padding:4px 12px;cursor:pointer;border-radius:4px"
+              onclick="return confirm('Import the bundled file (~74k domains) into the DB?\n\nOnly new (unique) domains will be added.')">
+        ⬆ Import Bundled File
+      </button>
+    </form>
+  </li>
+  {% endif %}
+
+  {{ block.super }}
+{% endblock %}
+
+{% block content %}
+  {{ block.super }}
+
+  {% if has_add_permission %}
+  {# ── Paste / bulk-add textarea ────────────────────────────────── #}
+  <div style="margin-top:24px;padding:16px;background:#f8f8f8;border:1px solid #ddd;border-radius:4px">
+    <h3 style="margin-top:0;font-size:14px">Bulk-add domains by pasting</h3>
+    <p style="font-size:12px;color:#555;margin-bottom:8px">
+      One domain per line (or comma / space separated). Comments starting with # are ignored.
+      Only new unique domains are inserted; duplicates are skipped automatically.
+    </p>
+    <form method="post" action="{% url 'admin:users_disposabledomain_import_manual' %}">
+      {% csrf_token %}
+      <textarea name="domains_text"
+                rows="6"
+                placeholder="example.com&#10;throwaway.net&#10;# comment lines are ignored"
+                style="width:100%;max-width:600px;font-family:monospace;font-size:12px;
+                       padding:8px;border:1px solid #ccc;border-radius:3px;box-sizing:border-box"></textarea>
+      <br>
+      <button type="submit"
+              class="button default"
+              style="margin-top:8px">
+        Add Domains
+      </button>
+    </form>
+  </div>
+  {% endif %}
+{% endblock %}

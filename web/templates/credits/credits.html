@@ -1,0 +1,50 @@
+{% extends "allauth/layouts/base.html" %}
+{% block head_title %}Credits{% endblock head_title %}
+{% block extra_head %}
+<style>
+  .balance { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.2rem 0 1rem; }
+  .balance b { font: 400 2.4rem/1 'Tiny5', sans-serif; color: var(--gold); }
+  .packs { display: grid; gap: 0.6rem; margin: 0 0 1rem; }
+  .pack { display: flex; align-items: center; gap: 0.8rem; margin: 0; padding: 0.6rem 0.7rem; background: rgba(14, 17, 18, 0.55); border: var(--bevel) solid var(--ink); }
+  .pack .what { flex: 1; }
+  .pack .what b { display: block; color: var(--gold); font-weight: 400; font-size: 1.25rem; }
+  .pack .what span { font-size: 0.95rem; color: var(--fog); }
+  .test { padding: 0.45rem 0.7rem; border: var(--bevel) dashed var(--gold); color: var(--gold); font-size: 0.95rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  td { padding: 0.25rem 0.2rem; border-top: 0.0625rem solid rgba(0, 0, 0, 0.35); color: var(--mist); }
+  td.amount { text-align: right; font-variant-numeric: tabular-nums; }
+  td.plus { color: var(--teal); }
+</style>
+{% endblock extra_head %}
+{% block content %}
+<h1>Credits</h1>
+<p class="balance"><b>{{ balance }}</b> credits</p>
+<p>Credits call sky powers on Godling's island: a stone or a log costs 4, a meteor 300. Notes are free.</p>
+{% if mode == "test" %}
+  <p class="test">Development: no payment provider is set up, so this is a test checkout. No money moves.</p>
+{% endif %}
+{% if mode %}
+  <div class="packs">
+    {% for p in packs %}
+      <form class="pack" method="post" action="{% url 'credits_buy' p.pack.key %}">
+        {% csrf_token %}
+        <div class="what"><b>{{ p.pack.credits }} credits</b><span>{{ p.pack.name }}</span></div>
+        <button type="submit">{{ p.price }}</button>
+      </form>
+    {% empty %}
+      <p>No credit packs are on sale right now.</p>
+    {% endfor %}
+  </div>
+{% else %}
+  <p>Buying credits is not set up yet.</p>
+{% endif %}
+{% if entries %}
+  <h2>Lately</h2>
+  <table>
+    {% for e in entries %}
+      <tr><td>{{ e.created|date:"j M, H:i" }}</td><td>{{ e.get_kind_display }}{% if e.ref %}: {{ e.ref }}{% endif %}</td>
+        <td class="amount{% if e.amount > 0 %} plus{% endif %}">{% if e.amount > 0 %}+{% endif %}{{ e.amount }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+{% endblock content %}

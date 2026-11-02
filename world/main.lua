@@ -4683,11 +4683,106 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 --------------------------------------------------------------------------------
+-- THE ISLAND KEPT ACROSS RESTARTS (ADR-013)
+--------------------------------------------------------------------------------
+-- mind/run_godling.py reads the island from the world's snapshot every few minutes and when the run stops, and
+-- writes it on the next line of the run's copy of this script. At the start it is put back before anyone joins: what
+-- Godling built and carried about, what viewers' powers did (stones, logs, craters, felled trees), the day, and
+-- Godling's body. Not kept: fish, fires, what is falling, an earthquake under way; timers start afresh.
+sky.saved = nil -- ISLAND SAVE
+
+function sky.restore(saved)
+    local physics = { Stone = stonePhysics, PickupObject = stonePhysics, Boulder = stonePhysics, Tool = blockPhysics,
+        Rock = PhysicalProperties.new(8.0, 0.9, 0.0, 1.0, 1.0) } -- as createRock; the rest are wood
+    local balls, decor = { Boulder = true, Coconut = true, Volleyball = true }, { Crater = true, SandMark = true }
+    local function put(part, s)
+        part.Size = Vector3.new(s.size[1], s.size[2], s.size[3])
+        part.CFrame = CFrame.new(s.pos[1], s.pos[2], s.pos[3]) * CFrame.fromOrientation(s.turn[1], s.turn[2], s.turn[3])
+        part.Anchored, part.CanCollide = s.anchored, s.collide
+        part.Color = Color3.new(s.color[1], s.color[2], s.color[3])
+        for name, value in pairs(s.attrs) do
+            part:SetAttribute(name, value)
+        end
+    end
+    local kept, roles = {}, {}
+    for _, role in ipairs(saved.roles) do
+        roles[role] = true
+    end
+    for _, s in ipairs(saved.pieces) do
+        local role = s.attrs.RenderRole
+        local part = findWorkspaceChild(s.name)
+        if not part and decor[role] then
+            part = Instance.new("Part")
+            part.Name = s.name
+            part.Parent = Workspace
+        elseif not part then
+            part = createPiece(s.name, CFrame.new(), Vector3.new(1, 1, 1), Color3.new(1, 1, 1), role,
+                physics[role] or woodPhysics, nil, balls[role] and Enum.PartType.Ball or nil)
+        end
+        put(part, s)
+        kept[s.name] = true
+        if role == "Crater" then
+            table.insert(sky.meteor.craters, part) -- the oldest go first, as before (saved in number order)
+        end
+    end
+    -- What the start made that was gone when the run stopped (smashed, burnt, eaten) stays gone.
+    for _, part in ipairs(Workspace:GetChildren()) do
+        if part:IsA("BasePart") and roles[part:GetAttribute("RenderRole")] and not kept[part.Name] then
+            destroyBlock(part)
+        end
+    end
+    local felled = {}
+    for _, s in ipairs(saved.felled) do
+        felled[s.name] = s
+    end
+    for _, t in ipairs(trees) do
+        if t.part and felled[t.name] then
+            put(t.part, felled[t.name])
+            t.part:SetAttribute("FelledAt", os.clock()) -- regrows a full TREE_REGROW_SECONDS after the restart
+        end
+    end
+    -- Numbering goes on where it stopped, so a new stone is never named like one that stands in a wall.
+    local n = saved.counters
+    impactBlockCounter = math.max(impactBlockCounter, n.Block or 0)
+    quarryWork.made = math.max(quarryWork.made, n.Stone or 0)
+    logCounter = math.max(logCounter, n.Log or 0)
+    markCount = math.max(markCount, n.Mark or 0)
+    skyCounter = math.max(skyCounter, n.Sky or 0)
+    survivalCounters.coconuts = math.max(survivalCounters.coconuts, n.Coconut or 0)
+    survivalCounters.spears = math.max(survivalCounters.spears, n.Spear or 0)
+    survivalCounters.catches = math.max(survivalCounters.catches, n.Catch or 0)
+    clockSeconds = saved.clock
+    sky.body = saved.body
+    print(string.format("ISLAND restored: %d pieces, %d felled trees, day %d", #saved.pieces, #saved.felled,
+        1 + math.floor((START_HOUR / 24 * DAY_SECONDS + clockSeconds) / DAY_SECONDS)))
+end
+
+function sky.restoreBody(player) -- Godling's body, where it stood and as it was, once, when it first joins again
+    local body = sky.body
+    local hrp = player.Name ~= SKY_PLAYER and body and player.Character
+        and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        return
+    end
+    sky.body = nil
+    hrp.CFrame = CFrame.new(body.pos[1], body.pos[2], body.pos[3])
+    player:SetAttribute("Health", body.health)
+    player:SetAttribute("Hunger", body.hunger)
+    player:SetAttribute("Wet", body.wet)
+    surviving[player] = { hunger = body.hunger, health = body.health, beat = 0 }
+end
+
+--------------------------------------------------------------------------------
 -- INITIALIZATION
 --------------------------------------------------------------------------------
 
+if sky.saved then
+    sky.restore(sky.saved)
+end
+
 Players.PlayerAdded:Connect(function(player)
     setupPlayer(player, true)
+    sky.restoreBody(player)
 end)
 Players.PlayerRemoving:Connect(cleanupPlayer)
 

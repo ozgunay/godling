@@ -1,0 +1,12 @@
+{% extends "allauth/layouts/base.html" %}
+{% block head_title %}Test checkout{% endblock head_title %}
+{% block content %}
+<h1>Test checkout</h1>
+<p>Development only: Stripe is not set up, so this page stands in for its checkout. No money moves.</p>
+<p><b>{{ payment.credits }} credits</b> for {{ price }}.</p>
+<form method="post">
+  {% csrf_token %}
+  <button type="submit">Pretend to pay</button>
+</form>
+<p><a href="{% url 'credits' %}">Cancel</a></p>
+{% endblock content %}
