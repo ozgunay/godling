@@ -1,0 +1,89 @@
+# Godling on one server (the user's choice, as AgentOp runs): Postgres, the site, the island (world, mind, panel) and
+# Caddy in front. Copy .env.example to .env, fill it in, then: docker compose up -d --build. See deploy/README.md.
+name: godling
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: godling
+      POSTGRES_USER: godling
+      POSTGRES_PASSWORD: ${GODLING_DB_PASSWORD:?set GODLING_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U godling -d godling"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  site:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.site
+    restart: unless-stopped
+    environment:
+      GODLING_DEBUG: "0"
+      GODLING_SECRET_KEY: ${GODLING_SECRET_KEY:?set GODLING_SECRET_KEY in .env}
+      GODLING_HOSTS: ${GODLING_DOMAIN:?set GODLING_DOMAIN in .env}
+      GODLING_TRUSTED_ORIGINS: https://${GODLING_DOMAIN}
+      GODLING_DB_HOST: postgres
+      GODLING_DB_PASSWORD: ${GODLING_DB_PASSWORD}
+      GODLING_PANEL_URL: http://island:8081
+      GODLING_PANEL_KEY: ${GODLING_PANEL_KEY:?set GODLING_PANEL_KEY in .env}
+      # No slash after /island: the world serves its page under the base path at /island exactly.
+      GODLING_VIEW_URL: https://${GODLING_DOMAIN}/island?spectator_token=${GODLING_SPECTATOR_TOKEN:?set GODLING_SPECTATOR_TOKEN in .env}
+      GODLING_RUN_DIR: /runs/live
+      GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
+      GODLING_STRIPE_WEBHOOK_SECRET: ${GODLING_STRIPE_WEBHOOK_SECRET:-}
+      GODLING_FROM_EMAIL: ${GODLING_FROM_EMAIL:-Godling <noreply@localhost>}
+      GODLING_EMAIL_HOST: ${GODLING_EMAIL_HOST:-}
+      GODLING_EMAIL_PORT: ${GODLING_EMAIL_PORT:-587}
+      GODLING_EMAIL_USER: ${GODLING_EMAIL_USER:-}
+      GODLING_EMAIL_PASSWORD: ${GODLING_EMAIL_PASSWORD:-}
+      GODLING_EMAIL_TLS: ${GODLING_EMAIL_TLS:-1}
+      GODLING_EMAIL_SSL: ${GODLING_EMAIL_SSL:-0}
+    volumes:
+      - runs:/runs:ro  # the admin's log viewer reads the island's logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  island:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.island
+    restart: unless-stopped
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
+      WORLD_BASE_PATH: /island
+      WORLD_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}
+      GODLING_PANEL_HOST: 0.0.0.0
+      GODLING_PANEL_KEY: ${GODLING_PANEL_KEY}
+      GODLING_RUN_DIR: /runs/live
+      GODLING_MIND_ARGS: ${GODLING_MIND_ARGS:-}
+    volumes:
+      - runs:/runs
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GODLING_DOMAIN: ${GODLING_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - site
+      - island
+
+volumes:
+  pgdata:
+  runs:
+  caddy_data:
+  caddy_config:

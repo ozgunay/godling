@@ -1,0 +1,8 @@
+{% extends "admin/change_form.html" %}
+{% comment %}A viewer's page, with a button to change their credits (apps.users.admin ViewerAdmin.adjust_credits).{% endcomment %}
+{% block object-tools-items %}
+  {% if original %}
+    <li><a href="{% url 'admin:users_user_adjust_credits' original.pk %}">Adjust credits</a></li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

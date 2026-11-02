@@ -111,7 +111,9 @@ def main():
                 stdout=(run / "world.log").open("w"), stderr=subprocess.STDOUT, env=clean_env)
         if args.memory == "hindsight" and not args.hindsight_url:
             hindsight, args.hindsight_url = start_hindsight(run, clean_env)
-        world = World(f"http://localhost:{args.port}", args.name)
+        # Mounted under WORLD_BASE_PATH (deploy/: /island, so its spectator page can be public), the world's API is too.
+        local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
+        world = World(local_world, args.name)
         llm = LLM(args.model, log=log)
         memory = make_memory(args, run, log)
         library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
@@ -135,14 +137,14 @@ def main():
         spectator = None
         if server:
             spectator = wait_for_line(run / "world.log", r"Spectator frontend: (\S+)", 15)
-            print(f"World is up. Watch it here: {spectator or f'http://localhost:{args.port}/'}", flush=True)
+            print(f"World is up. Watch it here: {spectator or local_world + '/'}", flush=True)
         world.join()
         if args.bubble:
             bubble = Bubble(world, llm, log=log).start()
             mind.on_reasoning = bubble.thought
         if args.guest_panel:
             panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
-                                      "--world", f"http://localhost:{args.port}", "--port", str(args.guest_panel),
+                                      "--world", local_world, "--port", str(args.guest_panel),
                                       "--run-dir", str(run)] + (["--view", spectator] if spectator else []),
                                      env=clean_env)
         time.sleep(3)  # the world drops its starting blocks from the sky: let them land before the first look

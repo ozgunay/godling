@@ -15,11 +15,16 @@ prices are shown, payment comes later.
 Notes: anyone watching may send Godling a short note (NOTE_LIMIT characters, no links). Each viewer may send one
 every --note-every seconds, and the island gets at most one every --note-gap seconds; the rest wait in a short queue.
 A note reaches the world as a paper glider; the mind reads it and decides for itself. Godling never sees who sent it.
+
+With --key, the panel takes powers and notes only from the accounts site (web/, ADR-012), which sends the key and
+the signed-in viewer's name and client id; the panel must then not be reachable from outside.
 """
 import argparse
+import hmac
 import json
 import math
 import mimetypes
+import os
 import re
 import sys
 import threading
@@ -191,14 +196,22 @@ def world_up(base):
         return False
 
 
+def island_url(url):
+    """A world mounted under a base path (deploy/: /island) prints its page as /island/?… but serves it at /island?…"""
+    parts = urllib.parse.urlsplit(url)
+    if parts.path not in ("", "/") and parts.path.endswith("/"):
+        parts = parts._replace(path=parts.path.rstrip("/"))
+    return urllib.parse.urlunsplit(parts)
+
+
 def spectator_url(base, run_dir):
     """The live view needs the spectator token the world prints when it starts (run_godling.py logs it)."""
     log = run_dir / "world.log" if run_dir else None
     if log and log.exists():
         match = re.search(r"Spectator frontend: (\S+)", log.read_text(errors="replace"))
         if match:
-            return match.group(1)
-    return base + "/"
+            return island_url(match.group(1))
+    return island_url(base + "/")
 
 
 def clean_note(text):
@@ -248,9 +261,12 @@ def clean_client(client):
 class Island:
     """What the panel knows and keeps: the latest look at the Clock, who is watching, what viewers did, the notes queue."""
 
-    def __init__(self, sky, note_every, note_gap):
+    def __init__(self, sky, note_every, note_gap, trusted=False):
         self.sky = sky
         self.note_every, self.note_gap = note_every, note_gap
+        # Behind the accounts site (--key), the site keeps each viewer's pace from its database (its rules, which the
+        # admin edits); the panel keeps only the island's own: one note at a time, a short queue.
+        self.trusted = trusted
         self.lock = threading.Lock()
         self.clock, self.clock_at = None, 0
         self.seen = {}  # client -> when its page last asked for news
@@ -283,7 +299,7 @@ class Island:
     def power(self, client, name, power, at=None):
         now = time.time()
         with self.lock:
-            if now - self.last_power.get(client, 0) < POWER_EVERY:
+            if not self.trusted and now - self.last_power.get(client, 0) < POWER_EVERY:
                 return {"ok": False, "text": "One power at a time: give the last one a moment."}
             self.last_power[client] = now
         result = self.sky.call(power, **({"at": {"x": at[0], "z": at[1]}} if at else {}))
@@ -298,7 +314,7 @@ class Island:
             return {"ok": False, "text": why}
         now = time.time()
         with self.lock:
-            wait = self.note_every - (now - self.last_note.get(client, 0))
+            wait = 0 if self.trusted else self.note_every - (now - self.last_note.get(client, 0))
             if wait > 0:
                 minutes, seconds = divmod(math.ceil(wait), 60)
                 return {"ok": False, "text": f"One note at a time: you can send another in {minutes}:{seconds:02d}.",
@@ -310,7 +326,7 @@ class Island:
             soon = max(0, self.note_gap - (now - self.note_sent)) + (len(self.notes) - 1) * self.note_gap
         return {"ok": True, "text": "Folded into a glider. " + (
             "It drifts down now." if soon < 2 else f"It drifts down in about {math.ceil(soon)} s."),
-            "wait": self.note_every}
+            "wait": self.note_every, "note": text}  # as it will pop up, for the accounts site's moderation
 
     def tick(self):
         """Once a second: look at the Clock, and send the next note down when its turn has come."""
@@ -346,9 +362,9 @@ class Island:
         return {"clock": clock, "godling": godling, "notes": notes, "popups": popups}
 
 
-def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60):
+def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key="", host="127.0.0.1"):
     base = world.rstrip("/")
-    island = Island(Sky(base), note_every, note_gap)
+    island = Island(Sky(base), note_every, note_gap, trusted=bool(key))
     powers = {p[0] for p in POWERS if p[0] != "Note"}  # a note comes through /api/note, with its text checked
 
     def keep_looking():
@@ -385,7 +401,7 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60):
             url = urllib.parse.urlsplit(self.path)
             if url.path == "/api/status":
                 client = clean_client((urllib.parse.parse_qs(url.query).get("client") or [""])[0])
-                self._json({"world": time.time() - island.clock_at < 5, "view": view or spectator_url(base, run_dir),
+                self._json({"world": time.time() - island.clock_at < 5, "view": island_url(view) if view else spectator_url(base, run_dir),
                             "watching": island.watching(client), "testMode": True, "now": time.time(),
                             "mind": mind_status(run_dir), **island.status(client)})
                 return
@@ -397,6 +413,8 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60):
 
         def do_POST(self):
             url = urllib.parse.urlsplit(self.path)
+            if key and not hmac.compare_digest(self.headers.get("X-Godling-Key", ""), key):
+                return self._json({"ok": False, "text": "Sign in on the site to call powers and send notes."}, 403)
             body = self._body()
             client, name = clean_client(body.get("client")), clean_name(body.get("name"))
             if not client:
@@ -415,7 +433,7 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60):
         def log_message(self, *args):  # quiet: the run's own console is busy enough
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     print(f"Guest panel: http://localhost:{port}/ (world {base})", flush=True)
     try:
         server.serve_forever()
@@ -434,9 +452,17 @@ def main():
                                                  "with --run-dir)")
     ap.add_argument("--note-every", type=int, default=180, help="seconds between one viewer's notes")
     ap.add_argument("--note-gap", type=int, default=60, help="seconds between any two notes reaching the island")
+    ap.add_argument("--key", default=os.environ.get("GODLING_PANEL_KEY", ""),
+                    help="powers and notes only from whoever sends this key (the accounts site, web/; ADR-012); "
+                         "default $GODLING_PANEL_KEY, empty for none")
+    ap.add_argument("--host", default=os.environ.get("GODLING_PANEL_HOST", "127.0.0.1"),
+                    help="the address to listen on (deploy/: 0.0.0.0, inside the island container, with --key); "
+                         "default $GODLING_PANEL_HOST or 127.0.0.1")
     args = ap.parse_args()
+    if args.host not in ("127.0.0.1", "localhost") and not args.key:
+        ap.error("listening beyond this machine needs --key: the panel trusts whoever calls it")
     serve(args.world, args.port, args.run_dir.expanduser().resolve() if args.run_dir else None, args.view,
-          args.note_every, args.note_gap)
+          args.note_every, args.note_gap, args.key, args.host)
 
 
 if __name__ == "__main__":

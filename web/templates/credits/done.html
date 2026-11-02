@@ -1,0 +1,16 @@
+{% extends "allauth/layouts/base.html" %}
+{% block head_title %}Thank you{% endblock head_title %}
+{% block content %}
+{% if payment and payment.status == "paid" %}
+  <h1>Thank you</h1>
+  <p>{{ payment.credits }} credits are in your purse. You hold <b>{{ balance }}</b> now.</p>
+{% elif payment %}
+  <h1>Almost there</h1>
+  <p>The payment is on its way. Your {{ payment.credits }} credits arrive as soon as Stripe confirms it; this can take
+    a moment. You hold <b>{{ balance }}</b> now.</p>
+{% else %}
+  <h1>Credits</h1>
+  <p>You hold <b>{{ balance }}</b> credits.</p>
+{% endif %}
+<p><a href="/">Back to the island</a> · <a href="{% url 'credits' %}">Credits</a></p>
+{% endblock content %}

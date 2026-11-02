@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a> &rsaquo;
+  <a href="{% url 'admin:users_user_changelist' %}">Users</a> &rsaquo;
+  <a href="{% url 'admin:users_user_change' viewer.pk %}">{{ viewer }}</a> &rsaquo; Credits
+</div>
+{% endblock %}
+{% block content %}
+<p>{{ viewer }} holds <strong>{{ balance }}</strong> credits. A change here is kept in their ledger with its reason
+  and your name. A purse never goes below zero.</p>
+<form method="post">
+  {% csrf_token %}
+  <fieldset class="module aligned">
+    {% for field in form %}
+      <div class="form-row{% if field.errors %} errors{% endif %}">
+        {{ field.errors }}
+        <div>
+          {{ field.label_tag }} {{ field }}
+          <div class="help">{{ field.help_text }}</div>
+        </div>
+      </div>
+    {% endfor %}
+  </fieldset>
+  <div class="submit-row">
+    <input type="submit" class="default" value="Change credits">
+    <a href="{% url 'admin:users_user_change' viewer.pk %}" class="closelink">Cancel</a>
+  </div>
+</form>
+{% if entries %}
+  <h2>Lately</h2>
+  <table>
+    <thead><tr><th>When</th><th>What</th><th>Amount</th><th>After</th><th>Note</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+        <tr><td>{{ e.created|date:"j M Y, H:i" }}</td><td>{{ e.get_kind_display }}</td><td>{{ e.amount }}</td>
+          <td>{{ e.balance_after }}</td><td>{{ e.ref }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}
