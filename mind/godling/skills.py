@@ -211,7 +211,7 @@ class Skills:
         blocked = set(self.protected()) | set(exclude) | ({held.name} if held else set())
         below_top = {n for _, names in snap.stacks() for n in names[:-1]}
         return [p for p in snap.movables() if (p.is_cube or p.name.startswith(BUILDING_KINDS))
-                and p.name not in blocked | below_top and not p.attrs.get("Fastened")
+                and p.name not in blocked | below_top and not p.attrs.get("Fastened") and not p.attrs.get("Burning")
                 and snap.ground_top(p.pos[0], p.pos[2]) is not None]
 
     def _obstacles(self, snap, ignore=()):
@@ -694,6 +694,8 @@ class Skills:
             return Result(False, "pick_up", f"there is no movable object called {object}")
         if obj.attrs.get("Fastened"):
             return Result(False, "pick_up", f"{object} is fastened in place; a hammer strike knocks it loose")
+        if obj.attrs.get("Burning"):  # a log on fire is the fire's now (run n7 kept reaching for them)
+            return Result(False, "pick_up", f"{object} is burning; it cannot be picked up until the fire is out")
         held = snap.held()
         if held and held.name == object:
             return Result(True, "pick_up", f"already holding {object}", {"holding": object})

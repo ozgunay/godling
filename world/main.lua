@@ -982,6 +982,8 @@ for _, b in ipairs(BOULDERS) do
             Vector3.new(BOULDER_DIAMETER, BOULDER_DIAMETER, BOULDER_DIAMETER), Color3.fromRGB(112, 108, 102), "Boulder",
             stonePhysics, ART.Boulder, Enum.PartType.Ball)
         p:SetAttribute("Heavy", true)
+        p.Anchored = true -- held where it lies from the start: a ball pushed by the rock beside it never stopped rolling
+        p:SetAttribute("Settled", true)
     end
 end
 local function restoreKeepsakes()
@@ -2313,7 +2315,8 @@ local function squaredRotation(cf)
 end
 
 local function settle(piece)
-    local square = squaredRotation(piece.CFrame)
+    -- Blocks and logs square into their cell; a boulder is round and just holds where it came to rest.
+    local square = SNAPPED_ROLES[piece:GetAttribute("RenderRole")] and squaredRotation(piece.CFrame)
     if square then
         local p = piece.Position
         local inCell = Vector3.new(math.floor(p.X / GRID + 0.5) * GRID, p.Y, math.floor(p.Z / GRID + 0.5) * GRID)
@@ -2332,7 +2335,10 @@ end
 
 local function settleResting()
     for _, piece in ipairs(Workspace:GetChildren()) do
-        if piece:IsA("BasePart") and SNAPPED_ROLES[piece:GetAttribute("RenderRole")] and not piece.Anchored
+        local role = piece:IsA("BasePart") and piece:GetAttribute("RenderRole")
+        -- Boulders too: a ball has nothing to stop it rolling, so one nudge sent a boulder across the island and
+        -- into the sea, and it came back at home ("boulders travel in jumps", run n7).
+        if role and (SNAPPED_ROLES[role] or role == "Boulder") and not piece.Anchored
             and not isCarried(piece) and not isPlacing(piece) then
             if piece.AssemblyLinearVelocity.Magnitude < 0.1 and piece.AssemblyAngularVelocity.Magnitude < 0.1 then
                 restPasses[piece] = (restPasses[piece] or 0) + 1
