@@ -40,13 +40,13 @@ class NoteAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
-    @admin.action(description="Hide from every screen")
+    @admin.action(permissions=["change"], description="Hide from every screen")
     def hide(self, request, queryset):
         n = queryset.update(status=Note.HIDDEN)
         Report.objects.filter(note__in=queryset).update(reviewed=True)
         self.message_user(request, f"{n} note(s) hidden.")
 
-    @admin.action(description="Restore (shown again)")
+    @admin.action(permissions=["change"], description="Restore (shown again)")
     def restore(self, request, queryset):
         n = queryset.update(status=Note.SENT)
         Report.objects.filter(note__in=queryset).update(reviewed=True)
@@ -57,18 +57,18 @@ class NoteAdmin(admin.ModelAdmin):
 
         return User.objects.filter(pk__in=queryset.values("author"))
 
-    @admin.action(description="Mute the authors' notes")
+    @admin.action(permissions=["change"], description="Mute the authors' notes")
     def mute_authors(self, request, queryset):
         n = self._authors(queryset).update(notes_muted=True, notes_muted_reason="muted by a moderator")
         self.message_user(request, f"{n} account(s) muted.")
 
-    @admin.action(description="Unmute the authors' notes")
+    @admin.action(permissions=["change"], description="Unmute the authors' notes")
     def unmute_authors(self, request, queryset):
         n = self._authors(queryset).update(notes_muted=False, notes_muted_reason="")
         Report.objects.filter(note__in=queryset).update(reviewed=True)
         self.message_user(request, f"{n} account(s) unmuted.")
 
-    @admin.action(description="Ban the authors (no signing in)")
+    @admin.action(permissions=["change"], description="Ban the authors (no signing in)")
     def ban_authors(self, request, queryset):
         n = self._authors(queryset).filter(is_staff=False).update(is_active=False)
         self.message_user(request, f"{n} account(s) banned; staff accounts are never banned here.", messages.WARNING)

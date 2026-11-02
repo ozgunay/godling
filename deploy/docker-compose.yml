@@ -28,6 +28,7 @@ services:
       GODLING_SECRET_KEY: ${GODLING_SECRET_KEY:?set GODLING_SECRET_KEY in .env}
       GODLING_HOSTS: ${GODLING_DOMAIN:?set GODLING_DOMAIN in .env}
       GODLING_TRUSTED_ORIGINS: https://${GODLING_DOMAIN}
+      GODLING_TRUSTED_PROXIES: "1"  # Caddy: allauth's rate limits read the viewer's address it forwards
       GODLING_DB_HOST: postgres
       GODLING_DB_PASSWORD: ${GODLING_DB_PASSWORD}
       GODLING_PANEL_URL: http://island:8081
@@ -55,6 +56,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.island
     restart: unless-stopped
+    stop_grace_period: 30s  # the island is saved first, then Godling's memory is written
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
       WORLD_BASE_PATH: /island

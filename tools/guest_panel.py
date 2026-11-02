@@ -249,7 +249,9 @@ def clean_shown(text):
 
 
 def clean_name(name):
-    name = re.sub(r"[^\w .\-]", "", str(name or "")).strip()[:NAME_LIMIT]
+    # Keeps every character an account's username may hold (Django's: letters, digits, @ . + - _), so a pop-up
+    # names the account as it is: mara+foo never shows as marafoo, someone else's name.
+    name = re.sub(r"[^\w .@+\-]", "", str(name or "")).strip()[:NAME_LIMIT]
     return name or "Someone"
 
 
@@ -286,12 +288,13 @@ class Island:
                 del self.seen[c]
             return len(self.seen)
 
-    def popup(self, kind, name, power, text, ok=True):
-        """What viewers did, for everyone's pop-ups on the right; a refusal goes back only to whoever pressed."""
+    def popup(self, kind, name, power, text, ok=True, ref=None):
+        """What viewers did, for everyone's pop-ups on the right; a refusal goes back only to whoever pressed.
+        A note's pop-up carries the site's id for it (`ref`), so viewers report that very note."""
         with self.lock:
             self.count += 1
             entry = {"id": self.count, "time": time.time(), "kind": kind, "name": name, "power": power, "text": text,
-                     "ok": ok}
+                     "ok": ok, **({"ref": ref} if ref is not None else {})}
             if ok:
                 self.popups.append(entry)
             return entry
@@ -308,7 +311,7 @@ class Island:
         too_soon = re.search(r"TooSoon:(\d+)", result)
         return {**entry, "wait": int(too_soon.group(1))} if too_soon else entry
 
-    def note(self, client, name, raw):
+    def note(self, client, name, raw, ref=None):
         text, why = clean_note(raw)
         if text is None:
             return {"ok": False, "text": why}
@@ -322,7 +325,7 @@ class Island:
             if len(self.notes) >= NOTE_QUEUE:
                 return {"ok": False, "text": "The sky is full of notes right now. Try again in a minute."}
             self.last_note[client] = now
-            self.notes.append((client, name, text))
+            self.notes.append((client, name, text, ref))
             soon = max(0, self.note_gap - (now - self.note_sent)) + (len(self.notes) - 1) * self.note_gap
         return {"ok": True, "text": "Folded into a glider. " + (
             "It drifts down now." if soon < 2 else f"It drifts down in about {math.ceil(soon)} s."),
@@ -336,14 +339,14 @@ class Island:
                 self.clock, self.clock_at = clock, time.time()
             nxt = self.notes[0] if self.notes and time.time() - self.note_sent >= self.note_gap else None
         if nxt:
-            _, name, text = nxt
+            _, name, text, ref = nxt
             result = self.sky.call("Note", text=text)
             with self.lock:
                 if not result.endswith(("NoClearSpot", "NobodyHere")) and not result.startswith("SkyFailed:World"):
                     self.notes.popleft()  # sent, or refused for good: either way its turn is over
                 self.note_sent = time.time()
             if result.startswith("SkyDone:"):
-                self.popup("note", name, "Note", text)
+                self.popup("note", name, "Note", text, ref=ref)
 
     def status(self, client):
         c = self.clock or {}
@@ -427,7 +430,8 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
                                                                       and abs(v) < 2000 for v in at))
                 return self._json(island.power(client, name, body["power"], [round(v, 2) for v in at] if ok_at else None))
             if url.path == "/api/note":
-                return self._json(island.note(client, name, body.get("text")))
+                ref = body.get("ref") if key and type(body.get("ref")) is int else None  # the site's id for the note
+                return self._json(island.note(client, name, body.get("text"), ref))
             self._json({}, 404)
 
         def log_message(self, *args):  # quiet: the run's own console is busy enough

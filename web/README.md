@@ -8,12 +8,13 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
 - **Anyone can watch:** the screen and `/api/status` need no account.
 - **Powers cost credits; notes are free.** Both need a signed-in account.
   - The panel hears them as the account (`user000042`, its username).
-  - The site keeps each account's pace from the database: one power every 2 s and one note every 3 minutes, as the site rules say. The keyed panel defers to it and keeps only the island's own pace: one note a minute, a short queue.
+  - The site keeps each account's pace from the database: one power every 2 s and one note every 3 minutes, as the site rules say. The turn is taken before the island is asked, in one database update, so two requests at once cannot both pass. The keyed panel defers to it and keeps only the island's own pace: one note a minute, a short queue.
   - A power's credits are taken first, and given back if the world refuses it. Every call is logged.
 - **20 free credits** when the email is confirmed (the site rules, in the admin).
 - **More credits** through Stripe Checkout (`/credits/`). Without Stripe keys, in development only, a test checkout stands in.
 - **Notes can be reported.** Three viewers' reports (the site rules) hide a note from every screen and pause its sender's notes until a moderator looks.
-- **Blocked words**, a list in the admin, refuse notes and usernames that hold them.
+- **Blocked words**, a list in the admin, refuse notes and usernames that hold them. They are checked on the text as the island will show it: lookalike letters made plain, hidden characters dropped.
+- **Reports reach the note that was shown:** each note's id travels with it through the panel to its pop-up.
 - **Signing up**, as AgentOp has it:
   - username, email and password;
   - the email must be confirmed before signing in;
@@ -41,7 +42,8 @@ What someone running the site changes lives in the database, not in settings or 
   - actions on many at once: grant 20 or 100 credits, mute or unmute notes, ban or unban.
 - **Notes and reports:** hide or restore notes; mute, unmute or ban their senders.
 - **Purses, entries and payments:** read-only records.
-- **Disposable domains** (AgentOp's): activate and deactivate them; sync the online lists, import the bundled file, or paste a list.
+- **Disposable domains** (AgentOp's): activate and deactivate them; sync the online lists, import the bundled file, or paste a list. The bundled list always counts; the table adds to it, and a deactivated row unblocks a domain.
+- **Permissions:** staff see what their Django permissions allow. The imports need the add permission; the actions (grant, mute, ban, hide, switch domains) need the change permission.
 - **Logs** (AgentOp's log viewer): the live run's world, mind, thoughts and panel logs (`GODLING_RUN_DIR`).
 
 ## Running it (WSL)
@@ -57,7 +59,7 @@ Then the site:
 ```bash
 cd web && ~/.venvs/godling-web/bin/python manage.py migrate && ~/.venvs/godling-web/bin/python manage.py runserver 127.0.0.1:8000
 ```
-Open http://localhost:8000/. In development, the confirmation emails are printed in the site's console. Tests:
+Open http://localhost:8000/. In development, the confirmation emails are printed in the site's console. The cache is a table every worker shares (`migrate` makes it). Tests:
 `~/.venvs/godling-web/bin/python manage.py test`. For the admin: `manage.py createsuperuser`.
 
 ## Settings (environment)
@@ -73,6 +75,7 @@ Open http://localhost:8000/. In development, the confirmation emails are printed
 | `GODLING_PANEL_KEY` | | the panel's `--key` |
 | `GODLING_VIEW_URL` | | the island as the public reaches it: `https://<domain>/island?spectator_token=…` |
 | `GODLING_RUN_DIR` | | the live run, for the admin's log viewer |
+| `GODLING_TRUSTED_PROXIES` | `0` | proxies in front of the site (deploy/: Caddy, `1`), so rate limits see each viewer's address |
 | `GODLING_CURRENCY` | `eur` | the credit packs' currency |
 | `GODLING_STRIPE_SECRET_KEY`, `GODLING_STRIPE_WEBHOOK_SECRET` | | Stripe; without them, only the development test checkout |
 | `GODLING_EMAIL_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_TLS`, `_SSL` | | SMTP; without a host, emails go to the console |

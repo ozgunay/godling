@@ -6,7 +6,8 @@ from django.test import Client, TestCase, override_settings
 
 from apps.credits import services as credits
 from apps.credits.models import Entry, Power, PowerCall
-from apps.notes.models import Note
+from apps.notes.models import Note, Report
+from apps.rules import words
 from apps.rules.models import BlockedWord, Rules
 from apps.users.models import User
 
@@ -137,10 +138,32 @@ class ScreenTests(TestCase):
     def test_a_note_goes_as_the_account_and_is_kept_as_the_panel_shows_it(self):
         user = self.viewer()
         self.panel = {"ok": True, "text": "Folded into a glider.", "note": "Say 'hi' to the palms"}
-        self.assertTrue(self.post("/api/note", {"text": 'Say "hi" to the palms'}).json()["ok"])
+        self.assertTrue(self.post("/api/note", {"text": 'Say "hi"\nto the​ palms'}).json()["ok"])
+        note = Note.objects.get()
         self.assertEqual(self.calls[-1], ("POST", "/api/note", {"client": user.client_id, "name": "tomv",
-                                                                "text": 'Say "hi" to the palms'}))
-        self.assertEqual(Note.objects.get().text, "Say 'hi' to the palms")
+                                                                "text": "Say 'hi' to the palms", "ref": note.pk}))
+        self.assertEqual(note.text, "Say 'hi' to the palms")
+
+    def test_a_report_reaches_the_note_that_was_shown(self):
+        """Pop-ups carry the note's id from the site through the panel; names and words never pick the note."""
+        mine, theirs = make_user("mara+foo"), make_user("marafoo")
+        shown = Note.objects.create(author=mine, text="hello island")
+        Note.objects.create(author=theirs, text="hello island")  # the same words from another account
+        self.status["popups"] = [{"id": 1, "kind": "note", "name": "mara+foo", "text": "hello island", "ref": shown.pk},
+                                 {"id": 2, "kind": "note", "name": "marafoo", "text": "hello island"}]
+        popups = self.client.get("/api/status").json()["popups"]
+        self.assertEqual(popups[0]["noteId"], shown.pk)
+        self.assertNotIn("ref", popups[0])
+        self.assertNotIn("noteId", popups[1])  # no id came with it: nothing to report
+        self.client.force_login(make_user("r1"))
+        self.post("/api/report", {"note": popups[0]["noteId"]})
+        self.assertEqual(list(Report.objects.values_list("note__author__username", flat=True)), ["mara+foo"])
+
+    def test_a_note_the_island_refuses_is_not_kept(self):
+        self.viewer()
+        self.panel = {"ok": False, "text": "The sky is full of notes right now. Try again in a minute."}
+        self.assertFalse(self.post("/api/note", {"text": "hello"}).json()["ok"])
+        self.assertFalse(Note.objects.exists())
 
     def test_note_pace_length_and_blocked_words_come_from_the_rules(self):
         self.viewer()
@@ -155,6 +178,48 @@ class ScreenTests(TestCase):
         self.assertGreater(self.client.get("/api/status").json()["notes"]["wait"], 50)
         self.assertEqual(len([c for c in self.calls if c[1] == "/api/note"]), 1)
 
+    def test_lookalike_letters_do_not_slip_past_the_blocked_words(self):
+        self.viewer()
+        BlockedWord.objects.create(word="cheap gold", applies_to=BlockedWord.NOTES)
+        for text in ("ｃｈｅａｐ ｇｏｌｄ", "che​ap gold", "cheap\ngold"):  # fullwidth, a zero-width space, a line break
+            self.assertIn("not be kind", self.post("/api/note", {"text": text}).json()["text"])
+        self.assertEqual(self.calls, [])
+        BlockedWord.objects.create(word="sky lord", applies_to=BlockedWord.USERNAMES)
+        self.assertTrue(words.username_blocked("ＳｋｙＬｏｒｄ"))
+
+    def test_two_requests_at_once_take_one_turn(self):
+        """A second power or note sent while the first is still with the island finds the turn taken (no race)."""
+        self.viewer(credit=50)
+        inner = []
+
+        def overlapping(method, path, body=None):  # the island is slow: a second request arrives meanwhile
+            if not inner:
+                inner.append(None)  # only one overlap, even if the second request got through
+                inner[0] = self.post(path, {"power": "Log"} if path == "/api/power" else {"text": "me too"}).json()
+            return {"ok": True, "text": "done"}
+
+        with mock.patch("apps.screen.views.relay", side_effect=overlapping):
+            self.assertTrue(self.post("/api/power", {"power": "Stone"}).json()["ok"])
+        self.assertIn("One power at a time", inner[0]["text"])
+        self.assertEqual(credits.balance_of(User.objects.get(username="tomv")), 46)
+        self.assertEqual(PowerCall.objects.count(), 1)
+        inner.clear()
+        with mock.patch("apps.screen.views.relay", side_effect=overlapping):
+            self.assertTrue(self.post("/api/note", {"text": "hello Godling"}).json()["ok"])
+        self.assertFalse(inner[0]["ok"])
+        self.assertGreater(inner[0]["wait"], 100)
+        self.assertEqual(Note.objects.count(), 1)
+
+    def test_a_turn_nothing_came_of_is_given_back(self):
+        self.viewer(credit=3)
+        self.assertTrue(self.post("/api/power", {"power": "Stone"}).json()["needCredits"])
+        credits.change(User.objects.get(username="tomv"), 10, Entry.GRANT, "test")
+        self.assertTrue(self.post("/api/power", {"power": "Stone"}).json()["ok"])  # no wait after too few credits
+        self.panel = {"ok": False, "text": "The sky is full of notes; try again soon."}
+        self.assertFalse(self.post("/api/note", {"text": "hello"}).json()["ok"])
+        self.panel = {"ok": True, "text": "Folded into a glider."}
+        self.assertTrue(self.post("/api/note", {"text": "hello"}).json()["ok"])  # no wait after the island refused
+
     def test_a_muted_account_sends_no_notes(self):
         user = self.viewer()
         user.notes_muted = True
@@ -167,7 +232,8 @@ class ScreenTests(TestCase):
     def test_three_reports_hide_a_note_and_pause_its_author(self):
         author = make_user("mara_k")
         note = Note.objects.create(author=author, text="buy cheap gold at the beach")
-        self.status["popups"] = [{"id": 7, "kind": "note", "name": "mara_k", "text": note.text, "time": 0}]
+        self.status["popups"] = [{"id": 7, "kind": "note", "name": "mara_k", "text": note.text, "time": 0,
+                                  "ref": note.pk}]
         self.status["mind"] = {"feed": [{"who": "notice", "text": f"A paper glider … It reads: '{note.text}'"}]}
         self.client.force_login(author)
         self.assertIn("own note", self.post("/api/report", {"note": note.pk}).json()["text"])

@@ -85,6 +85,58 @@ What stays in code, and why:
 - **The prompt-injection filter:** security code, to be reviewed rather than edited live.
 - **Godling's persona:** its identity, versioned with the rest.
 
+## Fixed after review (PR #17)
+Eleven findings from your review of PR #17 at `1b781a4`, all fixed.
+
+1. **The island image could not start the world.** The launcher looked for Clawblox in `~/.cargo/bin`, but the image puts it in `/usr/local/bin`. It now uses whichever is on the PATH, or `CLAWBLOX_BIN`.
+2. **A restart reset the island.** It is now kept:
+   - **Saving:** every five minutes and when the run stops (first thing, as a stopping container has seconds), the launcher reads the world's snapshot and keeps the island in `<run>/island-save.json`.
+   - **What is kept:**
+     - every piece that can be carried, built with or left by the sky, with where it lies, whether it is fastened, and its attributes;
+     - felled trees;
+     - the day and the hour;
+     - the numbering, so a new stone is never named like one standing in a wall;
+     - Godling's body: where it stood, its health, hunger and wetness.
+   - **Putting it back:** at the next start, the launcher writes the save into the run's copy of `main.lua` (as it sets the walk speed). The world puts the island back before anyone joins (`sky.restore`).
+   - **Not kept:** fish, fires, anything falling, an earthquake under way. Timers start afresh.
+   - **Why not Clawblox's own `--resume`:** it was tried first.
+     - It needed an engine patch: its Lua loader could not rebuild a function that refers to itself.
+     - With the patch, a viewer's fresh stone still vanished seconds after resuming.
+     - The world's timers use `os.clock()`, which starts from zero in a new process.
+     - A resumed world also runs its old code.
+
+     The world's own save has none of these problems, and a new world script puts back the same island.
+3. **Two requests at once got past a viewer's pace.** The pace was checked from the last note or power call, which was written only after the island answered. The turn is now taken first, in one conditional update of the account's row (`last_note_at`, `last_power_at`). It is given back if nothing came of it: too few credits, or the island refused the note.
+4. **Adding one disposable domain dropped the rest.** As in AgentOp, a table with any rows replaced the bundled list of about 74,000 domains. Now the bundled list always counts: the table adds domains, and a deactivated row unblocks one.
+5. **Lookalike letters slipped past the blocked words.** The site checked the note as typed; the panel then turned `ｃｈｅａｐ ｇｏｌｄ` into `cheap gold`. The site now makes the same plain text first (`words.plain`), then checks it and sends exactly that. Usernames are checked the same way.
+6. **Admin changes stayed stale in the other workers.** The cache was per process. It is now one table that every gunicorn worker shares, made by `migrate`. allauth's rate limits now count across workers too.
+7. **Every viewer shared one sign-in rate limit.** allauth saw only Caddy's address. The site now trusts one proxy (`GODLING_TRUSTED_PROXIES=1` in Compose) and reads the viewer's address from `X-Forwarded-For`.
+8. **Reports could reach the wrong note.** Pop-ups were matched to notes by name and words, and the panel had dropped `+` from names, so `mara+foo` showed as `marafoo`. Now:
+   - each note is stored before it is sent;
+   - its id travels with it through the panel, to the pop-up;
+   - a report reaches that very note;
+   - the panel keeps every character a username may hold.
+9. **Staff who could only look could import domains.** The import views now need the add permission on the domain list. While fixing that, the same gap turned up in every admin action (grant credits, mute, ban, hide notes, switch domains), and those now need the change permission.
+10. **Paid powers said "free while testing".** That line shows only in test mode now.
+11. **Two log tabs had no file.** The launcher now also writes its console to `console.log` and the panel's output to `panel.log` in the run folder.
+
+How the fixes were tested:
+- **The site:** 53 tests, with new ones for:
+  - two requests at once;
+  - a turn given back;
+  - lookalike letters;
+  - a report reaching the shown note, and a refused note not kept;
+  - the bundled domains kept;
+  - the viewer's address behind Caddy;
+  - imports and actions needing their permissions.
+- **The island, two real runs of the launcher on one run folder** (test ports, the stock Clawblox build):
+  - The first run was stopped as a container is.
+  - All 20 pieces, a viewer's stone among them, were there at the end of the second run.
+  - The second run's stone was numbered on (`Stone_2`).
+  - The clock and Godling's hunger went on.
+- **That save, put back again:** every piece within 5 cm and the same turn, and Godling's body where it stood.
+- **A hand-made save:** a block fastened on another, a felled palm, a crater, a sand mark and a new log all came back. A starting block missing from the save stayed gone.
+
 ## Tests
 - **`manage.py test`, 45 tests:**
   - the rules row, and welcome credits and reports following it;

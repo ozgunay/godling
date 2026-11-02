@@ -3,7 +3,7 @@
 Docker Compose, as AgentOp runs (ADR-013). Four services:
 - **`postgres`:** the site's database.
 - **`site`:** accounts, credits, moderation, the admin and the viewer screen (gunicorn, with whitenoise for the admin's files).
-- **`island`:** the world (Clawblox, built from source with `patches/`), Godling's mind and the guest panel, started by `mind/run_godling.py`. The run lives in a volume, so it continues across restarts.
+- **`island`:** the world (Clawblox, built from source with `patches/`), Godling's mind and the guest panel, started by `mind/run_godling.py`. The run lives in a volume, so it continues across restarts: Godling's memory, and the island itself. Every five minutes and when the container stops, the launcher saves what stands (`island-save.json`); on the next start the world puts it back (ADR-013).
 - **`caddy`:** HTTPS for the domain. It sends `/island…` to the world and everything else to the site.
 
 ## What the public can reach
@@ -36,10 +36,11 @@ Docker Compose, as AgentOp runs (ADR-013). Four services:
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.
 
 ## Day to day
-- **Logs:** `docker compose logs -f site island`, or the admin's Logs page (the world's, the mind's and the panel's).
+- **Logs:** `docker compose logs -f site island`, or the admin's Logs page: the world's, the mind's and the panel's (`world.log`, `console.log` and `panel.log` in the run folder).
 - **Prices, credit packs, viewers, notes and reports:** in the admin.
 - **Updates:** `git pull && docker compose up -d --build`. The site migrates its database on start.
-- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory).
+  - A run keeps the copy of the world script it started with (`/runs/live/world`). For a new world script, remove that copy before restarting: `docker compose exec island rm -rf /runs/live/world`. The island save is kept beside it, so the new script puts the same island back.
+- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory and the island's save).
 
 ## Tested so far
 - **Tested without Docker** (in WSL), the same pieces as the images run:

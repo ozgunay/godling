@@ -89,7 +89,9 @@ else:
         }
     }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+# One cache for every gunicorn worker: an admin change clears the blocked words or the disposable domains for all of
+# them, and allauth's rate limits count across them. The table is made by migrate (rules 0003).
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.db.DatabaseCache", "LOCATION": "godling_cache"}}
 
 AUTH_USER_MODEL = "users.User"
 AUTH_PASSWORD_VALIDATORS = [
@@ -115,6 +117,9 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 ACCOUNT_EMAIL_SUBJECT_PREFIX = "[Godling] "
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
+# The proxies in front of the site (deploy/: Caddy, so 1). allauth then reads the viewer's address from
+# X-Forwarded-For; without it every sign-in comes from Caddy's address and all viewers share one rate limit.
+ALLAUTH_TRUSTED_PROXY_COUNT = int(os.environ.get("GODLING_TRUSTED_PROXIES", "0"))
 if TESTING:
     ACCOUNT_RATE_LIMITS = {}  # repeated sign-ups and sign-ins in tests are not abuse
 

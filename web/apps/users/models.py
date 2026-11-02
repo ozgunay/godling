@@ -49,6 +49,10 @@ class User(AbstractUser):
     notes_muted = models.BooleanField(default=False)
     notes_muted_at = models.DateTimeField(null=True, blank=True)
     notes_muted_reason = models.CharField(max_length=120, blank=True)
+    # The viewer's pace (apps.screen): when they last took a turn for a power or a note. Taken in one conditional
+    # update before the island is asked, so two requests at once cannot both pass.
+    last_power_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_note_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]

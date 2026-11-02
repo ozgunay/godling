@@ -97,3 +97,29 @@ class AdminTests(TestCase):
         self.client.force_login(self.viewer)
         self.assertEqual(self.client.get("/admin/credits/power/").status_code, 302)
         self.assertEqual(self.client.get(reverse("admin_logs")).status_code, 302)
+
+    def test_staff_need_the_permission_for_imports_and_actions(self):
+        """A staff account allowed only to look (view permissions) imports no domains and runs no actions."""
+        from django.contrib.auth.models import Permission
+
+        from apps.users.models import DisposableDomain
+        looker = User.objects.create_user(username="looker", email="looker@example.org",
+                                          password="an-island-test-pass-4127", is_staff=True)
+        looker.user_permissions.add(*Permission.objects.filter(codename__in=(
+            "view_disposabledomain", "view_user", "view_note")))
+        self.client.force_login(looker)
+        page = self.client.get("/admin/users/disposabledomain/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, "Add Domains")  # no import forms for someone who may not add
+        self.assertEqual(self.client.post(reverse("admin:users_disposabledomain_import_manual"),
+                                          {"domains_text": "sneaky.example"}).status_code, 403)
+        self.assertFalse(DisposableDomain.objects.filter(domain="sneaky.example").exists())
+        note = Note.objects.create(author=self.viewer, text="hello")
+        self.client.post("/admin/users/user/", {"action": "grant_100", "_selected_action": [self.viewer.pk]})
+        self.client.post("/admin/notes/note/", {"action": "hide", "_selected_action": [note.pk]})
+        note.refresh_from_db()
+        self.assertEqual((services.balance_of(self.viewer), note.status), (0, Note.SENT))
+        # With the add permission, the import works.
+        looker.user_permissions.add(Permission.objects.get(codename="add_disposabledomain"))
+        self.client.post(reverse("admin:users_disposabledomain_import_manual"), {"domains_text": "sneaky.example"})
+        self.assertTrue(DisposableDomain.objects.filter(domain="sneaky.example").exists())

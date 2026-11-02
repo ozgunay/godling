@@ -5,9 +5,11 @@ is empty or cannot be read, the words it was seeded with still hold: the list ne
 guest panel keeps its own short list too (tools/guest_panel.py BLOCKED), as a floor for when it runs on its own.
 """
 import re
+import unicodedata
 
 from django.core.cache import cache
 
+QUOTES = re.compile("[“”„«»‹›\"]")  # as tools/guest_panel.py QUOTES
 CACHE_KEY = "godling_blocked_words"
 CACHE_SECONDS = 3600
 # What the table was seeded with (migrations 0002): the panel's note words and the username words that were in code.
@@ -43,11 +45,22 @@ def forget():
     cache.delete(CACHE_KEY)
 
 
+def plain(text):
+    """A note as the guest panel will deliver it (tools/guest_panel.py clean_note): lookalike letters made plain
+    (NFKC: ｇｏｌｄ is gold), hidden characters dropped, one line, quote marks made plain. The site checks and sends
+    this text, so what passes the blocked words is what reaches the island."""
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    text = "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp") else c for c in text
+                   if unicodedata.category(c) != "Cf")
+    return QUOTES.sub("'", " ".join(text.split()))
+
+
 def note_blocked(text):
     """Whether a note holds a blocked word (one of its words starts with it, or the phrase is in it)."""
-    return any(re.search(r"(?<!\w)" + re.escape(w), text or "", re.IGNORECASE) for w in words("notes"))
+    text = plain(text)
+    return any(re.search(r"(?<!\w)" + re.escape(w), text, re.IGNORECASE) for w in words("notes"))
 
 
 def username_blocked(name):
-    name = (name or "").lower()
-    return any(w.replace(" ", "") in name for w in words("usernames"))
+    name = plain(name).casefold()
+    return any(w.casefold().replace(" ", "") in name for w in words("usernames"))

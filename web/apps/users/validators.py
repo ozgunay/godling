@@ -13,12 +13,13 @@ username-change flow):
 * rejection of disposable / throwaway email domains.
 
 The domain blocklist loading order (all sources unioned):
-  1. ``DisposableDomain`` DB table — the authoritative source, managed via the
-     admin UI.  Result is cached in Django's cache for 1 hour, invalidated
-     automatically when any row is saved or deleted.
+  1. ``DisposableDomain`` DB table — managed via the admin UI: active rows add
+     domains, deactivated rows unblock them.  Result is cached in Django's
+     cache for 1 hour, invalidated automatically when any row is saved or
+     deleted.
   2. Bundled ``data/disposable_email_domains.txt`` snapshot (~74k domains) —
-     used as the initial seed and as a fallback when the DB table is still empty
-     or unreachable.  Refresh with ``manage.py update_disposable_domains``.
+     always counted, so a table holding only a few rows never replaces it.
+     Refresh with ``manage.py update_disposable_domains``.
   3. ``FALLBACK_DISPOSABLE_DOMAINS`` — a small hand-kept set of domains we have
      actually seen abused (e.g. nespf.com, immenseignite.info) that upstream
      lists may not catalogue yet.
@@ -183,43 +184,40 @@ def _load_bundled_domains():
 
 
 def _load_db_domains():
-    """Return active domains from the DisposableDomain table.
+    """Return the (active, deactivated) domains from the DisposableDomain table.
 
-    Returns an empty set (not raising) if the table doesn't exist yet or if any
-    other DB error occurs — important for management commands that run before
-    migrations.
+    Returns two empty sets (not raising) if the table doesn't exist yet or if
+    any other DB error occurs — important for management commands that run
+    before migrations.
     """
     try:
         from apps.users.models import DisposableDomain  # local import avoids circular
 
-        return set(
-            DisposableDomain.objects.filter(is_active=True).values_list(
-                "domain", flat=True
-            )
-        )
+        active, inactive = set(), set()
+        for domain, is_active in DisposableDomain.objects.values_list("domain", "is_active"):
+            (active if is_active else inactive).add(domain)
+        return active, inactive
     except Exception:
-        return set()
+        return set(), set()
 
 
 def get_disposable_domains():
     """Return the frozen set of blocked disposable email domains.
 
-    Result is served from Django's cache (TTL = 1 h) and rebuilt from:
-      DB table  →  bundled file (fallback when DB is empty)  →  FALLBACK set
+    Result is served from Django's cache (TTL = 1 h) and rebuilt as:
+      FALLBACK set  ∪  bundled file  ∪  active DB rows  −  deactivated DB rows
+
+    Godling's change: the bundled file always counts. In AgentOp a table with
+    any row replaced it, so on a fresh deployment adding one domain by hand
+    dropped the other ~74k. The table adds domains, and a deactivated row
+    unblocks a bundled one.
     """
     cached = cache.get(DISPOSABLE_DOMAINS_CACHE_KEY)
     if cached is not None:
         return cached
 
-    domains = set(FALLBACK_DISPOSABLE_DOMAINS)
-
-    db_domains = _load_db_domains()
-    if db_domains:
-        # DB is seeded — it's the authoritative source.
-        domains |= db_domains
-    else:
-        # DB empty (e.g. fresh deploy not yet seeded) — use the bundled file.
-        domains |= _load_bundled_domains()
+    active, inactive = _load_db_domains()
+    domains = (set(FALLBACK_DISPOSABLE_DOMAINS) | _load_bundled_domains() | active) - inactive
 
     result = frozenset(domains)
     cache.set(DISPOSABLE_DOMAINS_CACHE_KEY, result, DISPOSABLE_DOMAINS_CACHE_TTL)

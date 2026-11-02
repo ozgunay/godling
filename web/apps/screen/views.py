@@ -15,6 +15,8 @@ import urllib.request
 from datetime import timedelta
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -29,7 +31,6 @@ from apps.rules import words
 from apps.rules.models import Rules
 
 PANEL_DOWN = {"ok": False, "text": "The island is out of reach. Try again in a moment."}
-NOTE_POPUP_MATCH = timedelta(minutes=15)  # a note pops up when it reaches the island, minutes after it was sent
 
 
 def relay(method, path, body=None):
@@ -59,8 +60,28 @@ def wait_after(last, every):
 
 
 def note_wait(user, rules):
-    last = Note.objects.filter(author=user).values_list("created", flat=True).first()
-    return wait_after(last, rules.note_every)
+    return wait_after(user.last_note_at, rules.note_every)
+
+
+def take_turn(user, field, every):
+    """Take the viewer's turn for a power or a note (`field`: last_power_at or last_note_at), or the seconds to wait.
+
+    One conditional update, so two requests at once cannot both pass: the database lets one of them change the row,
+    and the other then finds the turn taken. Returns (turn, 0), with `turn` for give_back(), or (None, wait)."""
+    now = timezone.now()
+    rows = get_user_model().objects.filter(pk=user.pk)
+    before = rows.values_list(field, flat=True).first()
+    free = Q(**{f"{field}__isnull": True}) | Q(**{f"{field}__lte": now - timedelta(seconds=every)})
+    if rows.filter(free).update(**{field: now}):
+        return (field, now, before), 0
+    return None, max(1, wait_after(rows.values_list(field, flat=True).first(), every))
+
+
+def give_back(user, turn):
+    """Give back a turn nothing came of (too few credits, or the island refused a note), unless a later one has been
+    taken since."""
+    field, now, before = turn
+    get_user_model().objects.filter(pk=user.pk, **{field: now}).update(**{field: before})
 
 
 def account(request, rules):
@@ -83,18 +104,24 @@ def body_of(request):
 
 
 def moderate(status):
-    """Note pop-ups get their note's id (so viewers can report it); hidden notes vanish from pop-ups and the feed."""
+    """Note pop-ups get their note's id (so viewers can report it); hidden notes vanish from pop-ups and the feed.
+
+    The id came with the note through the panel (its pop-up's `ref`), so a report always reaches the note that was
+    shown, never another account's note with the same words. A note pop-up without one has no Report button."""
     popups = status.get("popups") or []
-    note_popups = [p for p in popups if p.get("kind") == "note"]
     hidden = set(Note.objects.filter(status=Note.HIDDEN, created__gte=timezone.now() - timedelta(days=2))
                  .values_list("text", flat=True))
-    if note_popups:
-        recent = Note.objects.filter(created__gte=timezone.now() - NOTE_POPUP_MATCH).select_related("author")
-        by_sender = {(n.author.username, n.text): n for n in reversed(recent)}  # the latest such note wins
+    refs = [p["ref"] for p in popups if p.get("kind") == "note" and type(p.get("ref")) is int]
+    if refs or hidden:
+        by_id = Note.objects.in_bulk(refs)
         kept = []
         for p in popups:
-            note = by_sender.get((p.get("name"), p.get("text"))) if p.get("kind") == "note" else None
-            if note and note.status == Note.HIDDEN or p.get("kind") == "note" and p.get("text") in hidden:
+            if p.get("kind") != "note":
+                kept.append(p)
+                continue
+            p = dict(p)
+            note = by_id.get(p.pop("ref", None))
+            if note and note.status == Note.HIDDEN or p.get("text") in hidden:
                 continue
             kept.append({**p, "noteId": note.pk} if note else p)
         status["popups"] = kept
@@ -143,14 +170,15 @@ def api_power(request):
     if power is None:
         return JsonResponse({"ok": False, "text": "That power is not on offer right now."}, status=400)
     rules = Rules.get()
-    last = PowerCall.objects.filter(user=user).values_list("created", flat=True).first()
-    if wait_after(last, rules.power_every):
+    turn, wait = take_turn(user, "last_power_at", rules.power_every)
+    if wait:
         return JsonResponse({"ok": False, "text": "One power at a time: give the last one a moment."})
     charged = 0 if rules.free_powers else power.price
     if charged:
         try:
             credits.spend(user, charged, power.key)
         except credits.NotEnough as short:
+            give_back(user, turn)
             return JsonResponse({"ok": False, "needCredits": True, "credits": short.balance,
                                  "text": f"{power.label} costs {power.price} credits; you hold {short.balance}."})
     at = body.get("at") if isinstance(body.get("at"), list) and len(body.get("at")) == 2 else None
@@ -179,22 +207,37 @@ def api_note(request):
         return JsonResponse({"ok": False, "text": paused})
     body = body_of(request)
     rules = Rules.get()
-    text = " ".join(str(body.get("text") or "").split())
+    # Checked as it will be delivered: the panel makes the same text of it (words.plain), so ｂｌｏｃｋｅｄ is blocked.
+    text = words.plain(body.get("text"))
     wait = note_wait(user, rules)
     if wait:
-        minutes, seconds = divmod(wait, 60)
-        return JsonResponse({"ok": False, "wait": wait,
-                             "text": f"One note at a time: you can send another in {minutes}:{seconds:02d}."})
+        return note_later(wait)
     if len(text) > rules.note_limit:
         return JsonResponse({"ok": False, "text": f"Notes are {rules.note_limit} characters at most."})
     if words.note_blocked(text):
         return JsonResponse({"ok": False, "text": "That note would not be kind to send."})
-    answer = relay("POST", "/api/note", {"client": user.client_id, "name": user.username, "text": body.get("text")})
+    turn, wait = take_turn(user, "last_note_at", rules.note_every)
+    if wait:
+        return note_later(wait)
+    # Kept before it is sent, so its id travels with it (the panel's pop-up `ref`, for reports: moderate).
+    note = Note.objects.create(author=user, text=text[:200])
+    answer = relay("POST", "/api/note", {"client": user.client_id, "name": user.username, "text": text,
+                                         "ref": note.pk})
     if answer.get("ok"):
-        # Kept as the panel will show it: one line, quote marks made plain (tools/guest_panel.py clean_note).
-        Note.objects.create(author=user, text=answer.get("note") or text.replace('"', "'")[:200])
+        shown = (answer.get("note") or text)[:200]  # kept as the panel shows it
+        if shown != note.text:
+            Note.objects.filter(pk=note.pk).update(text=shown)
         answer["wait"] = rules.note_every
+    else:
+        note.delete()
+        give_back(user, turn)
     return JsonResponse(answer)
+
+
+def note_later(wait):
+    minutes, seconds = divmod(wait, 60)
+    return JsonResponse({"ok": False, "wait": wait,
+                         "text": f"One note at a time: you can send another in {minutes}:{seconds:02d}."})
 
 
 @require_POST

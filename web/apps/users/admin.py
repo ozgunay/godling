@@ -9,6 +9,7 @@ import urllib.request
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
+from django.core.exceptions import PermissionDenied
 from django.db.models import Count
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
@@ -152,30 +153,30 @@ class ViewerAdmin(UserAdmin):
             credits.change(user, amount, Entry.GRANT, f"granted by {request.user.username}")
         self.message_user(request, f"Granted {amount} credits to {queryset.count()} viewer(s).")
 
-    @admin.action(description="Grant 20 credits")
+    @admin.action(permissions=["change"], description="Grant 20 credits")
     def grant_20(self, request, queryset):
         self._grant(request, queryset, 20)
 
-    @admin.action(description="Grant 100 credits")
+    @admin.action(permissions=["change"], description="Grant 100 credits")
     def grant_100(self, request, queryset):
         self._grant(request, queryset, 100)
 
-    @admin.action(description="Mute their notes")
+    @admin.action(permissions=["change"], description="Mute their notes")
     def mute_notes(self, request, queryset):
         n = queryset.update(notes_muted=True, notes_muted_reason="muted by a moderator")
         self.message_user(request, f"{n} viewer(s) muted.")
 
-    @admin.action(description="Unmute their notes")
+    @admin.action(permissions=["change"], description="Unmute their notes")
     def unmute_notes(self, request, queryset):
         n = queryset.update(notes_muted=False, notes_muted_reason="")
         self.message_user(request, f"{n} viewer(s) unmuted.")
 
-    @admin.action(description="Ban (no signing in)")
+    @admin.action(permissions=["change"], description="Ban (no signing in)")
     def ban(self, request, queryset):
         n = queryset.filter(is_staff=False).update(is_active=False)
         self.message_user(request, f"{n} viewer(s) banned; staff accounts are never banned here.", messages.WARNING)
 
-    @admin.action(description="Unban")
+    @admin.action(permissions=["change"], description="Unban")
     def unban(self, request, queryset):
         n = queryset.update(is_active=True)
         self.message_user(request, f"{n} viewer(s) unbanned.")
@@ -196,13 +197,13 @@ class DisposableDomainAdmin(admin.ModelAdmin):
     actions = ["activate_domains", "deactivate_domains"]
     change_list_template = "admin/users/disposabledomain/change_list.html"
 
-    @admin.action(description="Activate selected domains")
+    @admin.action(permissions=["change"], description="Activate selected domains")
     def activate_domains(self, request, queryset):
         updated = queryset.update(is_active=True)
         invalidate_disposable_domains_cache()
         self.message_user(request, f"{updated} domain(s) activated.")
 
-    @admin.action(description="Deactivate selected domains")
+    @admin.action(permissions=["change"], description="Deactivate selected domains")
     def deactivate_domains(self, request, queryset):
         updated = queryset.update(is_active=False)
         invalidate_disposable_domains_cache()
@@ -217,14 +218,20 @@ class DisposableDomainAdmin(admin.ModelAdmin):
 
     def get_urls(self):
         custom = [
-            path("sync-online/", self.admin_site.admin_view(self._view_sync_online),
-                 name="users_disposabledomain_sync_online"),
-            path("import-bundled/", self.admin_site.admin_view(self._view_import_bundled),
+            path("sync-online/", self._adding(self._view_sync_online), name="users_disposabledomain_sync_online"),
+            path("import-bundled/", self._adding(self._view_import_bundled),
                  name="users_disposabledomain_import_bundled"),
-            path("import-manual/", self.admin_site.admin_view(self._view_import_manual),
-                 name="users_disposabledomain_import_manual"),
+            path("import-manual/", self._adding(self._view_import_manual), name="users_disposabledomain_import_manual"),
         ]
         return custom + super().get_urls()
+
+    def _adding(self, view):
+        """The import views add domains: they need the add permission on the list, not only a staff account."""
+        def checked(request, *args, **kwargs):
+            if not self.has_add_permission(request):
+                raise PermissionDenied
+            return view(request, *args, **kwargs)
+        return self.admin_site.admin_view(checked)
 
     def _back(self):
         return HttpResponseRedirect(reverse("admin:users_disposabledomain_changelist"))

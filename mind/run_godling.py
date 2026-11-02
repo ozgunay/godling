@@ -11,8 +11,10 @@ through the last project (ADR-002). Everything is logged to <run-dir>/mind/log.j
 """
 import argparse
 import json
+import math
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -36,7 +38,14 @@ from godling.memory import NativeMemory  # noqa: E402
 from godling.mind import Mind  # noqa: E402
 from godling.skills import Interrupted, Skills  # noqa: E402
 from godling.structures import measure, pieces_of, terrain_of  # noqa: E402
-from godling.world import World, WorldError  # noqa: E402
+from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
+
+# What a restart keeps (IslandSave; world/main.lua sky.restore puts it back): the pieces that can be carried, built
+# with or left by the sky, by their RenderRole. Felled trees (Stump) are kept as well.
+KEPT_ROLES = ("PickupObject", "Stone", "Log", "Tool", "Ladder", "Boulder", "Rock", "Coconut", "Catch", "Volleyball",
+              "Crater", "SandMark")
+DECOR_ROLES = ("Crater", "SandMark")  # anchored and walked through by design
+NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch")  # name prefixes the world counts on from
 
 CONSOLE = {"decision": "THINK", "skill": "  DO", "event": "NOTICE", "sleep": "SLEEP", "llm": None, "error": "ERROR",
            "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None}
@@ -78,6 +87,7 @@ def main():
 
     run = args.run_dir.expanduser().resolve()
     (run / "mind").mkdir(parents=True, exist_ok=True)
+    keep_console(run)
     log_file = (run / "mind/log.jsonl").open("a")
     log_lock = threading.Lock()  # the planner thread logs too
     bubble = None  # the thought bubble hears what happens (ADR-009)
@@ -98,21 +108,29 @@ def main():
 
     (run / "config.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=2))
     home = Path.home()
+    # The world's snapshot route asks for this token (IslandSave); the world started below inherits it.
+    os.environ.setdefault("WORLD_OPERATOR_TOKEN", secrets.token_urlsafe(24))
     # Under WSL the Windows PATH leaks in (Windows npx hangs on Linux paths); children get Linux tools only.
     clean_env = {**os.environ, "PATH": ":".join([str(home / ".local/bin"), str(home / ".cargo/bin")] + [
         p for p in os.environ.get("PATH", "").split(":") if p and not p.startswith("/mnt/")])}
+    # Installed by cargo (~/.cargo/bin) on a development machine, or on the PATH (the island image: /usr/local/bin);
+    # CLAWBLOX_BIN names another build.
+    clawblox = (os.environ.get("CLAWBLOX_BIN") or shutil.which("clawblox", path=clean_env["PATH"])
+                or str(home / ".cargo/bin/clawblox"))
+    # Mounted under WORLD_BASE_PATH (deploy/: /island, so its spectator page can be public), the world's API is too.
+    local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
+    save = IslandSave(run, local_world, log)
+    island = save.load()  # what the island was when the run last stopped: the world puts it back (main.lua)
     server = hindsight = panel = None
     try:
         if not args.attach:
-            world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes)
+            world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes, island)
             server = subprocess.Popen(
-                [str(home / ".cargo/bin/clawblox"), "run", str(world_dir), "--port", str(args.port),
+                [clawblox, "run", str(world_dir), "--port", str(args.port),
                  "--record", "--record-dir", str(run / "recordings")],
                 stdout=(run / "world.log").open("w"), stderr=subprocess.STDOUT, env=clean_env)
         if args.memory == "hindsight" and not args.hindsight_url:
             hindsight, args.hindsight_url = start_hindsight(run, clean_env)
-        # Mounted under WORLD_BASE_PATH (deploy/: /island, so its spectator page can be public), the world's API is too.
-        local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
         world = World(local_world, args.name)
         llm = LLM(args.model, log=log)
         memory = make_memory(args, run, log)
@@ -137,7 +155,10 @@ def main():
         spectator = None
         if server:
             spectator = wait_for_line(run / "world.log", r"Spectator frontend: (\S+)", 15)
-            print(f"World is up. Watch it here: {spectator or local_world + '/'}", flush=True)
+            restored = island and wait_for_line(run / "world.log", r"ISLAND restored: ([^\n]+)", 5)
+            print(f"World is up{f', the island put back ({restored})' if restored else ''}. "
+                  f"Watch it here: {spectator or local_world + '/'}", flush=True)
+            save.start()
         world.join()
         if args.bubble:
             bubble = Bubble(world, llm, log=log).start()
@@ -146,7 +167,10 @@ def main():
             panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
                                       "--world", local_world, "--port", str(args.guest_panel),
                                       "--run-dir", str(run)] + (["--view", spectator] if spectator else []),
-                                     env=clean_env)
+                                     env=clean_env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+            threading.Thread(target=copy_lines, args=(panel.stdout, run / "panel.log"), name="panel-log",
+                             daemon=True).start()
         time.sleep(3)  # the world drops its starting blocks from the sky: let them land before the first look
         print(f"{args.name} joined. Model: {args.model}, memory: {args.memory}, agenda: {args.agenda}, "
               f"walk speed: {args.walk_speed:g}. Logs: {run / 'mind/log.jsonl'}. Ctrl+C to stop.\n", flush=True)
@@ -159,6 +183,9 @@ def main():
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # also when the run ends on its own
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if server is not None and server.poll() is None:
+            save.stop()
+            save.take()  # first: a container being stopped has seconds, not minutes
         if bubble is not None:
             bubble.stop()
         memory.save()
@@ -184,6 +211,123 @@ def _stop(*_):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     raise KeyboardInterrupt
+
+
+class IslandSave:
+    """The island as it stands, kept in <run>/island-save.json so a restart keeps it (ADR-013): the pieces that were
+    carried, built with or left by the sky (where they lie, whether fastened, their attributes), the felled trees,
+    the day, the numbering, and Godling's body.
+
+    Read from the world's snapshot (GET /snapshot with the operator token) every few minutes and when the run stops;
+    put back by the world itself at the next start (prepare_world writes it into the run's main.lua, sky.restore).
+    Not Clawblox's --resume: it lost freshly made pieces seconds after resuming, and the world script's timers
+    (os.clock) start again from zero in a new process. Godling's memories are in <run>/memory already; with this the
+    island they speak of stays.
+    """
+    EVERY = 300  # seconds: at most five minutes of the island lost to a crash; a clean stop loses nothing
+
+    def __init__(self, run, base, log):
+        self.path = run / "island-save.json"
+        self.base, self.log = base, log
+        self.lock = threading.Lock()
+        self.stopping = threading.Event()
+
+    def load(self):
+        try:
+            return json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as err:
+            print(f"The island's save could not be read ({err}); the island starts afresh.", flush=True)
+            return None
+
+    def take(self):
+        with self.lock:
+            req = urllib.request.Request(self.base + "/snapshot",
+                                         headers={"X-Operator-Token": os.environ["WORLD_OPERATOR_TOKEN"]})
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    island = island_of(json.loads(resp.read()))
+            except (OSError, ValueError, KeyError, TypeError, IndexError) as err:
+                self.log(kind="error", message=f"island save: {err!r}"[:200])
+                return False
+            part = self.path.with_name(self.path.name + ".part")
+            part.write_text(json.dumps(island))
+            os.replace(part, self.path)  # only a whole save replaces the last good one
+            return True
+
+    def start(self):
+        def every():
+            while not self.stopping.wait(self.EVERY):
+                self.take()
+        threading.Thread(target=every, name="island-save", daemon=True).start()
+
+    def stop(self):
+        self.stopping.set()
+
+
+def island_of(snapshot):
+    """What a restart keeps, from a Clawblox snapshot (IslandSave)."""
+    inst = snapshot["instance"]
+    pieces, felled, counters = [], [], {"Sky": 0}
+    for c in inst["workspace_children"]:
+        name = c.get("name") or ""
+        attrs = {k: v["value"] for k, v in (c.get("attributes") or {}).items()
+                 if v.get("type") in ("String", "Number", "Bool") and v.get("value") is not None}
+        prefix, _, number = name.rpartition("_")
+        if prefix in NUMBERED and number.isdigit():
+            counters[prefix] = max(counters.get(prefix, 0), int(number))
+        if isinstance(attrs.get("SkyId"), (int, float)):
+            counters["Sky"] = max(counters["Sky"], int(attrs["SkyId"]))
+        part, role = c.get("part"), attrs.get("RenderRole")
+        if not part or c.get("class_name") != "Part" or role not in KEPT_ROLES + ("Stump",):
+            continue
+        if role not in DECOR_ROLES and part["anchored"] and not part["can_collide"]:
+            continue  # carried down by the sky and not landed yet (a meteor): it would hang in the air
+        attrs.pop("FelledAt", None)  # a time on the old process's clock
+        kept = {"name": name, "pos": part["cframe"]["position"], "turn": orientation(part["cframe"]["rotation"]),
+                "size": part["size"], "color": part["color"], "anchored": part["anchored"],
+                "collide": part["can_collide"], "attrs": attrs}
+        (felled if role == "Stump" else pieces).append(kept)
+    pieces.sort(key=lambda p: (p["attrs"].get("RenderRole") != "Crater", p["name"].rpartition("_")[0],
+                               int(p["name"].rpartition("_")[2]) if p["name"].rpartition("_")[2].isdigit() else 0))
+    clock = next((c.get("attributes") or {} for c in inst["workspace_children"] if c.get("name") == "Clock"), {})
+    day, hour = clock.get("Day", {}).get("value", 1), clock.get("TimeOfDay", {}).get("value", 7)
+    body = None
+    for p in inst["players"]:
+        hrp = p.get("humanoid_root_part") or {}
+        if p.get("name") != SKY_PLAYER and hrp.get("position"):
+            a = {k: v.get("value") for k, v in (p.get("attributes") or {}).items()}
+            body = {"pos": hrp["position"], "health": a.get("Health") or 100, "hunger": a.get("Hunger") or 100,
+                    "wet": a.get("Wet") or 0}
+    return {"pieces": pieces, "felled": felled, "roles": list(KEPT_ROLES), "counters": counters,
+            # main.lua tickClock: Day and TimeOfDay come from the seconds since the first morning (DAY 2400 s, 7 am)
+            "clock": max(0.0, (day - 1) * 2400 + hour / 24 * 2400 - 7 / 24 * 2400), "body": body, "saved": time.time()}
+
+
+def orientation(r):
+    """A rotation matrix as Clawblox's CFrame:ToOrientation() gives it (rx, ry, rz), for CFrame.fromOrientation."""
+    rx = math.asin(max(-1.0, min(1.0, -r[1][2])))
+    if abs(math.cos(rx)) > 1e-6:
+        return [rx, math.atan2(r[0][2], r[2][2]), math.atan2(r[1][0], r[1][1])]
+    return [rx, math.atan2(-r[2][0], r[0][0]), 0.0]
+
+
+def lua_literal(value):
+    """A JSON-like value as a Lua table constructor (the save written into main.lua)."""
+    if value is None:
+        return "nil"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(round(float(value), 4)) if math.isfinite(value) else "0"
+    if isinstance(value, str):
+        # Quote marks, backslashes and control characters as Lua's \ddd; other letters as they are (UTF-8).
+        return '"' + "".join(f"\\{ord(c):03d}" if c in '"\\' or (ord(c) < 128 and not c.isprintable()) else c
+                             for c in value) + '"'
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"[{lua_literal(str(k))}] = {lua_literal(v)}" for k, v in value.items()) + "}"
+    return "{" + ", ".join(lua_literal(v) for v in value) + "}"
 
 
 def stop_children(*procs):
@@ -430,9 +574,9 @@ def maybe_sleep(mind, memory, snap, args, log):
 
 # ---- setup ------------------------------------------------------------------------------
 
-def prepare_world(world, run, walk_speed, sky_test_minutes=0):
-    """Run a frozen copy of the world in the run folder, with only WalkSpeed (Mesa walks at 16) and the sky test
-    timer changed.
+def prepare_world(world, run, walk_speed, sky_test_minutes=0, island=None):
+    """Run a frozen copy of the world in the run folder, with only WalkSpeed (Mesa walks at 16), the sky test
+    timer and the island as the run left it (IslandSave) changed.
 
     The copy also records which version of the world a run used."""
     copy = run / "world"
@@ -442,7 +586,12 @@ def prepare_world(world, run, walk_speed, sky_test_minutes=0):
     src = script.read_text()
     src = _set_line(src, "humanoid.WalkSpeed = ", "16", f"{walk_speed:g}", "the walking pace")
     src = _set_line(src, "local SKY_TEST_EVERY = ", "0", f"{sky_test_minutes * 60:g}", "the sky test timer")
-    script.write_text(src)
+    saved, n = re.subn(r"(?m)^sky\.saved = .* -- ISLAND SAVE$",
+                       lambda _: f"sky.saved = {lua_literal(island)} -- ISLAND SAVE", src)
+    if n != 1 and island:  # a run copied before the island was kept: it runs as it always did
+        print("This run's copy of the world script cannot put the island back (no ISLAND SAVE line); "
+              "the island starts afresh.", flush=True)
+    script.write_text(saved if n == 1 else src)
     return copy
 
 
@@ -495,6 +644,48 @@ def start_hindsight(run, env, port=8888):
 
 
 # ---- output -----------------------------------------------------------------------------
+
+class Tee:
+    """Writes go to every stream; anything else is the first stream's."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for stream in self.streams:
+            stream.write(text)
+        return len(text)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.streams[0], name)
+
+
+def keep_console(run):
+    """The console, also kept in <run>/console.log: the site's log viewer reads it there (web/apps/users/log_views.py),
+    and in deploy/ the console otherwise goes only to the container's output. Not when the run was started with its
+    output already going to that file (`run_godling.py … > console.log`)."""
+    path = run / "console.log"
+    try:
+        if path.exists() and os.path.samestat(os.fstat(sys.stdout.fileno()), path.stat()):
+            return
+    except (OSError, ValueError, AttributeError):
+        pass
+    kept = path.open("a", errors="replace")
+    sys.stdout, sys.stderr = Tee(sys.stdout, kept), Tee(sys.stderr, kept)
+
+
+def copy_lines(stream, path):
+    """A child's output on the console and in its own log (the guest panel's: <run>/panel.log)."""
+    with path.open("a", errors="replace") as kept:
+        for line in stream:
+            kept.write(line)
+            kept.flush()
+            print(line, end="", flush=True)
+
 
 def print_entry(entry):
     label = CONSOLE.get(entry["kind"], entry["kind"].upper())

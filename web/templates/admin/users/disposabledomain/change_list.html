@@ -3,6 +3,7 @@
 {% load i18n %}
 
 {% block object-tools-items %}
+  {% if has_add_permission %}{# Godling: the imports add domains, so only for those who may add them #}
   {# ── Sync from online sources ─────────────────────────────────── #}
   <li>
     <form method="post" action="{% url 'admin:users_disposabledomain_sync_online' %}" style="display:inline">
@@ -28,6 +29,7 @@
       </button>
     </form>
   </li>
+  {% endif %}
 
   {{ block.super }}
 {% endblock %}
@@ -35,6 +37,7 @@
 {% block content %}
   {{ block.super }}
 
+  {% if has_add_permission %}
   {# ── Paste / bulk-add textarea ────────────────────────────────── #}
   <div style="margin-top:24px;padding:16px;background:#f8f8f8;border:1px solid #ddd;border-radius:4px">
     <h3 style="margin-top:0;font-size:14px">Bulk-add domains by pasting</h3>
@@ -57,4 +60,5 @@
       </button>
     </form>
   </div>
+  {% endif %}
 {% endblock %}

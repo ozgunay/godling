@@ -310,9 +310,11 @@ function pick(id) {
   tip = el('div', 'tip b-tip stone')
   tip.setAttribute('role', 'tooltip')
   const wait = cooling[p.id] > Date.now() ? `<dt>Ready</dt><dd>in ${minutesText((cooling[p.id] - Date.now()) / 1000)}</dd>` : ''
+  // Free only in test mode: the panel on its own (no accounts), or the site's rules saying so (drawPurse).
+  const free = !account || account.free ? '<span class="free">free while testing</span>' : ''
   tip.innerHTML = `<div class="tip-head">${icon(p.icon, 2)}<strong>${p.name}</strong><em class="${p.harm ? 'harm' : ''}">${p.kind}</em></div>
     <p>${p.does}</p>
-    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}<span class="free">free while testing</span></dd>`}
+    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}${free}</dd>`}
     ${p.rule ? `<dt>Rule</dt><dd>${p.rule}</dd>` : ''}${wait}</dl>`
   stage.append(tip)
   const r = s.getBoundingClientRect(), sr = stage.getBoundingClientRect()
