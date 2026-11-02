@@ -213,6 +213,17 @@ class ScreenTests(TestCase):
         self.assertEqual(answer["credits"], 50)
         self.assertEqual(PowerCall.objects.get().status, PowerCall.EXPIRED)
 
+    def test_credits_are_not_taken_unless_the_call_is_kept(self):
+        """Spending and keeping the call are one transaction: a failure in between leaves the purse whole."""
+        user = self.viewer(credit=50)
+        strict = Client(raise_request_exception=False)
+        strict.force_login(user)
+        with mock.patch("apps.screen.views.PowerCall.objects.create", side_effect=RuntimeError("database gone")):
+            response = strict.post("/api/power", {"power": "Stone"}, content_type="application/json")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(credits.balance_of(user), 50)
+        self.assertFalse(Entry.objects.filter(user=user, kind=Entry.POWER).exists())
+
     def test_one_power_at_a_time_as_the_rules_say(self):
         self.viewer(credit=50)
         self.assertTrue(self.post("/api/power", {"power": "Stone"}).json()["ok"])

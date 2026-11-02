@@ -19,6 +19,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse
@@ -196,16 +197,17 @@ def api_power(request):
     if wait:
         return JsonResponse({"ok": False, "text": "One power at a time: give the last one a moment."})
     charged = 0 if rules.free_powers else power.price
-    if charged:
-        try:
-            credits.spend(user, charged, power.key)
-        except credits.NotEnough as short:
-            give_back(user, turn)
-            return JsonResponse({"ok": False, "needCredits": True, "credits": short.balance,
-                                 "text": f"{power.label} costs {power.price} credits; you hold {short.balance}."})
     x, z = spot(body.get("at"))
-    call = PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z,
-                                    status=PowerCall.QUEUED)
+    try:
+        with transaction.atomic():  # the credits go and the call is kept together, or neither
+            if charged:
+                credits.spend(user, charged, power.key)
+            call = PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z,
+                                            status=PowerCall.QUEUED)
+    except credits.NotEnough as short:
+        give_back(user, turn)
+        return JsonResponse({"ok": False, "needCredits": True, "credits": short.balance,
+                             "text": f"{power.label} costs {power.price} credits; you hold {short.balance}."})
     try:
         tasks.call_power.delay(call.pk)
     except Exception:  # noqa: BLE001 (the queue is down: give the call up now rather than leave it waiting)

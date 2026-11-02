@@ -34,9 +34,14 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014). Six services:
    ```
    Then sign in at `https://<domain>/accounts/login/`: confirm your email from the message that arrives, and set up two-factor sign-in with an authenticator app at `https://<domain>/accounts/2fa/`. Save the recovery codes. The admin, `https://<domain>/admin/`, opens only with two-factor sign-in, and its sign-in is the site's own.
 6. **Stripe:**
-   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated` and `charge.dispute.closed`.
-   - A refund takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
-   - Events may arrive in any order or twice: each is applied once, and only the difference it makes moves credits. If Stripe cannot be reached for a lookup, the site answers 503 and Stripe sends the event again.
+   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for these events:
+     - `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`;
+     - `charge.refunded`, `charge.refund.updated`, and `refund.updated` and `refund.failed` where the Dashboard lists them;
+     - `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`.
+   - A refund takes back its share of the pack's credits, and a refund that fails gives it back. A dispute holds back all of them until the bank decides; a lost one takes back the disputed share. Credits already spent are owed, and come out of whatever the viewer gets next.
+   - Events may arrive in any order or twice: each is applied once, refunds and disputes are read from Stripe as they are now, and only the difference moves credits. If Stripe cannot be reached, the site answers 503 and Stripe sends the event again.
+   - A checkout Stripe charged less for than the pack, or in another currency, is **held**: no credits until staff let it stand (Payments in the admin, action "Let held payments stand") or refund it in Stripe. The admin's Stripe events list notes held payments and any paid checkout that matched no payment.
+   - Test and live keys stay apart: events from the other mode are ignored.
    - Put its signing secret in `GODLING_STRIPE_WEBHOOK_SECRET`.
    - Start with test keys (`sk_test_…`) and Stripe's test cards, then switch to live keys.
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.

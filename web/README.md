@@ -14,6 +14,7 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
 - **20 free credits** when the email is confirmed (the site rules, in the admin), once per inbox: `me+2@…` and, at Gmail, `m.e@…` are the same inbox as `me@…`.
 - **More credits** through Stripe Checkout (`/credits/`). Without Stripe keys, in development only, a test checkout stands in.
   - A refund in Stripe takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
+  - The payment is made before Stripe's checkout and travels in its metadata, so a paid checkout always finds it. A checkout Stripe charged less for, or in another currency, is held until staff let it stand in the admin (ADR-014).
 - **Notes can be reported.** Three viewers' reports (the site rules) hide a note from every screen and pause its sender's notes until a moderator looks.
   - Only reports from accounts at least a day old count toward that, and accounts sharing an inbox count once. Moderators still see every report.
   - Reports come from the screen: from a viewer watching now, on a note from the last 30 minutes, at most 10 an hour (the site rules).

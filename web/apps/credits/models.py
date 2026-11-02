@@ -4,6 +4,7 @@ Prices and packs are rows, so the admin changes them without a deployment. A pur
 apps.credits.services, which writes a ledger entry for every change; entries are never edited.
 """
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -37,8 +38,10 @@ class CreditPack(models.Model):
 
     key = models.SlugField(max_length=30, unique=True)
     name = models.CharField(max_length=40)
-    credits = models.PositiveIntegerField()
-    price_cents = models.PositiveIntegerField(help_text="In the smallest unit of the currency (cents).")
+    credits = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    # Stripe charges no less than 50 cents in most currencies (docs.stripe.com/currencies#minimum-and-maximum-charge).
+    price_cents = models.PositiveIntegerField(validators=[MinValueValidator(50)],
+                                              help_text="In the smallest unit of the currency (cents), 50 at least.")
     active = models.BooleanField(default=True)
     sort = models.PositiveSmallIntegerField(default=0)
 
@@ -91,7 +94,8 @@ class Welcome(models.Model):
     """The welcome gift, once per inbox (users.User.email_key): me+1@ and me+2@ are one viewer's two accounts."""
 
     email_key = models.CharField(max_length=254, unique=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    # Kept when the account is deleted: the inbox has had its gift, and a new account from it gets none.
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -131,12 +135,17 @@ class PowerCall(models.Model):
 class Payment(models.Model):
     """A credit pack bought through Stripe Checkout.
 
-    The payment keeps Stripe's facts as they arrive, in whatever order Stripe sends them: paid (paid_at), refunded so
-    far (amount_refunded), and the dispute's state. services.reconcile works out from them what the pack should
-    give the viewer now and moves only the difference, recorded in `granted`, so a late, repeated or reordered event
-    changes nothing it should not (ADR-014)."""
+    Made before Stripe's checkout session (views.buy), so a paid checkout always has its payment: the session carries
+    this payment's id in its metadata, and a webhook finds it by that even if the session id was never saved.
 
-    OPEN, PAID, EXPIRED, REFUNDED, DISPUTED = "open", "paid", "expired", "refunded", "disputed"
+    The payment keeps Stripe's facts as they arrive, in whatever order Stripe sends them: paid (paid_at) and for how
+    much (amount_paid), refunded so far (amount_refunded), and the dispute's state. services.reconcile works out from
+    them what the pack should give the viewer now and moves only the difference, recorded in `granted`, so a late,
+    repeated or reordered event changes nothing it should not (ADR-014). A checkout Stripe charged less for, or in
+    another currency, is held (`review`) until staff look at it."""
+
+    OPEN, PAID, EXPIRED, REFUNDED, DISPUTED, HELD = "open", "paid", "expired", "refunded", "disputed", "held"
+    PENDING = "pending_"  # the session id until Stripe has made the session
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="payments")
     pack = models.CharField(max_length=40)
@@ -148,10 +157,14 @@ class Payment(models.Model):
     payment_intent = models.CharField(max_length=255, blank=True, db_index=True,
                                       help_text="Stripe's PaymentIntent: how its refunds and disputes find this.")
     status = models.CharField(max_length=8, default=OPEN, choices=[(OPEN, "Open"), (PAID, "Paid"), (EXPIRED, "Expired"),
-                                                                   (REFUNDED, "Refunded"), (DISPUTED, "Disputed")])
+                                                                   (REFUNDED, "Refunded"), (DISPUTED, "Disputed"),
+                                                                   (HELD, "Held for review")])
+    amount_paid = models.PositiveIntegerField(null=True, blank=True, help_text="Cents Stripe charged for it.")
     amount_refunded = models.PositiveIntegerField(default=0, help_text="Cents Stripe has refunded so far.")
     dispute_id = models.CharField(max_length=255, blank=True)
     dispute_status = models.CharField(max_length=32, blank=True, help_text="Stripe's word for the dispute, if any.")
+    dispute_amount = models.PositiveIntegerField(default=0, help_text="Cents the dispute is about.")
+    review = models.CharField(max_length=200, blank=True, help_text="Why it is held for staff, if it is.")
     granted = models.PositiveIntegerField(default=0, help_text="Credits the pack gives the viewer now.")
     created = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)
@@ -169,6 +182,8 @@ class StripeEvent(models.Model):
     event_id = models.CharField(max_length=255, unique=True)
     kind = models.CharField(max_length=80)
     received = models.DateTimeField(auto_now_add=True)
+    note = models.CharField(max_length=200, blank=True, help_text="Anything staff should see, e.g. a paid checkout "
+                                                                  "that matched no payment.")
 
     def __str__(self):
         return f"{self.kind} {self.event_id}"

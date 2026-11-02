@@ -40,7 +40,8 @@ class AdminTests(TestCase):
 
     def test_every_list_opens(self):
         for model in ("users/user", "users/disposabledomain", "credits/power", "credits/creditpack", "credits/purse",
-                      "credits/entry", "credits/powercall", "credits/payment", "notes/note", "notes/report",
+                      "credits/entry", "credits/powercall", "credits/payment", "credits/stripeevent", "notes/note",
+                      "notes/report",
                       "rules/blockedword"):
             self.assertEqual(self.client.get(f"/admin/{model}/").status_code, 200, model)
         page = self.client.get(f"/admin/users/user/{self.viewer.pk}/change/")
