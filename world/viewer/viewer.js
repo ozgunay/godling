@@ -1,6 +1,7 @@
 // Godling's viewer screen, live: the Block HUD over the island (see .impeccable/surfaces/world-viewer-index-html.md).
-// The guest panel (tools/guest_panel.py) serves it and answers /api/status, /api/power and /api/note. The three HUD
-// prototypes it was chosen from live in prototypes/.
+// The guest panel (tools/guest_panel.py) serves it and answers /api/status, /api/power and /api/note; or the accounts
+// site (web/, ADR-012) does, in front of the panel: then powers and notes need a signed-in account, and the status
+// carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
@@ -219,7 +220,10 @@ function popup(entry, fresh = true) {
   const head = el('p', 'head')
   head.append(text('strong', '', entry.name || 'Someone'), document.createTextNode(entry.kind === 'note' ? ' sent Godling a note' : ` ${power.did}`))
   body.append(head)
-  if (entry.kind === 'note') body.append(text('q', 'paper', entry.text))
+  if (entry.kind === 'note') {
+    body.append(text('q', 'paper', entry.text))
+    if (account?.signedIn && entry.noteId && entry.name !== account.username) body.append(reportButton(entry.noteId))
+  }
   else body.append(text('small', '', power.after))
   card.append(body)
   popups.prepend(card)
@@ -234,6 +238,21 @@ function popup(entry, fresh = true) {
       stage.classList.toggle('has-pop', popups.children.length > 0)
     }, 400)
   }, entry.kind === 'note' ? POPUP_MS + 5000 : POPUP_MS)
+}
+
+// Behind the accounts site, a note seen can be reported (the user's choice: report after delivery). Enough reports
+// hide it from every screen and pause its sender's notes until a moderator looks.
+function reportButton(noteId) {
+  const b = text('button', 'report quiet', 'Report')
+  b.type = 'button'
+  b.title = 'Report this note to the moderators'
+  b.addEventListener('click', async () => {
+    b.disabled = true
+    const answer = await post('api/report', { note: noteId, reason: 'unkind' })
+    b.textContent = answer.ok ? 'Reported' : 'Not reported'
+    tell(answer.text, answer.ok ? '' : 'no')
+  })
+  return b
 }
 
 // ---- bottom: Godling's body, the hotbar, the note ------------------------------------------
@@ -275,7 +294,10 @@ const slots = POWERS.map((p, i) => {
   return s
 })
 const purse = el('div', 'b-purse stone', `${icon('coin', 3)}<span><b>Free</b>test mode<small>prices shown for later</small></span>`)
-belt.append(bar, purse)
+// Behind the accounts site: who is signed in, or the way in. Hidden when the panel serves the screen on its own.
+const accountChip = el('div', 'b-account stone')
+accountChip.hidden = true
+belt.append(bar, purse, accountChip)
 dock.append(composer, say, vitals, belt)
 stage.append(dock)
 
@@ -288,9 +310,11 @@ function pick(id) {
   tip = el('div', 'tip b-tip stone')
   tip.setAttribute('role', 'tooltip')
   const wait = cooling[p.id] > Date.now() ? `<dt>Ready</dt><dd>in ${minutesText((cooling[p.id] - Date.now()) / 1000)}</dd>` : ''
+  // Free only in test mode: the panel on its own (no accounts), or the site's rules saying so (drawPurse).
+  const free = !account || account.free ? '<span class="free">free while testing</span>' : ''
   tip.innerHTML = `<div class="tip-head">${icon(p.icon, 2)}<strong>${p.name}</strong><em class="${p.harm ? 'harm' : ''}">${p.kind}</em></div>
     <p>${p.does}</p>
-    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}<span class="free">free while testing</span></dd>`}
+    <dl>${p.note ? `<dt>Price</dt><dd>Free · ${status?.notes?.limit || 140} characters</dd>` : `<dt>Price</dt><dd>${p.price} credits · ${EURO(p.price)}${free}</dd>`}
     ${p.rule ? `<dt>Rule</dt><dd>${p.rule}</dd>` : ''}${wait}</dl>`
   stage.append(tip)
   const r = s.getBoundingClientRect(), sr = stage.getBoundingClientRect()
@@ -310,11 +334,15 @@ function tell(words, tone = '') {
   sayTimer = setTimeout(() => { say.className = 'b-say' }, 6000)
 }
 
+const csrf = () => document.cookie.split('; ').find((c) => c.startsWith('csrftoken='))?.slice(10) || ''
+
 async function post(path, body) {
   try {
-    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
       body: JSON.stringify({ client, name: noteName.value.trim() || store.get('godling.name') || '', ...body }) })
-    return await res.json()
+    const answer = await res.json()
+    if (answer.signIn) nudgeSignIn()
+    return answer
   } catch {
     return { ok: false, text: 'The island is out of reach. Try again in a moment.' }
   }
@@ -326,8 +354,10 @@ async function call(p, s, at = null) {
   s.classList.add('calling')
   const answer = await post('api/power', { power: p.id, ...(at ? { at } : {}) })
   s.classList.remove('calling')
+  if (account && Number.isFinite(answer.credits)) drawPurse({ ...account, credits: answer.credits })
   if (answer.ok) popup(answer)
   else tell(answer.text || `${p.name} did not work.`, 'no')
+  if (answer.needCredits) nudge(purse)
   if (answer.wait) cooling[p.id] = Date.now() + answer.wait * 1000
   drawSlots()
 }
@@ -514,6 +544,112 @@ addEventListener('blur', () => tellView({ type: 'godling-key', code: 'all', down
 
 // ---- the island's news, every POLL_MS -------------------------------------------------------
 
+// ---- the viewer's account (behind the accounts site) ---------------------------------------
+
+let account = null
+function drawAccount(a) {
+  account = a?.enabled ? a : null
+  const shown = account ? `${account.signedIn}:${account.username || ''}` : '' // redrawn only when that changes
+  if (shown === accountChip.dataset.shown) return
+  accountChip.dataset.shown = shown
+  accountChip.hidden = !account
+  noteName.hidden = Boolean(account) // the account's name goes with its notes
+  if (!account) return
+  accountChip.replaceChildren()
+  if (account.signedIn) {
+    accountChip.insertAdjacentHTML('afterbegin', icon('godling', 2))
+    accountChip.append(text('span', 'who', account.username))
+    const out = el('form', 'out')
+    out.method = 'post'
+    out.action = account.signOut
+    const token = el('input')
+    Object.assign(token, { type: 'hidden', name: 'csrfmiddlewaretoken', value: csrf() })
+    const button = text('button', 'quiet', 'Sign out')
+    button.type = 'submit'
+    out.append(token, button)
+    accountChip.append(out)
+    noteHint.textContent = `Signed in as ${account.username}. Godling reads every note and decides for itself what to do.`
+  } else {
+    const next = encodeURIComponent('/')
+    const signIn = text('a', 'get', 'Sign in')
+    signIn.href = `${account.signIn}?next=${next}`
+    const signUp = text('a', 'quiet', 'Create an account')
+    signUp.href = `${account.signUp}?next=${next}`
+    accountChip.append(signIn, signUp)
+    noteHint.textContent = 'Sign in to send Godling a note. It reads every one and decides for itself what to do.'
+  }
+}
+
+function nudge(block) {
+  block.classList.remove('nudge')
+  void block.offsetWidth // restart the nudge
+  block.classList.add('nudge')
+}
+const nudgeSignIn = () => nudge(accountChip)
+
+// The purse: test mode, the way to sign in for credits, or the account's credits and the way to buy more.
+function drawPurse(a) {
+  const key = !a ? 'panel' : a.free ? 'free' : a.signedIn ? `cr:${a.credits}` : 'out'
+  if (key === purse.dataset.shown) return
+  purse.dataset.shown = key
+  purse.replaceChildren()
+  purse.insertAdjacentHTML('afterbegin', icon('coin', 3))
+  const words = el('span')
+  if (!a || a.free) {
+    words.innerHTML = '<b>Free</b>test mode<small>prices shown for later</small>'
+  } else if (!a.signedIn) {
+    words.innerHTML = '<b>Credits</b><small>sign in to call powers</small>'
+  } else {
+    words.append(text('b', '', a.credits.toLocaleString('en')), document.createTextNode('credits'),
+      text('small', '', `≈ ${EURO(a.credits)}`))
+  }
+  purse.append(words)
+  if (a?.signedIn && !a.free) {
+    const get = text('a', 'get', 'Get credits')
+    get.href = a.creditsPage
+    purse.append(get)
+  }
+  drawPrices()
+}
+
+// Prices come from the site (the admin sets them); a slot the purse cannot pay for shows its price dimmed.
+function drawPrices() {
+  POWERS.forEach((p, i) => {
+    if (p.note) return
+    const price = slots[i].querySelector('.price')
+    price.textContent = `${p.price} cr`
+    price.classList.toggle('short', Boolean(account?.signedIn && !account.free && (account.credits ?? 0) < p.price))
+  })
+}
+
+// Behind the accounts site, each power's price and words come from its row in the admin (apps.credits Power); a power
+// switched off there leaves the hotbar. On its own, the panel's screen keeps the words written above.
+let powersShown = ''
+function takePowers(powers) {
+  if (!powers) return
+  const shown = JSON.stringify(powers)
+  if (shown === powersShown) return
+  powersShown = shown
+  POWERS.forEach((p, i) => {
+    if (p.note) return
+    const row = powers[p.id]
+    slots[i].hidden = !row
+    if (!row) return
+    Object.assign(p, { name: row.label, price: row.price, kind: row.kind, harm: row.harms, does: row.does,
+      rule: row.rule || undefined, did: row.did || p.did, after: row.after || p.after })
+    slots[i].classList.toggle('harm', Boolean(row.harms))
+    slots[i].setAttribute('aria-label', `${p.name}, ${p.price} credits`)
+  })
+  drawPrices()
+}
+
+function takeNoteLimit(notes) {
+  const limit = notes?.limit
+  if (!Number.isFinite(limit) || noteText.maxLength === limit) return
+  noteText.maxLength = limit
+  noteCount.textContent = `${[...noteText.value].length}/${limit}`
+}
+
 let first = true
 async function poll() {
   try {
@@ -524,6 +660,10 @@ async function poll() {
   }
   const now = status.now || Date.now() / 1000
   showView(status.view)
+  drawAccount(status.account)
+  takePowers(status.powers)
+  takeNoteLimit(status.notes)
+  if (status.account) drawPurse(account)
   drawLive(status.watching || 0, status.world)
   drawClock(status.clock, status.world)
   drawMind(status.mind, status.clock?.hour, now)

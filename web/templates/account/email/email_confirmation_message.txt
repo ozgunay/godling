@@ -1,0 +1,13 @@
+{% autoescape off %}Hi {{ user.username }},
+
+Thanks for signing up to watch Godling. Please confirm your email address with the link below:
+
+  {{ activate_url }}
+
+You can sign in once it is confirmed. Then you can call sky powers and send Godling notes.
+
+If you didn't create an account, you can safely ignore this email.
+
+---
+Godling, a small builder on an island, live
+{% endautoescape %}

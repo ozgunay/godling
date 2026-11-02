@@ -41,7 +41,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .stage { position: relative; width: 100vw; height: 100dvh; overflow: hidden; font-family: 'Tiny5', sans-serif; letter-spacing: 0.02em; }
 .island { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #0b0e10; }
 .stage > :not(.island) { pointer-events: none; }
-.stage button, .stage input, .stage textarea, .b-pop, .b-note, .tip { pointer-events: auto; }
+.stage button, .stage input, .stage textarea, .stage a, .b-pop, .b-note, .b-account, .tip { pointer-events: auto; }
 
 /* Island materials */
 .block {
@@ -174,6 +174,22 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .b-purse b { font-size: 1.6rem; font-weight: 500; color: var(--gold); margin-right: 0.35rem; }
 .b-purse small { display: block; font-size: 0.95rem; color: var(--fog); white-space: nowrap; }
 
+/* The viewer's account, behind the accounts site: the way in, or who is signed in */
+.b-account { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.7rem; text-shadow: var(--pixel-shadow); }
+.b-account a { text-decoration: none; white-space: nowrap; }
+.b-account .who { font: 400 1.15rem/1 'Tiny5', sans-serif; color: var(--gold); }
+.b-account .out { margin: 0; }
+.quiet {
+  padding: 0.5rem 0.7rem; background: rgba(14, 17, 18, 0.7); color: var(--mist); border: var(--bevel) solid var(--ink);
+  font: 400 1rem/1 'Tiny5', sans-serif; text-shadow: none; white-space: nowrap;
+}
+.quiet:hover { background: rgba(14, 17, 18, 0.95); color: var(--white); }
+.b-account.nudge, .b-purse.nudge { animation: nudge 520ms var(--ease-out); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
+.b-purse .get { margin-left: 0.2rem; text-decoration: none; white-space: nowrap; }
+.slot .price.short { color: var(--fog); opacity: 0.7; } /* more than the purse holds */
+.b-pop .report { display: block; margin: 0.4rem 0 0 auto; padding: 0.3rem 0.55rem; font-size: 0.85rem; }
+@keyframes nudge { 20% { transform: translateY(-0.35rem); } 45% { transform: none; } 70% { transform: translateY(-0.15rem); } }
+
 /* Aiming: the picked slot stays lifted; the bar above the hotbar says what a click will do */
 .slot.aiming { transform: translateY(-0.4rem); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
 .b-aim { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem 0.5rem 0.8rem; text-shadow: var(--pixel-shadow); }
@@ -228,7 +244,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .tip .free { display: block; color: var(--teal); }
 
 @media (prefers-reduced-motion: reduce) {
-  .b-live .dot, .slot.calling .px { animation: none; }
+  .b-live .dot, .slot.calling .px, .b-account.nudge, .b-purse.nudge { animation: none; }
   .b-pop, .b-pop.out, .b-say, .b-camhint, .slot { transition-duration: 1ms; filter: none; }
 }
 
@@ -279,6 +295,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .b-purse b { font-size: 1.1rem; }
   .b-purse small { display: inline; margin-left: 0.4rem; }
   .b-note { width: 100%; }
+  .b-account { justify-content: space-between; padding: 0.3rem 0.5rem; }
   .b-aim { flex-wrap: wrap; width: 100%; }
   .b-aim .words { flex: 1 1 100%; font-size: 1.05rem; }
   .slot.aiming { transform: none; }

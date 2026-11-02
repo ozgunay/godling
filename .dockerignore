@@ -1,0 +1,13 @@
+# The images (deploy/Dockerfile.*) copy only what they need: mind/, tools/, world/, patches/, web/ and one script.
+.git
+.impeccable
+art
+research
+research_notes
+reports
+decisions
+**/__pycache__
+**/node_modules
+web/db.sqlite3
+web/staticfiles
+deploy/.env
