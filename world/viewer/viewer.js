@@ -362,6 +362,7 @@ function toggleAim(p) {
   if (aiming?.id === p.id) return endAim()
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   toggleNote(false)
+  unpick() // the slot's focus opened its tip before the click; the aim bar takes that place
   aiming = p
   slots.forEach((s, i) => s.classList.toggle('aiming', POWERS[i] === p))
   stage.classList.add('aiming')
