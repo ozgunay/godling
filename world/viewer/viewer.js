@@ -500,7 +500,9 @@ addEventListener('keydown', (e) => {
     if (aiming) return endAim()
     return toggleNote(false)
   }
-  if (camera === 'free' && FREE_KEYS.has(e.code) && !(e.target instanceof HTMLButtonElement)) {
+  // Space on a focused button presses it, as it should. Every other flying key flies, even with a button focused: the
+  // Free camera button keeps the focus after the click that chose it.
+  if (camera === 'free' && FREE_KEYS.has(e.code) && !(e.code === 'Space' && e.target instanceof HTMLButtonElement)) {
     e.preventDefault()
     tellView({ type: 'godling-key', code: e.code, down: true })
   }

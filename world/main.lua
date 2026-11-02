@@ -3942,7 +3942,8 @@ sky.aim = {
     SNAP = 12, -- how far from the aim a clear spot is looked for
     FEET = 3.5, -- a gift aimed at Godling lands this far from its centre: at its feet, never on it
     AT_GODLING = 4.5, -- an aim this close to Godling counts as aimed at it
-    CLEAR = 3, -- no piece this close to where a gift lands (a log, 4.5: it is long)
+    GAP = 0.5, -- room left between a gift, as it will lie, and any piece already there
+    BODY = 1.5, -- and between it and anyone's middle (a body is about 2 wide)
     PALM_FROM_GODLING = HARM.lightningRange + 2, PALM_CLEAR = 5,
 }
 
@@ -3963,13 +3964,65 @@ function sky.aim.read(godling, inputData)
     return x, z
 end
 
--- The nearest spot to (x, z) where a gift may land: open land, `clear` of every piece, and never on Godling. Aimed at
--- Godling, it lands at its feet on the side the aim was, and a log lies across that side (yaw), not pointing at it.
-function sky.aim.spot(godling, x, z, clear)
+-- Whether a gift (`kind`) lying at (x, z), turned by `yaw`, keeps GAP from every piece and BODY from every body. The
+-- whole outline counts, as seen from above and turned as it will lie: a log is 7.5 long, so a test of its middle alone
+-- let one land across a wall or a body. Two outlines are apart when some direction separates them (a log's sides, or
+-- across a piece's own axes, which also covers a piece lying askew).
+function sky.aim.fits(kind, x, z, yaw)
+    local a = sky.aim
+    local size = kind == "Log" and LOG_SIZE or Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+    local turned = CFrame.Angles(0, yaw or 0, 0)
+    local gx, gz = { turned.RightVector.X, turned.RightVector.Z }, { turned.LookVector.X, turned.LookVector.Z }
+    local hx, hz = size.X / 2, size.Z / 2
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        if inst:IsA("Part") and inst:GetAttribute("IsPickupObject") then
+            local cf, half = inst.CFrame, inst.Size * 0.5
+            local axes = { { cf.RightVector, half.X }, { cf.UpVector, half.Y }, { cf.LookVector, half.Z } }
+            local dirs = { gx, gz }
+            for _, ax in ipairs(axes) do
+                local len = math.sqrt(ax[1].X * ax[1].X + ax[1].Z * ax[1].Z)
+                if len > 1e-3 then
+                    table.insert(dirs, { -ax[1].Z / len, ax[1].X / len })
+                end
+            end
+            local dx, dz, apart = inst.Position.X - x, inst.Position.Z - z, false
+            for _, d in ipairs(dirs) do
+                local reach = math.abs(gx[1] * d[1] + gx[2] * d[2]) * hx + math.abs(gz[1] * d[1] + gz[2] * d[2]) * hz
+                for _, ax in ipairs(axes) do
+                    reach = reach + math.abs(ax[1].X * d[1] + ax[1].Z * d[2]) * ax[2]
+                end
+                if math.abs(dx * d[1] + dz * d[2]) >= reach + a.GAP then
+                    apart = true
+                    break
+                end
+            end
+            if not apart then
+                return false
+            end
+        end
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp then -- the body's middle, against its nearest point on the gift
+            local dx, dz = hrp.Position.X - x, hrp.Position.Z - z
+            local u = math.max(math.abs(dx * gx[1] + dz * gx[2]) - hx, 0)
+            local v = math.max(math.abs(dx * gz[1] + dz * gz[2]) - hz, 0)
+            if u * u + v * v < a.BODY * a.BODY then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- The nearest spot to (x, z) where a gift may land: open land, where it fits (sky.aim.fits), and never on Godling.
+-- Aimed at Godling, it lands at its feet on the side the aim was, and a log lies across that side (yaw), not pointing
+-- at it.
+function sky.aim.spot(godling, x, z, kind)
     local a, g = sky.aim, getHumanoidRootPart(godling).Position
     local function ok(px, pz)
         local dx, dz = px - g.X, pz - g.Z
-        return dx * dx + dz * dz >= a.FEET * a.FEET and clearSupplySpot(px, pz) and clearOfPieces(px, pz, clear)
+        return dx * dx + dz * dz >= a.FEET * a.FEET and clearSupplySpot(px, pz) and a.fits(kind, px, pz, 0)
     end
     local dx, dz = x - g.X, z - g.Z
     local d = math.sqrt(dx * dx + dz * dz)
@@ -3982,8 +4035,9 @@ function sky.aim.spot(godling, x, z, clear)
             local c, sn = math.cos(turn), math.sin(turn)
             local rx, rz = ux * c - uz * sn, ux * sn + uz * c
             local px, pz = g.X + rx * a.FEET, g.Z + rz * a.FEET
-            if clearSupplySpot(px, pz) and clearOfPieces(px, pz, a.CLEAR) then
-                return px, pz, math.atan2(-rx, -rz) -- a log's length across the line to Godling
+            local yaw = math.atan2(-rx, -rz) -- a log's length across the line to Godling
+            if clearSupplySpot(px, pz) and a.fits(kind, px, pz, yaw) then
+                return px, pz, yaw
             end
         end
     end
@@ -4007,9 +4061,12 @@ function sky.aim.gift(kind, godling, inputData)
     end
     local yaw = 0
     if x then
-        x, z, yaw = sky.aim.spot(godling, x, z, kind == "Log" and 4.5 or sky.aim.CLEAR)
+        x, z, yaw = sky.aim.spot(godling, x, z, kind)
     else
         x, z = skySpotNear(godling)
+        if x and not sky.aim.fits(kind, x, z, 0) then -- room for a stone there, but not for a log: look around it
+            x, z, yaw = sky.aim.spot(godling, x, z, kind)
+        end
     end
     if not x then
         return nil, "NoClearSpot"
@@ -4100,6 +4157,7 @@ function sky.meteor.blast(fall, top)
             and not isCarried(part) and not isPlacing(part) then
             local d = (nearestPoint(part, c) - c).Magnitude
             if d < m.SMASH then
+                wakeRestingOn(part) -- what stood on it falls, rather than staying settled in the air
                 part:Destroy()
                 smashed = smashed + 1
             elseif d < m.THROW then
@@ -4108,6 +4166,7 @@ function sky.meteor.blast(fall, top)
                     unfastened = unfastened + 1
                 end
                 if not part:GetAttribute("Fastened") then
+                    wakeRestingOn(part)
                     part.Anchored = false
                     part:SetAttribute("Settled", false)
                     local away = Vector3.new(part.Position.X - c.X, 0, part.Position.Z - c.Z)
@@ -4215,6 +4274,18 @@ end
 -- itself whether it matters. The guest panel limits length and pace and filters the text; the world only caps it.
 sky.notes = { MAX = 160, FALL = 4, LIE = 240 } -- characters; seconds drifting down; seconds it lies there
 
+-- The first `max` characters of a UTF-8 text, never cutting one in two: the panel counts characters, and a cut by
+-- bytes left half an emoji at the end of a note it had let through.
+function sky.notes.cut(text, max)
+    local i, count = 1, 0
+    while i <= #text and count < max do
+        local b = text:byte(i)
+        i = i + (b < 0xC0 and 1 or b < 0xE0 and 2 or b < 0xF0 and 3 or 4)
+        count = count + 1
+    end
+    return text:sub(1, i - 1)
+end
+
 function sky.tickNotes(dt)
     local notes, i = sky.notes, 1
     while i <= #notes do
@@ -4309,7 +4380,7 @@ local SKY_POWERS = {
     end,
     Note = function(godling, inputData)
         local text = tostring(inputData and inputData.text or ""):gsub("[%c]", " "):gsub("%s+", " ")
-        text = text:match("^%s*(.-)%s*$"):sub(1, sky.notes.MAX)
+        text = sky.notes.cut(text:match("^%s*(.-)%s*$"), sky.notes.MAX):match("^(.-)%s*$")
         if text == "" then
             return nil, "EmptyNote"
         end
