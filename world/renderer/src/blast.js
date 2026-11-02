@@ -478,8 +478,8 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
         }
         return
       }
-      if (role === 'Crater') { // its middle is about the ground (the world sets it 0.1 above, its dish sunk below)
-        floors.set(String(attributes.SkyId ?? entity.id), entity.position[1])
+      if (role === 'Crater') { // it lies on the ground: its foot is the ground
+        floors.set(String(attributes.SkyId ?? entity.id), entity.position[1] - (entity.size?.[1] ?? 0) / 2)
         return
       }
       if (role !== 'Stone' || attributes.SkyEvent !== 'Meteor') return // the stream has no names: Meteor_<n> is this

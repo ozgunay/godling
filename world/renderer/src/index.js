@@ -676,14 +676,14 @@ export function createRenderer(ctx) {
         return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
       case 'Blast': // a meteor's contact point: its explosion is drawn by blast.js, the part itself never
         return { kind: 'none' }
-      case 'Crater': { // sunk in the ground: the world sets its middle just above it (0.1), the rest below
+      case 'Crater': { // lying on the ground, its foot on it (as crater.glb, whose base is the ground)
         const [w, h, d] = size
         return {
           kind: 'parts',
           parts: [
-            part('scorch', kit.geometry('disk'), kit.material('scorch'), scaled(w * 1.2, 1, d * 1.2).setPosition(0, -0.06, 0), { castShadow: false }),
-            part('craterPit', kit.geometry('disk'), kit.material('craterPit'), scaled(w * 0.7, 1, d * 0.7).setPosition(0, -0.05, 0), { castShadow: false }),
-            part('craterRim', kit.geometry('craterRim'), kit.material('craterRim'), scaled(w, h / 0.16, d).setPosition(0, -h * 0.2, 0)),
+            part('scorch', kit.geometry('disk'), kit.material('scorch'), scaled(w * 1.2, 1, d * 1.2).setPosition(0, -h / 2 + 0.02, 0), { castShadow: false }),
+            part('craterPit', kit.geometry('disk'), kit.material('craterPit'), scaled(w * 0.7, 1, d * 0.7).setPosition(0, -h / 2 + 0.03, 0), { castShadow: false }),
+            part('craterRim', kit.geometry('craterRim'), kit.material('craterRim'), scaled(w, h / 0.16, d).setPosition(0, -h / 2 + h * 0.3, 0)),
           ],
         }
       }
