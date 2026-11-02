@@ -13,6 +13,7 @@ import { bubbleSheet, createBubbles } from './bubble.js'
 import { createRain } from './rain.js'
 import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
+import { createBlasts } from './blast.js'
 import { createWind, swayMaterial } from './wind.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
@@ -236,6 +237,11 @@ function createPartKit(onMaterial) {
     // A sky event's warning (world/main.lua, PR #3): the shadow of a stone about to land. Unlit, see-through, casts
     // nothing.
     skyShadow: () => new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
+    // A meteor's crater, until its model loads (or if it cannot): a scorch on the ground, a dark pit, a ring of
+    // thrown-up sand. Drawn a little towards the camera, so the flat marks never flicker against the sand.
+    scorch: standard({ color: 0x2a221d, roughness: 1.0, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    craterPit: standard({ color: 0x16110e, roughness: 1.0, metalness: 0.0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    craterRim: standard({ color: 0x8a7350, roughness: 1.0, metalness: 0.0, flatShading: true }),
   }
   const GEOMETRIES = {
     box: () => new THREE.BoxGeometry(1, 1, 1),
@@ -258,6 +264,7 @@ function createPartKit(onMaterial) {
     seamRing: () => new THREE.TorusGeometry(0.5, 0.014, 6, 40),
     spearTip: () => new THREE.ConeGeometry(0.5, 1, 8).rotateX(Math.PI / 2), // point along +Z
     tail: () => new THREE.ConeGeometry(0.5, 1, 4).rotateZ(-Math.PI / 2), // point along +X, into the body
+    craterRim: () => new THREE.TorusGeometry(0.42, 0.08, 5, 22).rotateX(Math.PI / 2), // lying flat, chunky
   }
   return {
     geometry(key, make = GEOMETRIES[key]) {
@@ -486,6 +493,8 @@ export function createRenderer(ctx) {
   // Dust rises where loose pieces land or, in a quake, slide.
   const shake = createCameraShake(tier)
   const dust = createDust(scene, tier)
+  // Meteors: the blast where one lands (a Blast_<n> marker), and the trail of one falling (blast.js).
+  const blasts = createBlasts(scene, tier, { onMaterial })
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
   let worldQuake = Number.isFinite(forcedQuake) ? forcedQuake : 0
   let quakeNow = worldQuake
@@ -608,11 +617,12 @@ export function createRenderer(ctx) {
     const modelUrl = resolveEntityModelUrl(entity)
     const part = (key, geometry, material, local, extra = {}) => ({ key, geometry, material, local, ...extra })
 
-    if (modelUrl) {
+    // A model that cannot load (a missing file) leaves the part drawn as if it had none, below.
+    if (modelUrl && !models.failed(modelUrl)) {
       const template = models.get(modelUrl)
       if (!template) return { kind: 'pending' }
       if (template.animated) return { kind: 'character', modelUrl }
-      const fit = models.fit(template, size, entity.model_yaw_offset_deg, new THREE.Matrix4())
+      const fit = models.fit(template, size, entity.model_yaw_offset_deg, new THREE.Matrix4(), role === 'Crater')
       return {
         kind: 'parts',
         parts: template.parts.map((p, i) =>
@@ -664,6 +674,19 @@ export function createRenderer(ctx) {
       }
       case 'SkyShadow':
         return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
+      case 'Blast': // a meteor's contact point: its explosion is drawn by blast.js, the part itself never
+        return { kind: 'none' }
+      case 'Crater': { // sunk in the ground: the world sets its middle just above it (0.1), the rest below
+        const [w, h, d] = size
+        return {
+          kind: 'parts',
+          parts: [
+            part('scorch', kit.geometry('disk'), kit.material('scorch'), scaled(w * 1.2, 1, d * 1.2).setPosition(0, -0.06, 0), { castShadow: false }),
+            part('craterPit', kit.geometry('disk'), kit.material('craterPit'), scaled(w * 0.7, 1, d * 0.7).setPosition(0, -0.05, 0), { castShadow: false }),
+            part('craterRim', kit.geometry('craterRim'), kit.material('craterRim'), scaled(w, h / 0.16, d).setPosition(0, -h * 0.2, 0)),
+          ],
+        }
+      }
       case 'PickupObject':
         return { kind: 'parts', parts: [part('block', kit.geometry('box'), kit.material('rock'), scaled(...size), { colored: true })] }
       // The castaway's life (ADR-007). A ModelUrl, once the art pipeline makes one, is drawn instead (above).
@@ -738,7 +761,7 @@ export function createRenderer(ctx) {
       entity.attributes?.Cooked ? 'cooked' : '',
       entity.render?.primitive || '',
       modelUrl || '',
-      modelUrl && models.get(modelUrl) ? 'loaded' : '',
+      modelUrl && models.get(modelUrl) ? 'loaded' : modelUrl && models.failed(modelUrl) ? 'failed' : '',
       (entity.size || []).join(','),
       entity.model_yaw_offset_deg ?? '',
       visible ? 'shown' : 'hidden',
@@ -849,6 +872,7 @@ export function createRenderer(ctx) {
         worldQuake = quake
         quakePhase = String(entity.attributes?.QuakePhase ?? '')
       }
+      blasts.watch(entity, dt)
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -950,6 +974,7 @@ export function createRenderer(ctx) {
     }
     bubbles.prune(activeIds)
     dust.prune(activeIds)
+    blasts.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -1047,21 +1072,25 @@ export function createRenderer(ctx) {
     fires.update({ time: elapsed, camera, daylight: sky.daylight, night: sky.night })
     fish.update(swimming, sea, elapsed)
     dust.update({ time: elapsed, daylight: sky.daylight })
+    ambient.intensity += blasts.update({ time: elapsed, dt, daylight: sky.daylight, wind: wind.now, camera })
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
-    shake.apply(camera, quakeNow, elapsed)
+    shake.apply(camera, Math.min(1, quakeNow + blasts.jolt(camera.position)), elapsed)
     renderer.render(scene, camera)
     shake.restore(camera)
+    globalThis.__godlingRenderer?.afterDraw?.(elapsed) // for checks: the frame is still in the canvas here
     stats?.tick(dt)
   }
 
-  // For debugging in the browser console and for checks: the tier, per-frame counts and the sky.
+  // For debugging in the browser console and for checks: the tier, per-frame counts and the sky. A check may set
+  // `afterDraw(time)` to look at each frame as it is drawn (time: the renderer's clock, which effects run on).
   globalThis.__godlingRenderer = {
     tier,
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
+    blasts: () => blasts.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
     bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
@@ -1128,6 +1157,7 @@ export function createRenderer(ctx) {
       fires.dispose()
       fish.dispose()
       dust.dispose()
+      blasts.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()
