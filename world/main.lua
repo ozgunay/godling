@@ -2472,6 +2472,10 @@ local tickWeather = (function()
     local RAIN_FADE, FOG_FADE = 20, 60 -- seconds a shower or a fog takes to build up and to die away
     local DAMP_AFTER = 300 -- wood stays too damp to light this long after the rain
     local RAIN_PACE = 0.65 -- walking pace out in the rain
+    -- Wind (the user's wish): a breeze in fair weather, stronger in the rain, a gale in a storm. It veers slowly. The
+    -- Clock carries it as WindX/WindZ (direction times strength, 0-1); the renderer adds the gusts, bends the rain
+    -- and sways the palms. It moves nothing in the world.
+    local WIND_FAIR, WIND_RAIN, WIND_STORM, WIND_EASE = 0.25, 0.55, 1.0, 30
     local WET_SECONDS, DRY_SECONDS, FIRE_DRIES = 120, 300, 4 -- soaked through; dried out; a fire dries this much faster
     local NIGHT_FROM, NIGHT_TO = 21, 5
     local WARM_RANGE = 7 -- a fire this close warms
@@ -2485,7 +2489,7 @@ local tickWeather = (function()
     end
     local weather = { raining = false, spell = false, left = between(RAIN_FIRST_MIN, RAIN_FIRST_MAX), rain = 0, beat = 0,
         clock = 0, spellDue = between(SPELL_FIRST_MIN, SPELL_FIRST_MAX), storm = between(STORM_MIN, STORM_MAX),
-        fog = 0, fogUntil = nil, lastHour = nil }
+        fog = 0, fogUntil = nil, lastHour = nil, wind = WIND_FAIR, windDir = weatherRandom() * 2 * math.pi }
     clockPart:SetAttribute("Rain", 0)
     clockPart:SetAttribute("Fog", 0)
 
@@ -2568,6 +2572,9 @@ local tickWeather = (function()
         weather.rain = weather.rain + math.clamp(target - weather.rain, -dt / RAIN_FADE, dt / RAIN_FADE)
         local hour = (START_HOUR + clockSeconds / DAY_SECONDS * 24) % 24
         tickSkies(dt, hour)
+        local blow = weather.rain >= STORM_RAIN and WIND_STORM or weather.rain > 0.3 and WIND_RAIN or WIND_FAIR
+        weather.wind = weather.wind + (blow - weather.wind) * math.min(1, dt / WIND_EASE)
+        weather.windDir = weather.windDir + (weatherRandom() - 0.5) * 0.004 -- veers slowly
         climate.rain = weather.rain
         if weather.rain > 0.3 then
             climate.dampUntil = os.clock() + DAMP_AFTER
@@ -2583,6 +2590,8 @@ local tickWeather = (function()
         weather.beat = 0
         clockPart:SetAttribute("Rain", math.floor(weather.rain * 20 + 0.5) / 20)
         clockPart:SetAttribute("Fog", math.floor(weather.fog * 20 + 0.5) / 20)
+        clockPart:SetAttribute("WindX", math.floor(math.cos(weather.windDir) * weather.wind * 100 + 0.5) / 100)
+        clockPart:SetAttribute("WindZ", math.floor(math.sin(weather.windDir) * weather.wind * 100 + 0.5) / 100)
         local night = hour >= NIGHT_FROM or hour < NIGHT_TO
         for _, player in ipairs(Players:GetPlayers()) do
             local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
