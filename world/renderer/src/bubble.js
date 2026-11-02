@@ -21,7 +21,7 @@ const TAIL = [[80, 196, 14], [56, 224, 9]]
 const TIP = new THREE.Vector2(46 / 256, 1 - 236 / 256)
 
 const GLAD = new Set(['happy', 'proud', 'hopeful', 'curious', 'calm'])
-const TROUBLED = new Set(['tired', 'lonely', 'worried', 'frustrated', 'scared', 'hungry', 'sad'])
+const TROUBLED = new Set(['tired', 'lonely', 'worried', 'frustrated', 'scared', 'hungry', 'sad', 'cold'])
 const RIM = { glad: '#3fb24a', troubled: '#de3b34', between: '#8f9aa6' }
 
 const stone = 'asset://stone.glb'
@@ -52,6 +52,7 @@ const PICTURES = {
   lightning: { draw: drawBolt },
   explore: { draw: drawMap },
   night: { draw: drawNight },
+  rain: { draw: drawRain },
 }
 
 // `resolve` turns the world's asset:// names into URLs the browser can load (null until it knows how).
@@ -418,6 +419,23 @@ function drawMap(g, n) { // exploring: a little map, a dotted way across it, and
   g.moveTo(n * 0.78, n * 0.28)
   g.lineTo(n * 0.64, n * 0.42)
   g.stroke()
+}
+
+function drawRain(g, n) { // a grey cloud and falling drops
+  g.fillStyle = '#7d8794'
+  for (const [x, y, r] of [[0.32, 0.36, 0.16], [0.52, 0.28, 0.2], [0.7, 0.38, 0.14], [0.5, 0.42, 0.17]]) {
+    g.beginPath()
+    g.arc(n * x, n * y, n * r, 0, Math.PI * 2)
+    g.fill()
+  }
+  g.fillStyle = '#4a8fd6'
+  for (const [x, y] of [[0.3, 0.66], [0.46, 0.74], [0.62, 0.66], [0.38, 0.86], [0.56, 0.9], [0.72, 0.8]]) {
+    g.beginPath()
+    g.moveTo(n * x, n * (y - 0.07))
+    g.quadraticCurveTo(n * (x + 0.035), n * (y - 0.01), n * x, n * (y + 0.02))
+    g.quadraticCurveTo(n * (x - 0.035), n * (y - 0.01), n * x, n * (y - 0.07))
+    g.fill()
+  }
 }
 
 function drawNight(g, n) {

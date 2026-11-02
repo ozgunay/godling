@@ -10,6 +10,7 @@ import { createTerrain } from './terrain.js'
 import { createFires } from './fire.js'
 import { createFishLayer } from './fish.js'
 import { bubbleSheet, createBubbles } from './bubble.js'
+import { createRain } from './rain.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -463,6 +464,20 @@ export function createRenderer(ctx) {
   const terrain = createTerrain(scene, { onMaterial })
   const fires = createFires(scene, tier)
   const fish = createFishLayer(scene)
+  // The world's weather (ADR-010): the Clock's Rain, 0 to 1, eased in and out here. `?rain=1` forces it, to look.
+  const rain = createRain(scene, tier)
+  const forcedRain = params.has('rain') ? Number(params.get('rain')) : NaN
+  let worldRain = Number.isFinite(forcedRain) ? forcedRain : 0
+  let rainNow = worldRain
+  const RAIN_GREY = new THREE.Color(0x8b939c)
+  const RAIN_FOG = new THREE.Color()
+  // Morning fog from the sea (the Clock's Fog, 0 to 1): the view closes in and goes milky. `?fog=1` forces it.
+  const forcedFog = params.has('fog') ? Number(params.get('fog')) : NaN
+  let worldFog = Number.isFinite(forcedFog) ? forcedFog : 0
+  let fogNow = worldFog
+  const FOG_WHITE = new THREE.Color(0xd3d8dc)
+  const FOG_NEAR = scene.fog.near
+  const FOG_FAR = scene.fog.far
 
   // Time of day: `?time=17.5` holds the sun at that hour; `?dayMinutes=20` runs a whole day in 20 minutes.
   // Without either the sun stands where the light always stood.
@@ -806,6 +821,10 @@ export function createRenderer(ctx) {
       }
       const hour = Number(entity.attributes?.TimeOfDay)
       if (Number.isFinite(hour)) worldHour = hour
+      const rainFall = Number(entity.attributes?.Rain)
+      if (Number.isFinite(rainFall) && !Number.isFinite(forcedRain)) worldRain = rainFall
+      const mist = Number(entity.attributes?.Fog)
+      if (Number.isFinite(mist) && !Number.isFinite(forcedFog)) worldFog = mist
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -960,6 +979,17 @@ export function createRenderer(ctx) {
     hemisphere.groundColor.copy(GRASS_BOUNCE).lerp(NIGHT_GROUND, night)
     hemisphere.intensity = 0.4 * (0.35 + 0.65 * day)
     scene.fog.color.copy(sky.fogColor)
+    // Rain (ADR-010): an overcast, dimmer, greyer world while it pours.
+    rainNow += (worldRain - rainNow) * Math.min(1, dt * 0.5)
+    if (rainNow > 0.01) {
+      light.intensity *= 1 - 0.45 * rainNow
+      light.glint *= 1 - 0.7 * rainNow
+      scene.fog.color.lerp(RAIN_FOG.copy(RAIN_GREY).multiplyScalar(0.25 + 0.75 * day), 0.6 * rainNow)
+    }
+    fogNow += (worldFog - fogNow) * Math.min(1, dt * 0.5)
+    scene.fog.near = FOG_NEAR * (1 - 0.97 * fogNow)
+    scene.fog.far = FOG_FAR * (1 - 0.92 * fogNow) // about 50 to 60 in thick fog
+    if (fogNow > 0.01) scene.fog.color.lerp(RAIN_FOG.copy(FOG_WHITE).multiplyScalar(0.12 + 0.88 * day), 0.85 * fogNow)
     if (csm) {
       csm.lightDirection.copy(light.direction).negate()
       for (const l of csm.lights) {
@@ -982,7 +1012,8 @@ export function createRenderer(ctx) {
     updateSunAndLights(dt, cameraTarget)
     sky.update(camera, elapsed)
     sea.update({ camera, time: elapsed, seaLevel, land, landKey, light })
-    clouds.update({ camera, time: elapsed, sky })
+    clouds.update({ camera, time: elapsed, sky, rain: rainNow })
+    rain.update({ rain: rainNow, time: elapsed, camera })
     fires.update({ time: elapsed, camera, daylight: sky.daylight, night: sky.night })
     fish.update(swimming, sea, elapsed)
     instancer.flush()
@@ -1058,6 +1089,7 @@ export function createRenderer(ctx) {
       sky.dispose()
       sea.dispose()
       clouds.dispose()
+      rain.dispose()
       terrain.dispose()
       fires.dispose()
       fish.dispose()

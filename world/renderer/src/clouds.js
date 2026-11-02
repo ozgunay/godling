@@ -154,14 +154,14 @@ export function createClouds(scene, tier) {
   const white = new THREE.Color(1, 1, 1)
 
   return {
-    update({ camera, time, sky }) {
+    update({ camera, time, sky, rain = 0 }) {
       const drift = (time * SPEED) % TILE
       const baseX = Math.floor((camera.position.x - drift) / TILE) * TILE + TILE / 2
       const baseZ = Math.floor(camera.position.z / TILE) * TILE + TILE / 2
       layer.place(baseX, baseZ, drift)
-      // White by day, the sunset's colour low in the sky, moonlit grey-blue at night.
+      // White by day, the sunset's colour low in the sky, moonlit grey-blue at night; heavy and grey in the rain.
       tint.copy(white).lerp(sky.sunColor, 0.12 + 0.5 * (1 - sky.daylight)).lerp(MOON_COLOR, sky.night * 0.5)
-        .multiplyScalar(0.3 + 0.7 * sky.daylight)
+        .multiplyScalar((0.3 + 0.7 * sky.daylight) * (1 - 0.45 * rain))
       layer.material.color.copy(tint)
     },
     dispose() {

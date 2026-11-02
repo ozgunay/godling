@@ -21,7 +21,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - Walking pace is set per run (`--walk-speed`, default 5).
   - The jump is a person's hop: `JUMP_POWER` 15 lifts the body about 0.6. Upstream's jump is about 6.6.
   - The mind's `godling/world.py` mirrors these constants.
-- **Building (ADR-004).** The ways up are ladders and building, not jumping.
+- **Building (ADR-004).** The ways up are ladders and building, not jumping. Since ADR-010 the body also steps up onto, and down off, anything one block high (`StepUp`/`StepDown {position}`), when it fits there.
   - **Quarry.** An outcrop (`Quarry`, 6 x 3.5 x 5 at (28, -40)), with `Hammer_1` lying next to it.
     - Each `Strike` with the hammer in hand counts toward the next stone. Every `STRIKES_PER_STONE` (3) strikes, a stone breaks off: a `Stone_n` cube (0.75) and a `Brick_n` (1.5 x 0.75 x 0.75) by turns.
     - Stones are heavy and grippy (density 2.6, friction 1.0). The quarry never runs out.
@@ -69,6 +69,21 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - Every piece a power leaves carries `SkyEvent` (its kind) and `SkyId`. The world log prints a `SKY <kind> #<id>` line for each.
   - Powers come only from the bodiless player `Sky` (`SKY_PLAYER`), which `tools/guest_panel.py` joins as. It is parked under the island, and the mind leaves it out of what it sees. `max_players` is 2 for it.
   - `SKY_TEST_EVERY` (seconds, 0 = off) drops a meteor near Godling on a timer, to measure reactions without the panel. `run_godling.py --sky-test-minutes` sets it.
+- **Weather (ADR-010).** Showers every 20–50 minutes, 4–10 long; the Clock carries `Rain` (0–1).
+  - Out in the rain, a body walks at 0.65 of its pace and gets soaked (`Wet` 0–100).
+  - At night, or soaked in the rain, a body in the open is `Cold`: it loses health and does not heal.
+  - `Sheltered` is "roof" when a held piece is overhead (rain kept off). It is "enclosed" when there are also walls on three sides, which with a fire within 7 keeps the cold off.
+  - Body attributes: `InRain`, `Wet`, `Cold`, `Sheltered`, and `WalkSpeed` (the pace now).
+  - Wet spells of 2–3 in-game days of rain come every 4–7 hours (the first 1.5–2.5 hours in).
+  - In heavy rain, lightning strikes a palm near Godling every 3–8 minutes.
+  - Fog comes some mornings (the Clock's `Fog`).
+  - Rain puts every fire out.
+- **Fire by friction (ADR-010).** There is no `Kindle` input.
+  - A `Strike` with the Spear on a log rubs it, and rubs in a row heat it (`Heat`).
+  - From the 12th rub it may catch, but only with a coconut within 3 as tinder, which burns away.
+  - Nothing warms in the rain or for 5 minutes after it.
+- **A ship (ADR-010)** sails along the horizon for five minutes every 2.5–5 hours: parts `Ship`, `Ship_Cabin`, `Ship_Mast` and `Ship_Sail`.
+- **Driftwood (ADR-010).** Every 3 minutes a `Log_n` marked `Driftwood` washes up on open sand, while fewer than 6 lie on the beach.
 - **Renderer (ADR-006).** Godling's own, in `renderer/src/`; it no longer uses the runtime's model helpers.
   - **No CDN.**
     - three.js r187 is bundled in: `npm install`, then `npm run build` (`build.mjs`).
@@ -118,6 +133,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - It shows a picture of `Thought` (one of the world's 23 keys). The picture is rendered once from the island's own models by a small renderer of its own, or drawn by hand for fire, the HELP sign, a ship, the sea, lightning, a little map (exploring) and the night.
     - Its rim is tinted by `Feeling`: green when glad, red when troubled, grey in between.
     - Each thought pops up, stays 10 s and fades. The bubble is hidden in the body's own first-person view.
+  - **Rain** (`rain.js`, ADR-010): falling streaks round the camera while the Clock's `Rain` is up, with dimmer light, greyer fog and heavier clouds. `?rain=1` forces it.
   - **Terrain** (`terrain.js`): Clawblox voxel terrain, drawn as blocks, when the patched server sends it.
   - **Checks.**
     - `?stats=1` shows frame rate, draw calls, triangles and the tier.

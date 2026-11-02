@@ -25,6 +25,7 @@ MAP_CELL = 10  # the mind's map: one character per 10 units
 EYE = 4.5  # eye height above the feet
 LOOK_EVERY = 0.8  # seconds between looks, unless the body has moved on
 SIGHT_STEP = 2.0  # how finely a line of sight is checked against the rock
+FOG_HIDES = 0.6  # thick fog cuts sight to 0.4 of SIGHT
 
 
 class Discovery:
@@ -51,20 +52,22 @@ class Discovery:
         self._looked = (time.time(), me)
         eye = (me[0], me[1] - BODY_CENTRE_Y + EYE, me[2])
         rock = self._rock_index(snap)
-        reach = int(SIGHT // MAP_CELL) + 1
+        sight = SIGHT * (1 - FOG_HIDES * snap.fog)  # fog from the sea hides what is further off (ADR-010)
+        reach = int(sight // MAP_CELL) + 1
         ci, cj = round(me[0] / MAP_CELL), round(me[2] / MAP_CELL)
         for i in range(ci - reach, ci + reach + 1):
             for j in range(cj - reach, cj + reach + 1):
                 x, z = i * MAP_CELL, j * MAP_CELL
-                if (i, j) not in self.cells and math.hypot(x - me[0], z - me[2]) <= SIGHT:
+                if (i, j) not in self.cells and math.hypot(x - me[0], z - me[2]) <= sight:
                     ground = snap.ground_top(x, z)
                     if self._clear(rock, eye, (x, (ground or 0.0) + 0.5, z)):
                         self.cells.add((i, j))
                         self._unsaved += 1
         visible = set()
         for e in snap.entities.values():
-            far = hdist(e.pos, me)
-            if (far <= SIGHT and self._clear(rock, eye, (e.pos[0], e.top, e.pos[2]), e)) or (e.role == "Mesa" and e.top >= TALL):
+            near = hdist(e.pos, me) <= sight and self._clear(rock, eye, (e.pos[0], e.top, e.pos[2]), e)
+            towering = e.role == "Mesa" and e.top >= TALL and snap.fog < 0.5  # the peak, unless fog hides it
+            if near or towering:
                 visible.add(e.name)
                 if e.name not in self.names:
                     self.names.add(e.name)
@@ -73,7 +76,7 @@ class Discovery:
                     self.seen[e.name] = tuple(round(v, 2) for v in e.pos)
         for name, pos in list(self.seen.items()):
             # Its spot is in plain sight and it is not there: moved or gone, Godling does not know where.
-            if name not in visible and hdist(pos, me) <= SIGHT - 5 and self._clear(rock, eye, pos):
+            if name not in visible and hdist(pos, me) <= sight - 5 and self._clear(rock, eye, pos):
                 del self.seen[name]
                 self._unsaved += 1
         self.visible = visible

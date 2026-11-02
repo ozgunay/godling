@@ -1258,6 +1258,7 @@ local function setupPlayer(player, shouldSpawnAtStart)
         humanoid.WalkSpeed = 16
         humanoid.JumpPower = JUMP_POWER -- upstream: 50
         player:SetAttribute("BaseWalkSpeed", humanoid.WalkSpeed) -- carrying a boulder halves it
+        player:SetAttribute("WalkSpeed", humanoid.WalkSpeed) -- the pace now (the rain slows it too)
     end
 
     if character then
@@ -1448,11 +1449,13 @@ local function canReach(player, worldPosition, maxDistance)
     return (hrp.Position - worldPosition).Magnitude <= maxDistance
 end
 
-local function setCarryPace(player, block)
+local function setCarryPace(player, block) -- a heavy load halves the walk; rain slows it again (RainPace, WEATHER)
     local humanoid = getHumanoid(player)
     local base = player:GetAttribute("BaseWalkSpeed")
     if humanoid and base then
-        humanoid.WalkSpeed = (block and block:GetAttribute("Heavy")) and base / 2 or base
+        humanoid.WalkSpeed = ((block and block:GetAttribute("Heavy")) and base / 2 or base)
+            * (player:GetAttribute("RainPace") or 1)
+        player:SetAttribute("WalkSpeed", humanoid.WalkSpeed)
     end
 end
 
@@ -1496,27 +1499,29 @@ end
 -- shown by the tint of the cloud. A small, fast model reads the mind's thoughts and names both; the world only
 -- keeps them for the renderer: Thought, Feeling and a Thoughts counter. It never touches LastActionResult, which
 -- the body's own steps read.
-local THOUGHT_THINGS = {}
-for _, thing in ipairs({ "coconut", "fish", "cooked_fish", "fire", "log", "block", "boulder", "axe", "hammer", "spear",
-    "palm", "ladder", "raft", "ball", "help", "rescue", "sea", "lightning", "tower", "wall", "shelter", "explore",
-    "night" }) do
-    THOUGHT_THINGS[thing] = true
-end
-local FEELINGS = {}
-for _, feeling in ipairs({ "happy", "proud", "hopeful", "curious", "calm", "determined", "focused", "tired", "lonely",
-    "worried", "frustrated", "scared", "hungry", "sad" }) do
-    FEELINGS[feeling] = true
-end
-
-local function think(player, inputData)
-    local thing = inputData and tostring(inputData.thing or "")
-    local feeling = inputData and tostring(inputData.feeling or "")
-    if THOUGHT_THINGS[thing] and FEELINGS[feeling] then
-        player:SetAttribute("Thought", thing)
-        player:SetAttribute("Feeling", feeling)
-        player:SetAttribute("Thoughts", (player:GetAttribute("Thoughts") or 0) + 1)
+local think = (function() -- a function of its own: its lists stay out of the main chunk's 200 locals
+    local THOUGHT_THINGS = {}
+    for _, thing in ipairs({ "coconut", "fish", "cooked_fish", "fire", "log", "block", "boulder", "axe", "hammer",
+        "spear", "palm", "ladder", "raft", "ball", "help", "rescue", "sea", "lightning", "tower", "wall", "shelter",
+        "explore", "night", "rain" }) do
+        THOUGHT_THINGS[thing] = true
     end
-end
+    local FEELINGS = {}
+    for _, feeling in ipairs({ "happy", "proud", "hopeful", "curious", "calm", "determined", "focused", "tired",
+        "lonely", "worried", "frustrated", "scared", "hungry", "sad", "cold" }) do
+        FEELINGS[feeling] = true
+    end
+
+    return function(player, inputData)
+        local thing = inputData and tostring(inputData.thing or "")
+        local feeling = inputData and tostring(inputData.feeling or "")
+        if THOUGHT_THINGS[thing] and FEELINGS[feeling] then
+            player:SetAttribute("Thought", thing)
+            player:SetAttribute("Feeling", feeling)
+            player:SetAttribute("Thoughts", (player:GetAttribute("Thoughts") or 0) + 1)
+        end
+    end
+end)()
 
 local function pickupBlock(player, inputData)
     if heldBlocksByPlayer[player] then
@@ -2008,9 +2013,12 @@ local FOOD = { Coconut = 15, Catch = 20, CookedCatch = 50 }
 local FAINT_HUNGER, FAINT_HEALTH = 50, 30
 -- Hurt and healing: lightning striking close by, or a stone from the sky landing close by, takes health. Fed at
 -- least half full, the body mends: from none to whole in about half an hour.
-local HEAL_WHEN_FED, HEAL_SECONDS = 50, 1800
-local LIGHTNING_HURT, LIGHTNING_HURT_RANGE = 35, 7 -- from the struck palm's trunk
-local METEOR_HURT, METEOR_HURT_RANGE = 45, 6 -- from where the stone lands
+local HARM = {
+    healWhenFed = 50, healSeconds = 1800,
+    coldDrainSeconds = 2400, -- cold (WEATHER) takes a whole body's health in 40 minutes, and stops healing
+    lightning = 35, lightningRange = 7, -- from the struck palm's trunk
+    meteor = 45, meteorRange = 6, -- from where the stone lands
+}
 local COCONUT_SIZE, COCONUT_REGROW = 0.9, 300 -- a palm bears one ripe coconut, again 5 minutes after the last
 local CARVES_PER_SPEAR, SPEAR_SIZE = 3, Vector3.new(0.3, 0.3, 4.5)
 local FISH_COUNT, FISH_SPEED, FISH_Y, FISH_SIZE = 12, 1.6, OCEAN_TOP_Y + 0.15, Vector3.new(1.3, 0.35, 0.5)
@@ -2084,8 +2092,10 @@ local function tickSurvival(dt)
             else
                 s.health = s.health - dt * 100 / STARVE_SECONDS
             end
-            if s.hunger >= HEAL_WHEN_FED and s.health < 100 then -- well fed, a body mends
-                s.health = math.min(100, s.health + dt * 100 / HEAL_SECONDS)
+            if s.cold then
+                s.health = s.health - dt * 100 / HARM.coldDrainSeconds
+            elseif s.hunger >= HARM.healWhenFed and s.health < 100 then -- well fed and warm, a body mends
+                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds)
             end
             s.beat = s.beat + dt
             if s.health <= 0 then
@@ -2317,53 +2327,17 @@ local function tickClock(dt)
     end
 end
 
--- Fire, hard won as in the film: rubbing at a log lying on the ground only sometimes catches. A fire burns ten minutes
--- and uses the log up. Over it, a raw fish cooks; on the beach its smoke can be seen from far off.
--- Each rub warms the wood, so the next is likelier to catch: 1 in 10 at first, certain by the sixteenth rub in a row
--- (about a minute). Left alone for KINDLE_COOLS seconds, the wood is cold again. Run n7 gave up after six rubs at a
--- flat 1 in 5, and a quarter of its fires never caught.
-local KINDLE_SECONDS, KINDLE_FIRST, KINDLE_WARMING, KINDLE_COOLS = 4, 0.1, 0.06, 30
+-- Fire, hard won as in the film (the user's wish; ADR-010). There is no ready-made way to light one: rubbing a stick
+-- (a struck Spear) against a log that lies still heats the wood a little more with each rub in a row. It only catches
+-- once the wood is hot, after RUB_HOT rubs, and only into something dry and fine lying right beside it (a coconut's
+-- husk, as Chuck's tinder was), which burns away. Nothing catches in the rain or while the wood is still damp after it,
+-- and rain puts every fire out (WEATHER). A fire burns ten minutes and uses the log up; over it a raw fish cooks.
 local FIRE_SECONDS, COOK_RANGE = 600, 6
 local fires = {} -- fire part -> { log, untilTime }
-local lastKindleAt = {}
-local rubbedAt = {} -- log -> when it was last rubbed
+local climate = { rain = 0, dampUntil = 0 } -- kept by WEATHER: how hard it rains, and until when wood stays damp
 
-local function kindle(player, inputData)
-    local hrp = getHumanoidRootPart(player)
-    local log = inputData and inputData.name and findWorkspaceChild(tostring(inputData.name))
-    if not hrp or not log or not log:IsA("BasePart") or log:GetAttribute("RenderRole") ~= "Log" then
-        player:SetAttribute("LastActionResult", "KindleFailed:NotALog")
-        return
-    end
-    if isCarried(log) then
-        player:SetAttribute("LastActionResult", "KindleFailed:NotSetDown")
-        return
-    end
-    if log:GetAttribute("Burning") then
-        player:SetAttribute("LastActionResult", "KindleFailed:Burning")
-        return
-    end
-    if (nearestPoint(log, hrp.Position) - hrp.Position).Magnitude > PLACE_RANGE then
-        player:SetAttribute("LastActionResult", "KindleFailed:OutOfRange")
-        return
-    end
-    if os.clock() - (lastKindleAt[player] or -math.huge) < KINDLE_SECONDS then
-        player:SetAttribute("LastActionResult", "KindleFailed:TooSoon")
-        return
-    end
-    lastKindleAt[player] = os.clock()
-    player:SetAttribute("Strikes", (player:GetAttribute("Strikes") or 0) + 1) -- arms working at the wood
-    gesture(player, "Kindle")
-    local warm = os.clock() - (rubbedAt[log] or -math.huge) <= KINDLE_COOLS
-    local tries = (warm and log:GetAttribute("KindleTries") or 0) + 1 -- rubs in a row on this log
-    log:SetAttribute("KindleTries", tries)
-    rubbedAt[log] = os.clock()
-    if math.random() > KINDLE_FIRST + KINDLE_WARMING * (tries - 1) then
-        player:SetAttribute("LastActionResult", "KindleSmoke:" .. tries)
-        return
-    end
+local function lightFire(log)
     log:SetAttribute("Burning", true)
-    rubbedAt[log] = nil
     survivalCounters.fires = (survivalCounters.fires or 0) + 1
     local fire = Instance.new("Part")
     fire.Name = "Fire_" .. survivalCounters.fires
@@ -2377,7 +2351,62 @@ local function kindle(player, inputData)
     fire:SetAttribute("Fuel", log.Name)
     fire.Parent = Workspace
     fires[fire] = { log = log, untilTime = os.clock() + FIRE_SECONDS }
-    player:SetAttribute("LastActionResult", "KindleCaught:" .. fire.Name)
+    return fire
+end
+
+-- One rub of a stick against a log (a strike with the Spear); what the strike says happened. (A function of its own:
+-- its locals stay out of the main chunk's 200.)
+local rubLog = (function()
+    local RUB_HOT, RUB_CATCH, RUB_COOLS, TINDER_RANGE = 12, 0.04, 10, 3
+    local rubbedAt = {} -- log -> when it was last rubbed
+
+    return function(log)
+        if log:GetAttribute("Burning") then
+            return "StrikeRubBurning"
+        end
+        if climate.rain > 0.3 then
+            return "StrikeRubRain"
+        end
+        if os.clock() < climate.dampUntil then
+            return "StrikeRubDamp"
+        end
+        local warm = os.clock() - (rubbedAt[log] or -math.huge) <= RUB_COOLS
+        local heat = (warm and log:GetAttribute("Heat") or 0) + 1 -- rubs in a row on this log
+        log:SetAttribute("Heat", heat)
+        rubbedAt[log] = os.clock()
+        if heat < RUB_HOT then
+            return "StrikeRubWarm:" .. heat
+        end
+        local tinder = nil
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst:IsA("BasePart") and inst:GetAttribute("RenderRole") == "Coconut" and not isCarried(inst)
+                and (nearestPoint(log, inst.Position) - inst.Position).Magnitude <= TINDER_RANGE then
+                tinder = inst
+                break
+            end
+        end
+        if not tinder or math.random() > RUB_CATCH * (heat - RUB_HOT + 1) then
+            return "StrikeRubHot:" .. heat -- hot and smoking; nothing caught
+        end
+        trackedBlocks[tinder] = nil
+        tinder:Destroy() -- the husk burns away
+        rubbedAt[log] = nil
+        log:SetAttribute("Heat", 0)
+        return "StrikeRubCaught:" .. lightFire(log).Name
+    end
+end)()
+
+-- Rain puts fires out (WEATHER): the fire is gone, the log is left, charred but whole.
+local function douseFires()
+    for fire, f in pairs(fires) do
+        fires[fire] = nil
+        fire:Destroy()
+        if f.log.Parent then
+            f.log:SetAttribute("Burning", false)
+            f.log:SetAttribute("Heat", 0)
+        end
+        print(string.format("DOUSED %s on %s", fire.Name, f.log.Name))
+    end
 end
 
 local function tickFires()
@@ -2419,6 +2448,172 @@ local function cook(player)
     end
     player:SetAttribute("LastActionResult", "CookFailed:NoFire")
 end
+
+-- WEATHER (the user's wish, after run n7, where nothing made a shelter worth building; ADR-010).
+-- - Showers come every 20 to 50 minutes and last 4 to 10. Now and then a wet spell sets in instead: two or three days
+--   of rain without a break (the first 1.5 to 2.5 hours into a run, then every 4 to 7 hours).
+-- - In heavy rain thunderstorms break: lightning strikes a palm near Godling every few minutes.
+-- - Some mornings fog comes in from the sea and hides what is further than a stone's throw.
+-- - Out in the rain the body is slowed and gets soaked. Nights are cold, and so is being soaked in the rain; cold wears
+--   health down and stops healing. A roof overhead keeps the rain off; a roof with walls on three sides, or a fire close
+--   by, keeps the cold off. Rain puts every fire out, and leaves the wood too damp to light for a while after.
+-- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, InRain, Sheltered ("",
+-- "roof" or "enclosed") and its current WalkSpeed.
+local stormStrike -- with the sky events below: lightning on a palm near Godling
+-- Rain, cold and shelter. Like the other newer sections, a function of its own, so its locals stay out of the main
+-- chunk's (Luau allows 200 locals in one function, and the world script has come close).
+local tickWeather = (function()
+    local RAIN_GAP_MIN, RAIN_GAP_MAX, RAIN_MIN, RAIN_MAX = 20 * 60, 50 * 60, 4 * 60, 10 * 60
+    local RAIN_FIRST_MIN, RAIN_FIRST_MAX = 8 * 60, 15 * 60 -- the first shower comes early, so a run meets it
+    local SPELL_FIRST_MIN, SPELL_FIRST_MAX, SPELL_GAP_MIN, SPELL_GAP_MAX = 90 * 60, 150 * 60, 240 * 60, 420 * 60
+    local SPELL_DAYS_MIN, SPELL_DAYS_MAX = 2, 3
+    local STORM_RAIN, STORM_MIN, STORM_MAX = 0.85, 3 * 60, 8 * 60 -- heavy rain brings lightning, this often
+    local FOG_CHANCE, FOG_FROM, FOG_UNTIL_MIN, FOG_UNTIL_MAX = 0.35, 4.5, 8.5, 10 -- some mornings, these hours
+    local RAIN_FADE, FOG_FADE = 20, 60 -- seconds a shower or a fog takes to build up and to die away
+    local DAMP_AFTER = 300 -- wood stays too damp to light this long after the rain
+    local RAIN_PACE = 0.65 -- walking pace out in the rain
+    local WET_SECONDS, DRY_SECONDS, FIRE_DRIES = 120, 300, 4 -- soaked through; dried out; a fire dries this much faster
+    local NIGHT_FROM, NIGHT_TO = 21, 5
+    local WARM_RANGE = 7 -- a fire this close warms
+    local weatherState = SUPPLY_SEED + 7
+    local function weatherRandom()
+        weatherState = (weatherState * 16807) % 2147483647
+        return weatherState / 2147483647
+    end
+    local function between(lo, hi)
+        return lo + weatherRandom() * (hi - lo)
+    end
+    local weather = { raining = false, spell = false, left = between(RAIN_FIRST_MIN, RAIN_FIRST_MAX), rain = 0, beat = 0,
+        clock = 0, spellDue = between(SPELL_FIRST_MIN, SPELL_FIRST_MAX), storm = between(STORM_MIN, STORM_MAX),
+        fog = 0, fogUntil = nil, lastHour = nil }
+    clockPart:SetAttribute("Rain", 0)
+    clockPart:SetAttribute("Fog", 0)
+
+    local function nextWeather() -- a shower ends in a dry gap; a dry gap ends in a shower, or a wet spell when one is due
+        if weather.raining then
+            weather.raining, weather.spell = false, false
+            weather.left = between(RAIN_GAP_MIN, RAIN_GAP_MAX)
+        elseif weather.clock >= weather.spellDue then
+            weather.raining, weather.spell = true, true
+            weather.left = between(SPELL_DAYS_MIN, SPELL_DAYS_MAX) * DAY_SECONDS
+            weather.spellDue = weather.clock + weather.left + between(SPELL_GAP_MIN, SPELL_GAP_MAX)
+        else
+            weather.raining = true
+            weather.left = between(RAIN_MIN, RAIN_MAX)
+        end
+        print(string.format("WEATHER %s for %.0f min", weather.spell and "a wet spell" or weather.raining and "rain"
+            or "dry", weather.left / 60))
+    end
+
+    local function tickSkies(dt, hour) -- the storm's lightning and the morning fog
+        if weather.rain >= STORM_RAIN then
+            weather.storm = weather.storm - dt
+            if weather.storm <= 0 then
+                weather.storm = between(STORM_MIN, STORM_MAX)
+                stormStrike()
+            end
+        end
+        if weather.lastHour and weather.lastHour < FOG_FROM and hour >= FOG_FROM and weatherRandom() < FOG_CHANCE then
+            weather.fogUntil = between(FOG_UNTIL_MIN, FOG_UNTIL_MAX)
+            print(string.format("WEATHER fog until %.1f h", weather.fogUntil))
+        end
+        weather.lastHour = hour
+        if weather.fogUntil and (hour >= weather.fogUntil or hour < FOG_FROM - 0.5) then
+            weather.fogUntil = nil
+        end
+        weather.fog = weather.fog + math.clamp((weather.fogUntil and 1 or 0) - weather.fog, -dt / FOG_FADE, dt / FOG_FADE)
+    end
+
+    local function anchoredIn(player, centre, size) -- held, solid things in a box (not the body, not what it carries)
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { player.Character, heldBlocksByPlayer[player] }
+        local probe = Instance.new("Part")
+        probe.Size = size
+        probe.CFrame = CFrame.new(centre)
+        local hits = Workspace:GetPartsInPart(probe, params)
+        probe:Destroy()
+        for _, hit in ipairs(hits) do
+            if hit.Anchored and isSolid(hit) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- "roof": something held overhead, within 10 above the crown; "enclosed": that, and walls on three sides or more.
+    local function shelterOf(player, hrp)
+        local p = hrp.Position
+        if not anchoredIn(player, p + Vector3.new(0, 2.6 + 5, 0), Vector3.new(1.2, 10, 1.2)) then
+            return ""
+        end
+        local sides = 0
+        for _, d in ipairs({ Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0), Vector3.new(0, 0, 1), Vector3.new(0, 0, -1) }) do
+            local size = Vector3.new(d.X ~= 0 and 2.6 or 1.2, 2, d.Z ~= 0 and 2.6 or 1.2) -- from 1.1 to 3.7 out, chest high
+            if anchoredIn(player, p + d * 2.4 + Vector3.new(0, 0.5, 0), size) then
+                sides = sides + 1
+            end
+        end
+        return sides >= 3 and "enclosed" or "roof"
+    end
+
+    local function tickWeather(dt)
+        weather.clock = weather.clock + dt
+        weather.left = weather.left - dt
+        if weather.left <= 0 or (not weather.raining and weather.clock >= weather.spellDue) then
+            nextWeather()
+        end
+        -- A wet spell swells and eases (0.6 to 1) through its days; a shower comes down hard.
+        local target = weather.raining and (weather.spell and 0.8 + 0.2 * math.sin(weather.clock / 170) or 1) or 0
+        weather.rain = weather.rain + math.clamp(target - weather.rain, -dt / RAIN_FADE, dt / RAIN_FADE)
+        local hour = (START_HOUR + clockSeconds / DAY_SECONDS * 24) % 24
+        tickSkies(dt, hour)
+        climate.rain = weather.rain
+        if weather.rain > 0.3 then
+            climate.dampUntil = os.clock() + DAMP_AFTER
+            if next(fires) then
+                douseFires() -- no fire lives in the rain
+            end
+        end
+        weather.beat = weather.beat + dt
+        if weather.beat < 0.5 then
+            return
+        end
+        local step = weather.beat
+        weather.beat = 0
+        clockPart:SetAttribute("Rain", math.floor(weather.rain * 20 + 0.5) / 20)
+        clockPart:SetAttribute("Fog", math.floor(weather.fog * 20 + 0.5) / 20)
+        local night = hour >= NIGHT_FROM or hour < NIGHT_TO
+        for _, player in ipairs(Players:GetPlayers()) do
+            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            local s = hrp and surviving[player]
+            if s then
+                local shelter = shelterOf(player, hrp)
+                local inRain = weather.rain > 0.3 and shelter == ""
+                local byFire = false
+                for fire in pairs(fires) do
+                    local d = fire.Position - hrp.Position
+                    if Vector3.new(d.X, 0, d.Z).Magnitude <= WARM_RANGE then
+                        byFire = true
+                    end
+                end
+                s.wet = math.clamp((s.wet or 0) + (inRain and step * 100 / WET_SECONDS
+                    or -step * 100 / DRY_SECONDS * (byFire and FIRE_DRIES or 1)), 0, 100)
+                s.cold = not (byFire or shelter == "enclosed") and (night or (inRain and s.wet >= 50))
+                if player:GetAttribute("InRain") ~= inRain then
+                    player:SetAttribute("InRain", inRain)
+                    player:SetAttribute("RainPace", inRain and RAIN_PACE or 1)
+                    setCarryPace(player, heldBlocksByPlayer[player])
+                end
+                player:SetAttribute("Wet", math.floor(s.wet + 0.5))
+                player:SetAttribute("Cold", s.cold)
+                player:SetAttribute("Sheltered", shelter)
+            end
+        end
+    end
+
+    return tickWeather
+end)()
 
 -- The volleyball that washed up with the raft, as Wilson did. It has no name: Godling may give it one.
 if not findWorkspaceChild("Volleyball") then
@@ -2464,10 +2659,14 @@ local function strike(player, inputData)
         result = carveLog(target)
     elseif role == "Fish" and tool == "Spear" then
         result = catchFish(target, body)
+    elseif role == "Log" and tool == "Spear" and not isCarried(target) then
+        result = rubLog(target) -- a stick worked against the wood: the way to fire
     else
         result = "StrikeNoEffect:" .. tool
     end
-    gesture(player, tool == "Spear" and "Spear" or tool == "Hammer" and "Mine" or role == "Log" and "Carve" or "Chop")
+    local rubbing = role == "Log" and tool == "Spear"
+    gesture(player, rubbing and "Kindle" or tool == "Spear" and "Spear" or tool == "Hammer" and "Mine"
+        or role == "Log" and "Carve" or "Chop")
     player:SetAttribute("LastActionResult", result)
 end
 
@@ -2837,6 +3036,7 @@ end
 
 local turners = {} -- player -> the yaw Face is turning the body to
 local skyPower -- with the sky events below: the guest panel's powers
+local stepBody -- by freeTrappedBodies below: stepping up onto, or down off, something a block high
 
 local function yawOf(cframe) -- the way a part faces, as the yaw the engine gives a walking body (forward is -Z)
     local look = cframe.LookVector
@@ -2923,13 +3123,15 @@ if AgentInputService then
             shakePalm(player, inputData)
         elseif inputType == "Eat" then
             eat(player)
-        elseif inputType == "Kindle" then
-            kindle(player, inputData)
         elseif inputType == "Talk" then -- the mind spoke (world chat): the body talks along
             gesture(player, "Talk")
             player:SetAttribute("LastActionResult", "TalkSuccess")
         elseif inputType == "Think" then
             think(player, inputData)
+        elseif inputType == "StepUp" then
+            stepBody(player, inputData, false)
+        elseif inputType == "StepDown" then
+            stepBody(player, inputData, true)
         elseif inputType == "Cook" then
             cook(player)
         else
@@ -3138,7 +3340,7 @@ local function advanceSkyFalls()
                 Color3.fromRGB(64, 56, 52), "Stone", stonePhysics) -- dark and bare: not a quarried stone
             skyMark("Meteor", fall.n)(stone)
             stone.AssemblyLinearVelocity = Vector3.new(0, -SKY_FALL_SPEED, 0)
-            hurtNear(fall.x, fall.z, METEOR_HURT_RANGE, METEOR_HURT, "Meteor") -- it is down in about a second
+            hurtNear(fall.x, fall.z, HARM.meteorRange, HARM.meteor, "Meteor") -- it is down in about a second
             print(string.format("SKY Meteor #%d landed at (%.1f, %.1f)", fall.n, fall.x, fall.z))
             table.remove(skyFalls, i)
         else
@@ -3174,6 +3376,111 @@ local function nearestTree(role, to)
     return best
 end
 
+-- Lightning strikes standing tree `t`: a bolt, the tree felled into logs, and hurt for anyone close. From the guest
+-- panel's Lightning power, and from the storms in heavy rain (WEATHER).
+local function lightningOn(t, from)
+    skyCounter = skyCounter + 1
+    local p = t.part.Position
+    local bolt = skyMarker("SkyBolt_" .. skyCounter, Vector3.new(0.35, 30, 0.35), Vector3.new(p.X, 15, p.Z),
+        Color3.fromRGB(255, 244, 170), "SkyFlash")
+    table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+    local mark = skyMark("Lightning", skyCounter)
+    local names = fellTree(t.part, from, function(log)
+        mark(log)
+        log:SetAttribute("FromTree", t.name)
+    end)
+    hurtNear(p.X, p.Z, HARM.lightningRange, HARM.lightning, "Lightning")
+    print(string.format("SKY Lightning #%d felled %s into %s", skyCounter, t.name, table.concat(names, ",")))
+    return skyCounter
+end
+
+-- A storm's lightning: a standing palm 12 to 45 from Godling, one at random (the nearest beyond 12 if none is).
+stormStrike = function()
+    local godling = godlingPlayer()
+    local hrp = godling and getHumanoidRootPart(godling)
+    if not hrp then
+        return
+    end
+    local near, beyond = {}, nil
+    for _, t in ipairs(trees) do
+        local part = t.part
+        if part and part.Parent and part:GetAttribute("RenderRole") == "Tree" then
+            local d = (Vector3.new(part.Position.X, 0, part.Position.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z))
+                .Magnitude
+            if d >= 12 and d <= 45 then
+                table.insert(near, t)
+            elseif d > 45 and (beyond == nil or d < beyond[2]) then
+                beyond = { t, d }
+            end
+        end
+    end
+    local t = #near > 0 and near[math.random(1, #near)] or (beyond and beyond[1])
+    if t then
+        lightningOn(t, hrp.Position)
+    end
+end
+
+-- A ship passes far out at sea now and then, as one did in the film (ADR-010): the first 1 to 2 hours into a run, then
+-- every 2.5 to 5 hours. It sails along the horizon for five minutes and is gone. Nothing comes of it (yet).
+local tickShip = (function() -- a function of its own, so its locals stay out of the main chunk's 200 (Luau's limit)
+    local SHIP_FIRST_MIN, SHIP_FIRST_MAX, SHIP_GAP_MIN, SHIP_GAP_MAX = 60 * 60, 120 * 60, 150 * 60, 300 * 60
+    local SHIP_OUT, SHIP_RUN, SHIP_SECONDS = 215, 260, 300 -- how far out, how far it sails, in how long
+    local AWAY_FROM = math.atan2(-154, 186) -- where the islet lies (tools/make_island.py ISLET), not to sail across it
+    local due = SHIP_FIRST_MIN + math.random() * (SHIP_FIRST_MAX - SHIP_FIRST_MIN)
+    local clock, ship = 0, nil
+    local LOOK = { -- name, size, offset along the hull (x) and up (y), colour
+        { "Ship", Vector3.new(14, 3, 4.5), 0, 0, Color3.fromRGB(70, 52, 40) },
+        { "Ship_Cabin", Vector3.new(5, 3, 3.6), -3, 3, Color3.fromRGB(232, 228, 216) },
+        { "Ship_Mast", Vector3.new(0.5, 12, 0.5), 2, 7.5, Color3.fromRGB(60, 45, 35) },
+        { "Ship_Sail", Vector3.new(6, 8, 0.25), 2.5, 8.5, Color3.fromRGB(240, 236, 224) },
+    }
+
+    local function place(t)
+        local along = (t / SHIP_SECONDS - 0.5) * SHIP_RUN
+        local centre = Vector3.new(math.cos(ship.a), 0, math.sin(ship.a)) * SHIP_OUT + ship.dir * along
+        local turn = CFrame.fromOrientation(0, math.atan2(-ship.dir.Z, ship.dir.X), 0) -- the hull's length along its way
+        for i, look in ipairs(LOOK) do
+            ship.parts[i].CFrame = CFrame.new(centre + Vector3.new(0, OCEAN_TOP_Y + 1.2 + look[4], 0)) * turn
+                * CFrame.new(look[3], 0, 0)
+        end
+    end
+
+    local function tickShip(dt)
+        clock = clock + dt
+        if not ship and clock >= due then
+            local a
+            repeat -- anywhere round the island but where the islet lies
+                a = math.random() * 2 * math.pi
+            until math.abs(math.atan2(math.sin(a - AWAY_FROM), math.cos(a - AWAY_FROM))) > math.rad(50)
+            local dir = Vector3.new(-math.sin(a), 0, math.cos(a)) * (math.random() < 0.5 and 1 or -1)
+            ship = { a = a, dir = dir, t = 0, parts = {} }
+            for _, look in ipairs(LOOK) do
+                local part = Instance.new("Part")
+                part.Name, part.Size, part.Color = look[1], look[2], look[5]
+                part.Anchored, part.CanCollide = true, false
+                part.Parent = Workspace
+                table.insert(ship.parts, part)
+            end
+            ship.parts[1]:SetAttribute("RenderRole", "Ship")
+            place(0)
+            print(string.format("SHIP passing at (%.0f, %.0f)", math.cos(a) * SHIP_OUT, math.sin(a) * SHIP_OUT))
+        elseif ship then
+            ship.t = ship.t + dt
+            if ship.t >= SHIP_SECONDS then
+                for _, part in ipairs(ship.parts) do
+                    part:Destroy()
+                end
+                ship = nil
+                due = clock + SHIP_GAP_MIN + math.random() * (SHIP_GAP_MAX - SHIP_GAP_MIN)
+            else
+                place(ship.t)
+            end
+        end
+    end
+
+    return tickShip
+end)()
+
 local function dropGift(kind, x, z)
     skyCounter = skyCounter + 1
     local piece
@@ -3191,6 +3498,72 @@ local function dropGift(kind, x, z)
     print(string.format("SKY %s #%d dropped %s at (%.1f, %.1f)", kind, skyCounter, piece.Name, x, z))
     return skyCounter
 end
+
+-- Driftwood (the user's choice, after run n7, where the same few logs were both firewood and building wood; ADR-010):
+-- every few minutes the sea leaves a log up the beach, as wreckage washed up in the film, while fewer than DRIFT_MAX
+-- lie on the sand.
+local tickDriftwood = (function() -- a function of its own, as tickWeather's
+    local DRIFT_EVERY, DRIFT_MAX, DRIFT_FIRST = 180, 6, 60
+    local driftTimer = DRIFT_EVERY - DRIFT_FIRST
+    local driftState = SUPPLY_SEED + 11
+
+    local function driftRandom()
+        driftState = (driftState * 16807) % 2147483647
+        return driftState / 2147483647
+    end
+
+    local function driftwoodOnBeach()
+        local n = 0
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst:IsA("BasePart") and inst:GetAttribute("Driftwood") and not isCarried(inst) and inst.Position.Y < 2.5
+                and onOpenSand(inst.Position.X, inst.Position.Z) then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    local function washUpDriftwood()
+        if driftwoodOnBeach() >= DRIFT_MAX then
+            return nil
+        end
+        for _ = 1, 30 do
+            local s = SHALLOWS[1 + math.floor(driftRandom() * #SHALLOWS)]
+            local length = math.sqrt(s[1] * s[1] + s[2] * s[2])
+            local dx, dz = -s[1] / length, -s[2] / length -- up the beach: towards the island's middle
+            local sand = nil
+            for k = 1, 40 do -- from the water up the beach, while it is open sand
+                local x, z = s[1] + dx * 1.25 * k, s[2] + dz * 1.25 * k
+                if onOpenSand(x, z) then
+                    sand = sand or k
+                    if k - sand >= 2 and clearSupplySpot(x, z) then -- clear of the water's edge and of other pieces
+                        logCounter = logCounter + 1
+                        local along = math.abs(dx) > math.abs(dz) and 90 or 0 -- lying along the shore
+                        local log = createPiece("Log_" .. logCounter, CFrame.new(x, 1.6, z)
+                            * CFrame.fromOrientation(0, math.rad(along), 0), LOG_SIZE, Color3.fromRGB(150, 128, 100), "Log",
+                            woodPhysics, ART.Log)
+                        log:SetAttribute("Driftwood", true)
+                        print(string.format("DRIFTWOOD %s washed up at (%.1f, %.1f)", log.Name, x, z))
+                        return log
+                    end
+                elseif sand then
+                    break -- past the beach
+                end
+            end
+        end
+        return nil
+    end
+
+    local function tickDriftwood(dt)
+        driftTimer = driftTimer + dt
+        if driftTimer >= DRIFT_EVERY then
+            driftTimer = 0
+            washUpDriftwood()
+        end
+    end
+
+    return tickDriftwood
+end)()
 
 -- What the guest panel can do. Viewers choose what; the world chooses where: near Godling, in view, clear of what
 -- it built. Each returns the event's number, or nil and why not.
@@ -3222,19 +3595,7 @@ local SKY_POWERS = {
         if not t then
             return nil, "NoStandingTree"
         end
-        skyCounter = skyCounter + 1
-        local p = t.part.Position
-        local bolt = skyMarker("SkyBolt_" .. skyCounter, Vector3.new(0.35, 30, 0.35), Vector3.new(p.X, 15, p.Z),
-            Color3.fromRGB(255, 244, 170), "SkyFlash")
-        table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
-        local mark = skyMark("Lightning", skyCounter)
-        local names = fellTree(t.part, hrp.Position, function(log)
-            mark(log)
-            log:SetAttribute("FromTree", t.name)
-        end)
-        hurtNear(p.X, p.Z, LIGHTNING_HURT_RANGE, LIGHTNING_HURT, "Lightning")
-        print(string.format("SKY Lightning #%d felled %s into %s", skyCounter, t.name, table.concat(names, ",")))
-        return skyCounter
+        return lightningOn(t, hrp.Position)
     end,
     Regrow = function(godling)
         local hrp = getHumanoidRootPart(godling)
@@ -3270,69 +3631,123 @@ end
 -- blocks tall, so a beam laid across two-block posts leaves no room under it: in run n7 Godling threw a log across
 -- two stacks over its own head, the log settled 0.05 into its head, and the body stood pinned for half an hour. A
 -- body found inside a held piece on two looks in a row (0.5 s apart) is moved to the nearest spot where it fits.
-local FREE_SEARCH = 8 -- how far to look for room, in units
-local insideLooks = {}
+-- (A function of its own, as is tickShip's, so its locals stay out of the main chunk's 200; it sets stepBody too.)
+local freeTrappedBodies = (function()
+    local FREE_SEARCH = 8 -- how far to look for room, in units
+    local insideLooks = {}
 
-local function piecesInBody(player, centre)
-    local params = OverlapParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { player.Character, heldBlocksByPlayer[player] }
-    -- From a little above the feet to a little over the crown: with anything touching its head the character
-    -- controller does not move at all (a body pushed out 1 unit, still under a lintel's edge, stood stuck).
-    local probe = Instance.new("Part")
-    probe.Size = Vector3.new(1.8, 4.9, 1.8)
-    probe.CFrame = CFrame.new(centre + Vector3.new(0, 0.25, 0))
-    local hits = Workspace:GetPartsInPart(probe, params)
-    probe:Destroy()
-    local inside = {}
-    for _, hit in ipairs(hits) do
-        if hit.Anchored and isSolid(hit) and not isPlacing(hit) then -- loose things the physics pushes aside itself
-            table.insert(inside, hit)
+    local function piecesInBody(player, centre)
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { player.Character, heldBlocksByPlayer[player] }
+        -- From a little above the feet to a little over the crown: with anything touching its head the character
+        -- controller does not move at all (a body pushed out 1 unit, still under a lintel's edge, stood stuck).
+        local probe = Instance.new("Part")
+        probe.Size = Vector3.new(1.8, 4.9, 1.8)
+        probe.CFrame = CFrame.new(centre + Vector3.new(0, 0.25, 0))
+        local hits = Workspace:GetPartsInPart(probe, params)
+        probe:Destroy()
+        local inside = {}
+        for _, hit in ipairs(hits) do
+            if hit.Anchored and isSolid(hit) and not isPlacing(hit) then -- loose things the physics pushes aside itself
+                table.insert(inside, hit)
+            end
         end
+        return inside
     end
-    return inside
-end
 
-local function freeTrappedBodies()
-    for _, player in ipairs(Players:GetPlayers()) do
-        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
-        if hrp and not player:GetAttribute("Climbing") and #piecesInBody(player, hrp.Position) > 0 then
-            insideLooks[player] = (insideLooks[player] or 0) + 1
-        else
-            insideLooks[player] = nil
-        end
-        if insideLooks[player] and insideLooks[player] >= 2 then
-            insideLooks[player] = nil
-            local from = hrp.Position
-            local feet = from.Y - BODY_ABOVE_FEET
-            local spot = nil
-            for r = 1, FREE_SEARCH, 0.5 do
-                for k = 0, 15 do
-                    local x, z = from.X + r * math.cos(k * math.pi / 8), from.Z + r * math.sin(k * math.pi / 8)
-                    local floor = surfaceTopAt(x, z, feet - 0.6, feet + 0.6) -- the same floor, not the sea
-                    if floor and #piecesInBody(player, Vector3.new(x, floor + BODY_ABOVE_FEET, z)) == 0 then
-                        spot = Vector3.new(x, floor + BODY_ABOVE_FEET, z)
+    local function freeTrappedBodies()
+        for _, player in ipairs(Players:GetPlayers()) do
+            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            if hrp and not player:GetAttribute("Climbing") and #piecesInBody(player, hrp.Position) > 0 then
+                insideLooks[player] = (insideLooks[player] or 0) + 1
+            else
+                insideLooks[player] = nil
+            end
+            if insideLooks[player] and insideLooks[player] >= 2 then
+                insideLooks[player] = nil
+                local from = hrp.Position
+                local feet = from.Y - BODY_ABOVE_FEET
+                local spot = nil
+                for r = 1, FREE_SEARCH, 0.5 do
+                    for k = 0, 15 do
+                        local x, z = from.X + r * math.cos(k * math.pi / 8), from.Z + r * math.sin(k * math.pi / 8)
+                        local floor = surfaceTopAt(x, z, feet - 0.6, feet + 0.6) -- the same floor, not the sea
+                        if floor and #piecesInBody(player, Vector3.new(x, floor + BODY_ABOVE_FEET, z)) == 0 then
+                            spot = Vector3.new(x, floor + BODY_ABOVE_FEET, z)
+                            break
+                        end
+                    end
+                    if spot then
                         break
                     end
                 end
                 if spot then
-                    break
+                    hrp.Position = spot
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    local humanoid = getHumanoid(player)
+                    if humanoid then
+                        humanoid:CancelMoveTo()
+                    end
+                    player:SetAttribute("Freed", (player:GetAttribute("Freed") or 0) + 1)
+                    print(string.format("FREED %s from inside a piece: (%.1f, %.1f) to (%.1f, %.1f)", player.Name,
+                        from.X, from.Z, spot.X, spot.Z))
                 end
-            end
-            if spot then
-                hrp.Position = spot
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                local humanoid = getHumanoid(player)
-                if humanoid then
-                    humanoid:CancelMoveTo()
-                end
-                player:SetAttribute("Freed", (player:GetAttribute("Freed") or 0) + 1)
-                print(string.format("FREED %s from inside a piece: (%.1f, %.1f) to (%.1f, %.1f)", player.Name,
-                    from.X, from.Z, spot.X, spot.Z))
             end
         end
     end
-end
+
+    -- Stepping up and down (the user's choice, after run n7, where nothing above two blocks was in reach and the ladder
+    -- seldom worked out; ADR-010). The body steps onto something at most one block above its feet, or down onto a floor
+    -- at most one block below, right beside it, if it fits there. As in Minecraft, its own steps and walls become a way
+    -- up; anything higher still needs a ladder. Stepping down is the hop off an edge, done by the world: walking off a
+    -- one-block step hemmed in by what was just built on it left the body hanging on the edge.
+    local STEP_MAX, STEP_REACH = 2.6, 2.8
+
+    stepBody = function(player, inputData, down)
+        local kind = down and "StepDown" or "StepUp"
+        local hrp = getHumanoidRootPart(player)
+        local to = inputData and inputData.position
+        if not hrp or type(to) ~= "table" or not tonumber(to[1]) or not tonumber(to[#to]) then
+            player:SetAttribute("LastActionResult", kind .. "Failed:BadTarget")
+            return
+        end
+        if climbers[player] then
+            player:SetAttribute("LastActionResult", kind .. "Failed:Busy")
+            return
+        end
+        local x, z = tonumber(to[1]), tonumber(to[#to]) -- [x, z] or [x, y, z]
+        local body = hrp.Position
+        local feet = body.Y - BODY_ABOVE_FEET
+        if Vector3.new(x - body.X, 0, z - body.Z).Magnitude > STEP_REACH then
+            player:SetAttribute("LastActionResult", kind .. "Failed:TooFar")
+            return
+        end
+        local top = down and surfaceTopAt(x, z, feet - STEP_MAX - 0.2, feet - 0.6)
+            or surfaceTopAt(x, z, feet + 0.6, feet + STEP_MAX)
+        if not top then
+            player:SetAttribute("LastActionResult", kind .. "Failed:" .. ((not down and surfaceTopAt(x, z, feet + STEP_MAX,
+                feet + 60)) and "TooHigh" or "NothingToStepOn"))
+            return
+        end
+        local landing = Vector3.new(x, top + BODY_ABOVE_FEET, z)
+        if #piecesInBody(player, landing) > 0 then
+            player:SetAttribute("LastActionResult", kind .. "Failed:NoRoom")
+            return
+        end
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:CancelMoveTo()
+        end
+        hrp.Anchored = true -- the world moves the body, as on a ladder: over the edge and up or down
+        local over = Vector3.new((body.X + x) / 2, math.max(body.Y, landing.Y) + 0.4, (body.Z + z) / 2)
+        climbers[player] = { path = { body, over, landing }, times = { 0.3, 0.3 }, leg = 1, t = 0 }
+        player:SetAttribute("Climbing", true)
+        player:SetAttribute("LastActionResult", kind .. "Started:0.6")
+    end
+
+    return freeTrappedBodies
+end)()
 
 --------------------------------------------------------------------------------
 -- MAIN LOOP
@@ -3349,6 +3764,7 @@ RunService.Heartbeat:Connect(function(dt)
     moveFish(dt)
     tickClock(dt)
     tickFires()
+    tickWeather(dt) -- rain, cold and shelter
 
     -- Update held blocks (a block just picked up rises into the hands over LIFT_SECONDS)
     for player, heldBlock in pairs(heldBlocksByPlayer) do
@@ -3406,6 +3822,8 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
     advanceSkyFalls()
+    tickDriftwood(dt) -- now and then the sea leaves a log on the beach
+    tickShip(dt) -- and a ship passes far out
     keepsakeTimer = keepsakeTimer + dt
     if keepsakeTimer >= 10 then
         keepsakeTimer = 0
