@@ -1,4 +1,5 @@
-# The images (deploy/Dockerfile.*) copy only what they need: mind/, tools/, world/, patches/, web/ and one script.
+# The images (deploy/Dockerfile.*) copy only what they need: mind/, tools/, world/, patches/, relay/, web/ and one
+# script.
 .git
 .impeccable
 art
@@ -8,6 +9,7 @@ reports
 decisions
 **/__pycache__
 **/node_modules
+relay/target
 web/db.sqlite3
 web/staticfiles
 deploy/.env

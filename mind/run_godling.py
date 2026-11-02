@@ -77,6 +77,10 @@ def main():
                     help="show a Sims-style thought bubble over Godling, read from its thoughts by a small model call")
     ap.add_argument("--guest-panel", type=int, default=0, metavar="PORT",
                     help="also serve the guest panel on this port: call down sky powers yourself (0 = off)")
+    ap.add_argument("--relay", type=int, default=0, metavar="PORT",
+                    help="stream the island to viewers through godling-relay on this port (relay/, ADR-015): one "
+                         "connection to the world however many watch (0 = off; with --attach, export the world's "
+                         "WORLD_SPECTATOR_TOKEN)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
                     help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
@@ -118,6 +122,8 @@ def main():
         key_file.touch(mode=0o600)
         key_file.chmod(0o600)
         key_file.write_text(os.environ["WORLD_AGENT_KEY"])
+    if args.relay:  # the relay follows the world's stream with the world's own spectator token
+        os.environ.setdefault("WORLD_SPECTATOR_TOKEN", secrets.token_urlsafe(24))
     # Under WSL the Windows PATH leaks in (Windows npx hangs on Linux paths); children get Linux tools only. None of
     # them gets the DeepSeek key: Hindsight is handed it on its own (start_hindsight).
     clean_env = {**{k: v for k, v in os.environ.items() if k != "DEEPSEEK_API_KEY"},
@@ -131,7 +137,7 @@ def main():
     local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
     save = IslandSave(run, local_world, log)
     island = save.load()  # what the island was when the run last stopped: the world puts it back (main.lua)
-    server = hindsight = panel = None
+    server = hindsight = panel = relay = None
     try:
         if not args.attach:
             world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes, island)
@@ -139,6 +145,8 @@ def main():
                 [clawblox, "run", str(world_dir), "--port", str(args.port),
                  "--record", "--record-dir", str(run / "recordings")],
                 stdout=(run / "world.log").open("w"), stderr=subprocess.STDOUT, env=clean_env)
+        if args.relay:
+            relay = start_relay(args.relay, args.port, run, clean_env)
         if args.memory == "hindsight" and not args.hindsight_url:
             hindsight, args.hindsight_url = start_hindsight(run, clean_env)
         world = World(local_world, args.name)
@@ -154,7 +162,7 @@ def main():
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
                     discovery=discovery)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
-        stop_children(server, hindsight)
+        stop_children(relay, server, hindsight)
         raise
 
     started = time.time()
@@ -165,6 +173,8 @@ def main():
         spectator = None
         if server:
             spectator = wait_for_line(run / "world.log", r"Spectator frontend: (\S+)", 15)
+            if spectator and args.relay:  # the page streams from the relay, on this host (patches/v3)
+                spectator += ("&" if "?" in spectator else "?") + f"stream_port={args.relay}"
             restored = island and wait_for_line(run / "world.log", r"ISLAND restored: ([^\n]+)", 5)
             print(f"World is up{f', the island put back ({restored})' if restored else ''}. "
                   f"Watch it here: {spectator or local_world + '/'}", flush=True)
@@ -204,7 +214,7 @@ def main():
             structures.record(world.observe())  # what stands at the end, while the world still runs
         except Exception as err:
             log(kind="error", message=f"structures at the end: {err!r}"[:200])
-        stop_children(panel, server, hindsight)
+        stop_children(panel, relay, server, hindsight)
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,
@@ -621,6 +631,20 @@ def make_memory(args, run, log):
         from godling.memory_hindsight import HindsightMemory
         return HindsightMemory(run / "memory", args.hindsight_url, bank_id=f"godling-{run.name}", log=log)
     return NativeMemory(run / "memory")
+
+
+def start_relay(port, world_port, run, env):
+    """The island's stream relay (relay/, ADR-015) on `port`: it follows this world's spectator stream, with the world's
+    token, and hands every viewer the same updates. It waits for the world itself, so it may start before the world is
+    up. RELAY_LISTEN (deploy/: 0.0.0.0:8082) overrides where viewers connect; RELAY_BIN names another build."""
+    exe = (os.environ.get("RELAY_BIN") or shutil.which("godling-relay", path=env["PATH"])
+           or str(Path(__file__).resolve().parent.parent / "relay/target/release/godling-relay"))
+    if not Path(exe).exists():
+        raise SystemExit(f"godling-relay is not built ({exe} missing): cargo build --release in relay/")
+    base = os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
+    env = {"RELAY_LISTEN": f"127.0.0.1:{port}", **env, "RELAY_UPSTREAM": f"ws://127.0.0.1:{world_port}{base}/spectate/ws",
+           "RELAY_BASE_PATH": base, "RELAY_SPECTATOR_TOKEN": os.environ["WORLD_SPECTATOR_TOKEN"]}
+    return subprocess.Popen([exe], stdout=(run / "relay.log").open("w"), stderr=subprocess.STDOUT, env=env)
 
 
 def start_hindsight(run, env, port=8888):

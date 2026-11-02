@@ -457,6 +457,10 @@ addEventListener('message', (event) => {
     endAim()
     call(p, slots[POWERS.indexOf(p)], [Number(data.x), Number(data.z)])
   } else if (data.type === 'godling-aim-cancel') endAim()
+  else if (data.type === 'godling-stream') {
+    islandStream = { state: String(data.state), world: data.world === 'down' ? 'down' : 'up' }
+    drawLive(status?.watching || 0, status?.world)
+  }
 })
 
 function toggleNote(open = composer.hidden) {
@@ -536,11 +540,21 @@ function drawClock(c, up) {
   clock.innerHTML = `${icon(weather, 3)}<span class="day">Day ${c.day || 1}</span><span class="time">${clockText(c.hour)}</span>${c.quake ? `<span class="quake">${icon('quake', 2)}Shaking</span>` : ''}`
 }
 
-function drawLive(n, up) {
+// The island frame's own stream (patches/v3, through the renderer) decides the badge, so it never says Live over a
+// frozen island; until the frame has said anything, the panel's word stands.
+let islandStream = null
+const STREAM_WORDS = { connecting: 'Connecting', reconnecting: 'Reconnecting', paused: 'Paused' }
+
+function drawLive(n, panelUp) {
+  const s = islandStream
+  const word = !s ? (panelUp ? 'Live' : 'Offline')
+    : s.state === 'live' ? (s.world === 'down' ? 'Restarting' : 'Live')
+    : STREAM_WORDS[s.state] || 'Offline'
+  const up = word === 'Live'
   live.classList.toggle('down', !up)
-  live.querySelector('.word').textContent = up ? 'Live' : 'Offline'
+  live.querySelector('.word').textContent = word
   live.querySelector('.n').textContent = n.toLocaleString('en')
-  live.setAttribute('aria-label', up ? `Live, ${n} watching` : 'Offline')
+  live.setAttribute('aria-label', up ? `Live, ${n} watching` : word)
 }
 
 // ---- keys: numbers pick a slot; in the free camera, W A S D Q E fly it ---------------------

@@ -1,13 +1,17 @@
-# The island: the world (Clawblox, built from source with Godling's three patches, as the README says), Godling's
-# mind and the guest panel, all started by mind/run_godling.py. Build context: the repo root.
+# The island: the world (Clawblox, built from source with Godling's four patches, as the README says), Godling's
+# mind, the guest panel and the stream relay (relay/), all started by mind/run_godling.py. Build context: the repo root.
 FROM rust:1-bookworm AS world
 ARG CLAWBLOX_REPO=https://github.com/nacloos/clawblox.git
 ARG CLAWBLOX_COMMIT=8be90a0
 RUN git clone "$CLAWBLOX_REPO" /src && git -C /src checkout "$CLAWBLOX_COMMIT"
 COPY patches/v0-fix-cli-sandbox.patch patches/v1-viewer-terrain-and-offline.patch patches/v2-private-agent-api.patch \
-    /patches/
+    patches/v3-stream-reconnect.patch /patches/
 RUN cd /src && git apply /patches/v0-fix-cli-sandbox.patch && git apply /patches/v1-viewer-terrain-and-offline.patch \
-    && git apply /patches/v2-private-agent-api.patch && cargo install --path . --locked --root /out
+    && git apply /patches/v2-private-agent-api.patch && git apply /patches/v3-stream-reconnect.patch \
+    && cargo install --path . --locked --root /out
+# The stream relay (ADR-015), with the same toolchain.
+COPY relay/ /relay/
+RUN cargo install --path /relay --locked --root /out
 
 FROM debian:bookworm-slim
 # tmux: Clawblox's agent mode needs it (README). Chromium: the world draws Godling's first-person view with it
@@ -15,7 +19,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux chromium \
     fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 ENV CLAWBLOX_CHROME=/usr/bin/chromium
-COPY --from=world /out/bin/clawblox /usr/local/bin/clawblox
+COPY --from=world /out/bin/clawblox /out/bin/godling-relay /usr/local/bin/
 WORKDIR /app
 COPY mind/ ./mind/
 COPY tools/ ./tools/
@@ -24,5 +28,5 @@ COPY deploy/island-start.sh /usr/local/bin/island-start
 RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs && chown island /runs
 USER island
 ENV PYTHONUNBUFFERED=1
-EXPOSE 8080 8081
+EXPOSE 8080 8081 8082
 CMD ["island-start"]
