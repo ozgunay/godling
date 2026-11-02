@@ -66,6 +66,8 @@ PEN_CELLS = 1600  # half-unit cells: floor the body can reach smaller than this 
 LIFTABLE = SNAPPED_KINDS + ("Brick_", "Ladder_")  # what the body lifts aside to get out of a pen
 GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
 GLANCE_HOLD = 0.4  # seconds the body keeps looking before it goes on
+BRACE_LONGEST = 90  # seconds: a quake's rumble, shaking and fade take 33; the world lets go when it is over
+LOOK_BEFORE_BRACE = 0.15  # the rumble reaches this strength 2 s in (main.lua); until then the body looks around
 
 
 def _quarter(turn):
@@ -136,6 +138,7 @@ class Skills:
     # ---- entry point -------------------------------------------------------------------
     def run(self, skill, args):
         if self._depth == 0:
+            self.steady()
             self.glance()
         started = time.time()
         if self.library is not None and any(isinstance(v, dict) for v in args.values()):
@@ -205,6 +208,36 @@ class Skills:
                      tick=snap.tick, **{k: event[k] for k in ("sky", "sky_id") if k in event})
         except WorldError as err:
             self.log(kind="error", message=f"glance: {err}")
+
+    def steady(self):
+        """Reflex: when the ground rumbles, crouch and hold on wherever the body stands, and stay braced until the
+        ground is still (main.lua EARTHQUAKE). A braced body cannot be knocked down. The mind is not asked: it hears
+        of the quake in its next plan."""
+        try:
+            snap = self.world.observe()
+            if not snap.quake_phase or snap.bracing:
+                return
+            if snap.quake_phase == "rumble" and snap.quake < LOOK_BEFORE_BRACE:
+                return  # startled, it looks around first (the world plays LookAround); the shaking is 8 s away
+            started = time.time()
+            braced = self.world.act("Brace").last_result == "Braced"
+            self.log(kind="brace", ok=braced, phase=snap.quake_phase, tick=snap.tick,
+                     **({"sky": "Earthquake", "sky_id": int(snap.quake_id)} if snap.quake_id else {}))
+            if not braced:
+                return
+            while time.time() - started < BRACE_LONGEST:
+                time.sleep(0.5)
+                snap = self.world.observe()
+                if self.on_step:
+                    try:
+                        self.on_step(snap)  # attention keeps watching: what falls is news for the next plan
+                    except Interrupted:
+                        pass
+                if not snap.bracing:
+                    break
+            self.log(kind="reflex", text=f"held on through the earthquake for {time.time() - started:.0f}s")
+        except WorldError as err:
+            self.log(kind="error", message=f"brace: {err}")
 
     # ---- helpers -----------------------------------------------------------------------
     def _observe(self):
@@ -1457,5 +1490,6 @@ class Skills:
         while time.time() < end:
             time.sleep(1.0)
             self._observe()
+            self.steady()
             self.glance()
         return Result(True, "wait", f"waited {seconds}s")

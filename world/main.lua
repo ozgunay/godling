@@ -1243,11 +1243,9 @@ local function setupPlayer(player, shouldSpawnAtStart)
         humanoid = character:FindFirstChild("Humanoid")
     end
 
-    if player.Name == SKY_PLAYER then -- the guest panel: no body on the island
+    if player.Name == SKY_PLAYER then -- the guest panel: no body on the island; it stands on its pedestal (sky.parkGuest)
         local hrp = character and character:FindFirstChild("HumanoidRootPart")
         if hrp then
-            hrp.Anchored = true
-            hrp.CanCollide = false
             hrp.Position = SKY_PARKING
         end
         player:SetAttribute("LastActionResult", "Ready")
@@ -2763,7 +2761,8 @@ local function settleResting()
         -- Boulders too: a ball has nothing to stop it rolling, so one nudge sent a boulder across the island and
         -- into the sea, and it came back at home ("boulders travel in jumps", run n7).
         if role and (SNAPPED_ROLES[role] or role == "Boulder") and not piece.Anchored
-            and not isCarried(piece) and not isPlacing(piece) then
+            and not isCarried(piece) and not isPlacing(piece)
+            and not piece:GetAttribute("Quaking") then -- the shaking holds nothing still: it settles after
             if piece.AssemblyLinearVelocity.Magnitude < 0.1 and piece.AssemblyAngularVelocity.Magnitude < 0.1 then
                 restPasses[piece] = (restPasses[piece] or 0) + 1
                 if restPasses[piece] >= SETTLE_PASSES then
@@ -3034,8 +3033,10 @@ local function advanceClimbers(dt)
     end
 end
 
-local turners = {} -- player -> the yaw Face is turning the body to
-local skyPower -- with the sky events below: the guest panel's powers
+-- One table for the sky's parts, to spare the main chunk's locals (Luau allows 200, and the script is at the limit):
+-- turners (player -> the yaw Face is turning the body to), power (the guest panel's powers, with the sky events
+-- below) and quake (the earthquake, after the sky events: start, tick, and Brace for a body).
+local sky = { turners = {} }
 local stepBody -- by freeTrappedBodies below: stepping up onto, or down off, something a block high
 
 local function yawOf(cframe) -- the way a part faces, as the yaw the engine gives a walking body (forward is -Z)
@@ -3063,22 +3064,22 @@ local function face(player, inputData)
     if humanoid then
         humanoid:CancelMoveTo()
     end
-    turners[player] = math.atan2(-dx, -dz)
+    sky.turners[player] = math.atan2(-dx, -dz)
     player:SetAttribute("LastActionResult", "FaceStarted")
 end
 
 local function advanceTurners(dt)
-    for player, target in pairs(turners) do
+    for player, target in pairs(sky.turners) do
         local hrp = getHumanoidRootPart(player)
         if not hrp or climbers[player] then
-            turners[player] = nil
+            sky.turners[player] = nil
         else
             local now = yawOf(hrp.CFrame)
             local delta = (target - now + math.pi) % (2 * math.pi) - math.pi
             local step = math.clamp(delta, -TURN_RATE * dt, TURN_RATE * dt)
             hrp.CFrame = CFrame.new(hrp.Position) * CFrame.fromOrientation(0, now + step, 0)
             if math.abs(delta) <= TURN_RATE * dt then
-                turners[player] = nil
+                sky.turners[player] = nil
             end
         end
     end
@@ -3095,12 +3096,12 @@ if AgentInputService then
                 player:SetAttribute("LastActionResult", "MoveToFailed:InvalidPosition")
                 return
             end
-            turners[player] = nil -- walking turns the body itself
+            sky.turners[player] = nil -- walking turns the body itself
             humanoid:MoveTo(targetPosition)
         elseif inputType == "Face" then
             face(player, inputData)
         elseif inputType == "Sky" then
-            skyPower(player, inputData)
+            sky.power(player, inputData)
         elseif inputType == "Stop" then
             humanoid:CancelMoveTo()
         elseif inputType == "Jump" then
@@ -3134,6 +3135,8 @@ if AgentInputService then
             stepBody(player, inputData, true)
         elseif inputType == "Cook" then
             cook(player)
+        elseif inputType == "Brace" then -- crouch and hold on while the ground shakes (the body's own reflex)
+            sky.quake.brace(player)
         else
             player:SetAttribute("LastActionResult", "InvalidAction")
         end
@@ -3565,6 +3568,365 @@ local tickDriftwood = (function() -- a function of its own, as tickWeather's
     return tickDriftwood
 end)()
 
+-- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; research/god-powers-and-
+-- disasters-plan.md, phase 1). A rumble warns, then the ground shakes for a while and dies away.
+-- The ground itself stays still: moving hundreds of island parts would be heavy and flood the viewers' updates. Every
+-- loose piece gets the ground's motion turned round instead, each tick an impulse of -a(t) x its mass x dt at its own
+-- centre, which is the same physics seen from the ground. Rapier then decides what rocks, slides and falls: a thin
+-- column topples, a wide wall stands, a fastened piece holds to the ground as it always does.
+-- Bodies are never shaken. At the rumble a body looks around (LookAround); braced (the body's reflex, the Brace input),
+-- it crouches and holds on; caught unbraced when the shaking starts, it is knocked down for a moment (Stagger) and gets
+-- up (GetUp), unhurt. Nothing ever gives way under a body's feet.
+-- The Clock carries Quake (0-1), QuakePhase ("rumble", "shaking", "fade", "") and QuakeId; after it, QuakeFell.
+sky.quake = (function()
+    local RUMBLE, SHAKE, FADE, AFTER = 8, 20, 5, 8 -- seconds: the warning, the shaking, dying away, settling
+    -- Tuned against test structures (plan §5): at a peak of about 0.65 g, a loose wall loses its top row when shaken
+    -- along it and most of itself when shaken across; a loose 5-high tower lost its top two in one direction of two
+    -- and stood in the other. Fastened pieces never moved. Near 0.9 g loose blocks slide off each other and most of a
+    -- loose wall comes down. Slow swings topple; fast ones only rattle.
+    local RUMBLE_LEVEL, LEVEL = 0.15, 0.8 -- strength of the rumble and of the shaking (0-1)
+    local ACCEL = 0.81 * Workspace.Gravity -- the ground's peak acceleration at strength 1 (gravity is 10 here)
+    local FREQS = { { 0.45, 1.0 }, { 0.8, 0.6 }, { 1.5, 0.3 } } -- the shaking: three sines, Hz and weight
+    local WEIGHT = 0 -- the weights' sum: the sines can add up to it at most
+    for _, f in ipairs(FREQS) do
+        WEIGHT = WEIGHT + f[2]
+    end
+    local REACH, MAX_WOKEN = 60, 200 -- pieces within this of Godling are shaken loose, nearest first
+    local MIN_PIECES = 15 -- something worth testing must stand within reach
+    local COOLDOWN = 600 -- seconds between disasters in test mode; the paid stream will allow one a day (phase 3)
+    local MERCY_HEALTH, MERCY_AFTER_FAINT = 30, 900 -- no disaster while Godling is this weak, or this soon after a faint
+    local KNOCKDOWN, LET_GO = 2.5, 1.5 -- seconds knocked down; seconds a braced body holds on after the shaking
+    local active, lastEnded = nil, -math.huge
+    local braced, knocked = {}, {} -- player -> true; player -> when it gets up
+    local faints = {} -- player -> { count, at }: when it last fainted, for the mercy rule
+
+    local function shakeable(part) -- blocks, stones and logs (boulders hold where they lie, ADR-009)
+        return part:IsA("BasePart") and SNAPPED_ROLES[part:GetAttribute("RenderRole")] and not isCarried(part)
+            and not isPlacing(part)
+    end
+
+    local function bodies()
+        local out = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            if hrp then
+                out[player] = hrp
+            end
+        end
+        return out
+    end
+
+    local function piecesNear(centre, reach)
+        local out = {}
+        for _, part in ipairs(Workspace:GetChildren()) do
+            if shakeable(part) then
+                local d = Vector3.new(part.Position.X - centre.X, 0, part.Position.Z - centre.Z).Magnitude
+                if d <= reach then
+                    table.insert(out, { part = part, d = d })
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            return a.d < b.d
+        end)
+        return out
+    end
+
+    -- What holds a body up: the piece under its feet, and every piece under that one, down to the ground.
+    local function underFeet(near)
+        local held = {}
+        local function under(part)
+            local c, e = part.Position, halfExtents(part)
+            for _, n in ipairs(near) do
+                local o = n.part
+                if not held[o] then
+                    local oc, oe = o.Position, halfExtents(o)
+                    if math.abs((oc.Y + oe.Y) - (c.Y - e.Y)) < 0.3 and math.abs(c.X - oc.X) < e.X + oe.X - 0.05
+                        and math.abs(c.Z - oc.Z) < e.Z + oe.Z - 0.05 then
+                        held[o] = true
+                        under(o)
+                    end
+                end
+            end
+        end
+        for _, hrp in pairs(bodies()) do
+            local p, feet = hrp.Position, hrp.Position.Y - BODY_ABOVE_FEET
+            for _, n in ipairs(near) do
+                local o = n.part
+                local oc, oe = o.Position, halfExtents(o)
+                if not held[o] and math.abs(oc.Y + oe.Y - feet) < 0.4 and math.abs(p.X - oc.X) < oe.X + 1
+                    and math.abs(p.Z - oc.Z) < oe.Z + 1 then
+                    held[o] = true
+                    under(o)
+                end
+            end
+        end
+        return held
+    end
+
+    local function wake(centre)
+        local near = piecesNear(centre, REACH)
+        local held = underFeet(near)
+        active.woken = {}
+        for _, n in ipairs(near) do
+            local part = n.part
+            if #active.woken >= MAX_WOKEN then
+                break
+            end
+            if part.Anchored and not part:GetAttribute("Fastened") and not held[part] then
+                part.Anchored = false
+                part:SetAttribute("Settled", false)
+                part:SetAttribute("Quaking", true)
+                table.insert(active.woken, { part = part, from = part.Position })
+            end
+        end
+        active.held = 0
+        for _ in pairs(held) do
+            active.held = active.held + 1
+        end
+    end
+
+    local function strength(t)
+        if t < RUMBLE then
+            return RUMBLE_LEVEL * math.min(1, t / 2)
+        elseif t < RUMBLE + SHAKE then
+            return RUMBLE_LEVEL + (active.level - RUMBLE_LEVEL) * math.min(1, (t - RUMBLE) / 1.5)
+        elseif t < RUMBLE + SHAKE + FADE then
+            return active.level * (1 - (t - RUMBLE - SHAKE) / FADE)
+        end
+        return 0
+    end
+
+    local function phaseAt(t)
+        if t < RUMBLE then
+            return "rumble"
+        elseif t < RUMBLE + SHAKE then
+            return "shaking"
+        elseif t < RUMBLE + SHAKE + FADE then
+            return "fade"
+        end
+        return ""
+    end
+
+    local function groundAccel(t, level) -- horizontal, along a direction that slowly turns
+        local along, across = 0, 0
+        for i, f in ipairs(FREQS) do
+            along = along + f[2] * math.sin(2 * math.pi * f[1] * t + active.phases[i])
+            across = across + f[2] * math.sin(2 * math.pi * f[1] * 0.83 * t + active.phases[i] * 1.7)
+        end
+        local a = active.heading + 0.4 * math.sin(0.35 * t)
+        local scale = level * ACCEL / WEIGHT -- the peak is level x ACCEL
+        along, across = along * scale, across * scale * 0.35
+        return Vector3.new(math.cos(a) * along - math.sin(a) * across, 0, math.sin(a) * along + math.cos(a) * across)
+    end
+
+    local function letGo(player)
+        braced[player] = nil
+        player:SetAttribute("Bracing", false)
+        local hrp = getHumanoidRootPart(player)
+        if hrp and not climbers[player] and not knocked[player] then
+            hrp.Anchored = false
+        end
+    end
+
+    local function knockDown(player, hrp)
+        knocked[player] = os.clock() + KNOCKDOWN
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:CancelMoveTo()
+        end
+        hrp.Anchored = true
+        player:SetAttribute("KnockedDown", true)
+        player:SetAttribute("KnockDowns", (player:GetAttribute("KnockDowns") or 0) + 1)
+        gesture(player, "Stagger")
+        print(string.format("QUAKE knocked %s down", player.Name))
+    end
+
+    local function getUp()
+        for player, at in pairs(knocked) do
+            if os.clock() >= at then
+                knocked[player] = nil
+                player:SetAttribute("KnockedDown", false)
+                local hrp = getHumanoidRootPart(player)
+                if hrp and not climbers[player] and not braced[player] then
+                    hrp.Anchored = false
+                end
+                gesture(player, "GetUp") -- from sitting, where Stagger leaves it (WakeUp starts from standing)
+            end
+        end
+    end
+
+    local function count()
+        local moved, fell = 0, 0
+        for _, w in ipairs(active.woken) do
+            local part = w.part
+            if not part.Parent then
+                fell = fell + 1 -- gone: into the sea
+            else
+                local d = part.Position - w.from
+                if -d.Y > BLOCK_SIZE / 2 or Vector3.new(d.X, 0, d.Z).Magnitude > BLOCK_SIZE then
+                    fell = fell + 1
+                elseif d.Magnitude > 0.3 then
+                    moved = moved + 1
+                end
+            end
+        end
+        return moved, fell
+    end
+
+    local function watchFaints()
+        for player in pairs(bodies()) do
+            local n = player:GetAttribute("Faints") or 0
+            local seen = faints[player]
+            if not seen or n > seen.count then
+                faints[player] = { count = n, at = seen and os.clock() or -math.huge }
+            end
+        end
+    end
+
+    local function start(godling)
+        if active then
+            return nil, "AlreadyShaking"
+        end
+        local wait = COOLDOWN - (os.clock() - lastEnded)
+        if wait > 0 then
+            return nil, "TooSoon:" .. math.ceil(wait)
+        end
+        local s, f = surviving[godling], faints[godling]
+        if (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) then
+            return nil, "GodlingIsWeak"
+        end
+        local hrp = getHumanoidRootPart(godling)
+        if not hrp then
+            return nil, "NobodyHere"
+        end
+        local built = 0
+        for _, n in ipairs(piecesNear(hrp.Position, REACH)) do
+            if n.part.Anchored then
+                built = built + 1
+            end
+        end
+        if built < MIN_PIECES then
+            return nil, "NothingBuiltYet"
+        end
+        skyCounter = skyCounter + 1
+        active = { id = skyCounter, t = 0, level = LEVEL, centre = hrp.Position, heading = skyRandom() * 2 * math.pi,
+            phases = { skyRandom() * 6.28, skyRandom() * 6.28, skyRandom() * 6.28 }, woken = {}, held = 0 }
+        clockPart:SetAttribute("QuakeId", active.id)
+        for player in pairs(bodies()) do
+            if not climbers[player] then
+                gesture(player, "LookAround") -- startled by the rumble; the body braces a moment later
+            end
+        end
+        print(string.format("SKY Earthquake #%d rumbling at (%.1f, %.1f), %d pieces within reach", active.id,
+            hrp.Position.X, hrp.Position.Z, built))
+        return active.id
+    end
+
+    local function tick(dt)
+        watchFaints()
+        getUp()
+        if not active then
+            return
+        end
+        local before = phaseAt(active.t)
+        active.t = active.t + dt
+        local t, phase = active.t, phaseAt(active.t)
+        local level = strength(t)
+        if phase == "shaking" and before == "rumble" then
+            local godling = godlingPlayer()
+            local hrp = godling and getHumanoidRootPart(godling)
+            wake(hrp and hrp.Position or active.centre)
+            for player, body in pairs(bodies()) do
+                if not braced[player] and not climbers[player] and not knocked[player] then
+                    knockDown(player, body)
+                end
+            end
+            print(string.format("SKY Earthquake #%d shaking: woke %d pieces; %d hold a body up", active.id,
+                #active.woken, active.held))
+        end
+        if level > 0 then
+            local a = groundAccel(t, level)
+            for _, w in ipairs(active.woken) do
+                local part = w.part
+                if part.Parent and not part.Anchored then
+                    part:ApplyImpulseAtPosition(a * (-part:GetMass() * dt), part.Position)
+                end
+            end
+        end
+        if before == "fade" and phase == "" then -- the ground is still: what moved may settle again
+            for _, w in ipairs(active.woken) do
+                if w.part.Parent then
+                    w.part:SetAttribute("Quaking", false)
+                end
+            end
+        end
+        if phase == "" and t >= RUMBLE + SHAKE + FADE + LET_GO then
+            for player in pairs(braced) do
+                letGo(player)
+            end
+        end
+        clockPart:SetAttribute("Quake", math.floor(level * 100 + 0.5) / 100)
+        if clockPart:GetAttribute("QuakePhase") ~= phase then
+            clockPart:SetAttribute("QuakePhase", phase)
+        end
+        if t >= RUMBLE + SHAKE + FADE + AFTER then
+            local moved, fell = count()
+            clockPart:SetAttribute("QuakeFell", fell)
+            print(string.format("SKY Earthquake #%d over: woke %d, moved %d, fell %d", active.id, #active.woken,
+                moved, fell))
+            active, lastEnded = nil, os.clock()
+        end
+    end
+
+    local function brace(player)
+        local hrp = getHumanoidRootPart(player)
+        if not hrp or not active then
+            player:SetAttribute("LastActionResult", "BraceFailed:StillGround")
+            return
+        end
+        if climbers[player] then -- the world carries a climbing body; it braces when it steps off
+            player:SetAttribute("LastActionResult", "BraceFailed:Climbing")
+            return
+        end
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:CancelMoveTo()
+        end
+        braced[player] = true
+        hrp.Anchored = true -- holding on: nothing the ground does moves it
+        player:SetAttribute("Bracing", true)
+        player:SetAttribute("LastActionResult", "Braced")
+    end
+
+    return { start = start, tick = tick, brace = brace }
+end)()
+
+-- The guest panel's player has no body on the island, but the engine gives it one anyway. Parked once on joining, it
+-- fell out of the world (a character's body does not stay anchored), and the world put it back on the spawn spot,
+-- standing on Godling's head (found 2026-11-02 by the renderer session). So it stands on a pedestal of its own, out
+-- of sight under the island, and is put back there if it ever drifts.
+sky.pedestal = (function()
+    local p = findWorkspaceChild("SkyPedestal") or Instance.new("Part")
+    p.Name = "SkyPedestal"
+    p.Size = Vector3.new(6, 1, 6)
+    p.Position = SKY_PARKING - Vector3.new(0, BODY_ABOVE_FEET + 0.5, 0)
+    p.Anchored = true
+    p.Transparency = 1
+    p.Parent = Workspace
+    return p
+end)()
+
+function sky.parkGuest()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local hrp = player.Name == SKY_PLAYER and getHumanoidRootPart(player)
+        if hrp and (hrp.Position - SKY_PARKING).Magnitude > 2 then
+            hrp.CFrame = CFrame.new(SKY_PARKING)
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+    end
+end
+
 -- What the guest panel can do. Viewers choose what; the world chooses where: near Godling, in view, clear of what
 -- it built. Each returns the event's number, or nil and why not.
 local SKY_POWERS = {
@@ -3609,9 +3971,12 @@ local SKY_POWERS = {
         print(string.format("SKY Regrow #%d grew %s back", skyCounter, t.name))
         return skyCounter
     end,
+    Earthquake = function(godling)
+        return sky.quake.start(godling)
+    end,
 }
 
-function skyPower(player, inputData)
+function sky.power(player, inputData)
     if player.Name ~= SKY_PLAYER then -- only the guest panel calls on the sky; Godling cannot
         player:SetAttribute("LastActionResult", "SkyFailed:NotTheSky")
         return
@@ -3806,6 +4171,7 @@ RunService.Heartbeat:Connect(function(dt)
         settleTimer = 0
         settleResting() -- pieces that came to rest square into their cells and hold there
         freeTrappedBodies() -- and a body never stays shut inside one
+        sky.parkGuest() -- the guest panel's body stays out of sight
     end
     advanceTurners(dt)
     if SKY_TEST_EVERY > 0 then
@@ -3822,6 +4188,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
     advanceSkyFalls()
+    sky.quake.tick(dt) -- an earthquake shakes what is loose
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
     tickShip(dt) -- and a ship passes far out
     keepsakeTimer = keepsakeTimer + dt

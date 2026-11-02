@@ -400,6 +400,38 @@ def reaction_report(r):
     ]
 
 
+QUAKE_RE = re.compile(r"SKY Earthquake #(\d+) over: woke (\d+), moved (\d+), fell (\d+)")
+
+
+def analyze_quakes(mind_log, world_log):
+    """Earthquakes (research/god-powers-and-disasters-plan.md §5): what each shook loose and brought down (from the
+    world log), how soon the body braced after the rumble, and knock-downs."""
+    if not world_log.exists():
+        return None
+    text = world_log.read_text(errors="replace")
+    quakes = {int(m[0]): {"woke": int(m[1]), "moved": int(m[2]), "fell": int(m[3])} for m in QUAKE_RE.findall(text)}
+    if not quakes:
+        return None
+    entries = [json.loads(line) for line in mind_log.read_text().splitlines() if line.strip()] if mind_log.exists() else []
+    rumbles = {e["sky_id"]: e["time"] for e in entries if e["kind"] == "event" and e.get("sky") == "Earthquake"
+               and e.get("sky_stage") == "warning"}
+    braces = {}
+    for e in entries:
+        if e["kind"] == "brace" and e.get("ok") and e.get("sky_id") in rumbles:
+            braces.setdefault(e["sky_id"], e["time"] - rumbles[e["sky_id"]])
+    for sky_id, q in quakes.items():
+        q["braced_after_s"] = braces.get(sky_id)
+    return {"quakes": quakes, "knockdowns": text.count("QUAKE knocked")}
+
+
+def quake_report(q):
+    lines = ["## Earthquakes", "| # | Pieces woken | Moved | Fell | Braced after the rumble |", "|---|---|---|---|---|"]
+    for sky_id, x in sorted(q["quakes"].items()):
+        braced = fmt_s(x["braced_after_s"]) if x["braced_after_s"] is not None else "not braced"
+        lines.append(f"| {sky_id} | {x['woke']} | {x['moved']} | {x['fell']} | {braced} |")
+    return lines + [f"- Knocked down (not braced when the shaking began): {q['knockdowns']}", ""]
+
+
 # --- report ------------------------------------------------------------------
 
 
@@ -496,6 +528,9 @@ def report(run_dir, rec, agent, workspace):
         reactions = analyze_reactions(mind_log, run_dir / "world.log")
         if reactions:
             lines += reaction_report(reactions)
+        quakes = analyze_quakes(mind_log, run_dir / "world.log")
+        if quakes:
+            lines += quake_report(quakes)
 
     if workspace:
         lines += ["## Workspace memory", "| File | Bytes | ~Tokens |", "|---|---|---|"]

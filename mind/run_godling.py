@@ -318,6 +318,7 @@ def watch_while_thinking(future, world, attention, skills):
             pass  # nothing to interrupt while standing; the event waits for the next plan
         except WorldError:
             pass  # the plan on its way is worth more than one missed look
+        skills.steady()  # braced through an earthquake, if the ground rumbles
         skills.glance()
         time.sleep(0.25)
 
@@ -509,6 +510,9 @@ def print_entry(entry):
     elif kind == "glance":
         print(f"[{stamp}] GLANCE {'turned ' + str(entry['degrees']) + '° towards' if entry['turned'] else 'saw'}: "
               f"{entry['text']}", flush=True)
+    elif kind == "brace":
+        print(f"[{stamp}] BRACE  {'crouched and holding on' if entry['ok'] else 'could not brace'} "
+              f"(the ground: {entry['phase']})", flush=True)
     elif kind == "project" and entry["phase"] == "start":
         print(f"[{stamp}] INTEND {entry['intention'] or entry['goal']}", flush=True)
     elif kind == "project":
