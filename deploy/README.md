@@ -7,7 +7,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015). Seven services:
 - **`worker`:** the site's Celery worker. It takes powers to the island one at a time, so no web request waits on the island.
 - **`island`:** the world (Clawblox, built from source with `patches/`), Godling's mind and the guest panel, started by `mind/run_godling.py`. The run lives in a volume, so it continues across restarts: Godling's memory, and the island itself. Every five minutes and when the container stops, the launcher saves what stands (`island-save.json`); on the next start the world puts it back (ADR-013).
 - **`relay`:** the island's stream relay (`relay/`, `Dockerfile.relay`), which every viewer's socket reaches: one connection to the world, the same updates to everyone. A container of its own, holding the spectator token and nothing else, so the part of the island the whole internet talks to is kept apart from Godling's keys (the agent key, the operator token, the DeepSeek key).
-- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world (watching side only), its stream to the relay, and its replay chunks (`/replay/chunks/…`) to files in the runs volume.
+- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world (watching side only), its stream to the relay, and its replay chunks (`/replay/chunks/…`) to files in their own volume (`replay_chunks`, mounted inside the island's run), the only part of the run Caddy can read.
 
 ## What the public can reach
 - **The site**, at `https://<domain>/`.

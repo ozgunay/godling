@@ -56,7 +56,7 @@ const ago = (ms) => {
 }
 const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 
-export function createReplayUI({ stage, dock, el, text, icon, tellView, tell, show, onChange }) {
+export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView, tell, show, onChange }) {
   let on = false
   let ready = false // the island's page has said it can hear the screen (godling-ready)
   let pending = null // a moment to open once it can (a shared link)
@@ -86,7 +86,7 @@ export function createReplayUI({ stage, dock, el, text, icon, tellView, tell, sh
   const rewind = el('button', 'b-rewind cam', `${icon('back', 2)}<span>Rewind</span>`)
   rewind.type = 'button'
   rewind.title = "Watch the island's past"
-  stage.append(rewind)
+  rewindIn.append(rewind) // beside the camera buttons: on a phone, an icon in the top row, clear of the feed
 
   const panel = el('section', 'b-replay stone')
   panel.hidden = true

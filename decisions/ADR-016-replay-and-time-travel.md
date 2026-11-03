@@ -314,6 +314,12 @@ An extensive review (nine angles, each finding verified independently) found 26 
     - the packer saves its progress during a catch-up and stops promptly;
     - it runs in its own session, so Ctrl+C reaches it only after the world.
 
+A last sweep for anything missed found four more, also fixed:
+- **A viewer's note text was baked into chunks.** The world keeps the latest note's text on the Clock (`NoteText`), and chunks are public and kept for good. The packer now leaves it out, so the past shows notes only through the site, which can still hide them.
+- **Caddy, which faces the internet, mounted the whole run** (the agent key, Godling's memory, the logs, the raw recordings). The chunks now live in a volume of their own (`replay_chunks`, mounted inside the island's run), and that is all Caddy sees.
+- **On phones, Rewind covered the feed.** It is now an icon in the top row, beside the camera buttons.
+- **`python3 -m godling.replay pack` could close the recording the world was still writing**, and run beside the follower, doubling the tracks. The two now share a lock, and `pack` closes the newest recording only with `--stopped`.
+
 Tested again:
 
 | Check | Result |

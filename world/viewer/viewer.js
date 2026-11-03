@@ -721,7 +721,7 @@ function takeNoteLimit(notes) {
 // ---- the island's past (ADR-016): a timeline, speeds and markers; the island's page plays it -----------------------
 
 past = createReplayUI({
-  stage, dock, el, text, icon, tellView, tell,
+  stage, dock, rewindIn: statusBar, el, text, icon, tellView, tell,
   show(s) {
     if (s.act) return popup(s.act)
     drawClock(s.clock, true)

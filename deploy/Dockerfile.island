@@ -24,7 +24,8 @@ COPY mind/ ./mind/
 COPY tools/ ./tools/
 COPY world/ ./world/
 COPY deploy/island-start.sh /usr/local/bin/island-start
-RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs && chown island /runs
+# /runs/live/replay/chunks is where the replay chunks' own volume mounts (docker-compose.yml): made here, the island's.
+RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs/live/replay/chunks     && chown -R island /runs
 USER island
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080 8081

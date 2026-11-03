@@ -33,10 +33,11 @@
 		}
 	}
 
-	# Replays (ADR-016): the chunks the island packs, straight from the runs volume. Files only, the same for everyone
-	# and never changed once written, so they are cached for good. (With a bucket, browsers fetch them from there.)
+	# Replays (ADR-016): the chunks the island packs, from their own volume (Caddy sees nothing else of the run). Files
+	# only, the same for everyone and never changed once written, so they are cached for good. (With a bucket, browsers
+	# fetch those already up from there.)
 	handle_path /replay/chunks/* {
-		root * /runs/live/replay/chunks
+		root * /srv/replay-chunks
 		# Kept for good only when there: a chunk asked for before it is written must be asked for again.
 		@chunk file
 		header @chunk Cache-Control "public, max-age=31536000, immutable"

@@ -19,7 +19,8 @@ Under <run>/replay/:
     state.json                               how far the packer has got
 
 Usage: python3 -m godling.replay follow <run-dir>           keep packing as the world records, until SIGINT or SIGTERM
-       python3 -m godling.replay pack <run-dir>             pack what is there, then stop
+       python3 -m godling.replay pack <run-dir> [--stopped] pack what is there, then stop (--stopped: the world has
+                                                            stopped, so its last recording is closed too)
        python3 -m godling.replay check <run-dir> [samples]  replayed states against the raw recording, at random times
 run_godling.py runs `follow` beside the world, in a process of its own, so packing never holds up Godling's mind.
 """
@@ -69,6 +70,9 @@ TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"
            "glance": ("text", "degrees", "turned")}
 CHUNK_REL = re.compile(r"chunks/\d{4}-\d\d-\d\d/\d\d/\d{13}\.json\.gz")
 ASSET_URL = re.compile(r"^(?:[^?#]*/)?assets/([^/?#]+)$")  # /assets/x.glb, /island/assets/x.glb, …
+# A viewer's words the world keeps on the Clock for the mind (the latest note's text, main.lua). Never in a chunk: a
+# chunk is public and kept for good, so the past shows notes only through the site, which can still hide them.
+PRIVATE_ATTRS = frozenset({"NoteText"})
 
 try:  # zstd: Python 3.14's own module, the zstandard module, or else the zstd tool (the island image has it)
     from compression import zstd as _zstd_std  # type: ignore[import-not-found]
@@ -310,7 +314,8 @@ def _asset(url):
 
 
 def _round_attrs(attrs):
-    out = {k: round(v, 3) if isinstance(v, float) and math.isfinite(v) else v for k, v in attrs.items()}
+    out = {k: round(v, 3) if isinstance(v, float) and math.isfinite(v) else v for k, v in attrs.items()
+           if k not in PRIVATE_ATTRS}
     if "ModelUrl" in out:
         out["ModelUrl"] = _asset(out["ModelUrl"])
     return out
@@ -1066,9 +1071,29 @@ def _say(**entry):
     print(json.dumps({"time": round(time.time(), 3), **entry}), flush=True)
 
 
+def _lock(run):
+    """One packer per run at a time (`follow`, or `pack` by hand): two would append the same tracks twice. The lock
+    file is held while the process lives; None when another packer holds it."""
+    path = Path(run) / "replay/.packer.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = path.open("a")
+    try:
+        import fcntl
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:  # not on Linux: no lock (the island and WSL are Linux)
+        pass
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3 or sys.argv[1] not in ("follow", "pack", "check"):
         sys.exit(__doc__)
+    held = _lock(sys.argv[2]) if sys.argv[1] in ("follow", "pack") else True
+    if held is None:
+        sys.exit(f"another packer is already packing {sys.argv[2]}")
     if sys.argv[1] == "follow":
         stop = threading.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -1081,7 +1106,9 @@ if __name__ == "__main__":
         _say(kind="stop", message="packed")
     elif sys.argv[1] == "pack":
         packer = Packer(sys.argv[2], log=lambda **e: print(e, flush=True))
-        packer.pack_once(final=True)
+        # The newest recording is closed only when its world has stopped (--stopped); otherwise it is packed up to
+        # now and left open for the world to go on writing.
+        packer.pack_once(final="--stopped" in sys.argv[3:])
         packer.store.stop()
         print(json.dumps(read_index(sys.argv[2]), indent=1))
     else:

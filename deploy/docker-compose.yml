@@ -19,7 +19,7 @@ x-site-env: &site-env
   # No token in the island's public link: Caddy and the relay hold it (ADR-015).
   GODLING_VIEW_URL: https://${GODLING_ISLAND_DOMAIN:?set GODLING_ISLAND_DOMAIN in .env}/island
   GODLING_RUN_DIR: /runs/live
-  # Where browsers fetch replay chunks (ADR-016): the island's origin, where Caddy serves them from the runs volume.
+  # Where browsers fetch replay chunks (ADR-016): the island's origin, where Caddy serves them from their volume.
   # With a bucket set on the island, the index names the bucket's address instead.
   GODLING_REPLAY_URL: https://${GODLING_ISLAND_DOMAIN}/replay
   GODLING_STRIPE_SECRET_KEY: ${GODLING_STRIPE_SECRET_KEY:-}
@@ -120,6 +120,8 @@ services:
       GODLING_REPLAY_REGION: ${GODLING_REPLAY_REGION:-auto}
     volumes:
       - runs:/runs
+      # Replay chunks (ADR-016) in a volume of their own, inside the run, so Caddy can serve them without the rest.
+      - replay_chunks:/runs/live/replay/chunks
 
   # The island's stream relay (relay/, ADR-015), which Caddy sends every viewer's socket to: one connection to the
   # world, the same updates to everyone. In a container of its own, with the spectator token and nothing else: the
@@ -152,7 +154,7 @@ services:
       GODLING_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}  # handed to the world on the page's own requests
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - runs:/runs:ro  # replay chunks (ADR-016)
+      - replay_chunks:/srv/replay-chunks:ro  # only the replay chunks (ADR-016): none of the run's keys, memory or logs
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -163,5 +165,6 @@ services:
 volumes:
   pgdata:
   runs:
+  replay_chunks:
   caddy_data:
   caddy_config:
