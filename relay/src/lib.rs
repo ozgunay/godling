@@ -51,6 +51,15 @@ pub struct Config {
     pub resume_frames: usize,
     /// How often everyone hears how many watch.
     pub status_every: Duration,
+    /// How often a viewer's socket is pinged (20 s), and how long a viewer may stay silent before it is let go (60 s:
+    /// three pings unanswered, the phone is gone).
+    pub ping_every: Duration,
+    pub silent_for: Duration,
+    /// A send to a viewer this slow (10 s) means its buffers are full: it is let go.
+    pub send_within: Duration,
+    /// The world sends at least every fifth tick (about 165 ms) even when nothing moves: this long silent (10 s), it
+    /// is gone.
+    pub world_quiet: Duration,
 }
 
 impl Config {
@@ -74,6 +83,10 @@ impl Config {
             buffer: number("RELAY_BUFFER", 256)?,
             resume_frames: number("RELAY_RESUME_FRAMES", 300)?,
             status_every: Duration::from_secs(5),
+            ping_every: Duration::from_secs(20),
+            silent_for: Duration::from_secs(60),
+            send_within: Duration::from_secs(10),
+            world_quiet: Duration::from_secs(10),
         })
     }
 }
@@ -87,7 +100,7 @@ pub struct App {
 /// Follow the world and serve viewers on `listener` until `shutdown` completes.
 pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Output = ()> + Send + 'static) -> std::io::Result<()> {
     let hub = Arc::new(Hub::new(config.buffer, config.resume_frames));
-    tokio::spawn(upstream::follow(hub.clone(), config.upstream.clone(), config.token.clone()));
+    tokio::spawn(upstream::follow(hub.clone(), config.upstream.clone(), config.token.clone(), config.world_quiet));
     let news = hub.clone();
     let every = config.status_every;
     tokio::spawn(async move {

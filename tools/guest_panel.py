@@ -477,13 +477,13 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
 
         def do_POST(self):
             url = urllib.parse.urlsplit(self.path)
+            body = self._body()  # read first: a reply to an unread request reaches Windows callers as a reset connection
             if key and not hmac.compare_digest(self.headers.get("X-Godling-Key", ""), key):
                 return self._json({"ok": False, "text": "Sign in on the site to call powers and send notes."}, 403)
             # JSON only: a browser asks first before sending JSON to another origin, and this panel never says yes,
             # so a web page elsewhere cannot call powers here (a plain-text or form post would not ask).
             if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
                 return self._json({"ok": False, "text": "Send JSON."}, 415)
-            body = self._body()
             client, name = clean_client(body.get("client")), clean_name(body.get("name"))
             if not client:
                 return self._json({"ok": False, "text": "Reload the page."}, 400)

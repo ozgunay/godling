@@ -9,6 +9,7 @@ authenticator whose session has not used it lately is asked for a code (allauth'
 Signing in to the admin goes through the site's own sign-in (godling_web/urls.py, allauth's secure_admin_login),
 which asks for the code. GODLING_ADMIN_TWO_FACTOR=0 turns the rule off (development only).
 """
+import inspect
 import time
 from urllib.parse import urlencode
 
@@ -22,13 +23,17 @@ from django.urls import reverse
 ADMIN = "/admin/"
 TOTP = ["totp"]  # recovery codes alone do not count: they are the way back in when the phone is lost
 FRESH = 12 * 3600  # seconds a code entered in this session holds for the admin
+# allauth 65.21 (Python 3.11 on) ties the records to the user who made them, and gives none unless asked for that
+# user's; the releases before it (the last for Python 3.10) keep them per session and take no user.
+RECORDS_TAKE_USER = "user" in inspect.signature(get_authentication_records).parameters
 
 
 def code_entered_lately(request):
     """Whether this session gave a second factor (a code, or a recovery code) in the last FRESH seconds."""
     now = time.time()
-    return any(r.get("method") == "mfa" and now - float(r.get("at") or 0) < FRESH
-               for r in get_authentication_records(request))
+    records = (get_authentication_records(request, request.user) if RECORDS_TAKE_USER
+               else get_authentication_records(request))
+    return any(r.get("method") == "mfa" and now - float(r.get("at") or 0) < FRESH for r in records)
 
 
 class AdminNeedsTwoFactor:

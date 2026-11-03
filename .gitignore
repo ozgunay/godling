@@ -26,3 +26,11 @@ settings.json
 # Deployment secrets (deploy/.env.example is the template)
 deploy/.env
 !deploy/.env.example
+
+# Test and coverage output (TESTING.md)
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+*.lcov
+.pytest_cache/

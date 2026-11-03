@@ -18,9 +18,6 @@ use crate::hub::Kind;
 use crate::App;
 
 const MAX_IN: usize = 4 * 1024; // a viewer has nothing to say: pongs, and a close
-const PING_EVERY: Duration = Duration::from_secs(20);
-const SILENT_FOR: Duration = Duration::from_secs(60); // three pings unanswered: the phone is gone
-const SEND_WITHIN: Duration = Duration::from_secs(10); // a send this slow means its buffers are full
 const RESYNCS_KEPT: u32 = 3; // a viewer that falls behind this often cannot keep up: let it reconnect later
 
 /// `?epoch=&since=`: where a returning viewer left off (the last `relay_epoch` and `relay_seq` it saw).
@@ -61,12 +58,13 @@ pub async fn stream(
 async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option<(u64, u64)>) {
     let (joined, _watching) = app.hub.join(resume);
     let (mut rx, mut seq) = (joined.rx, joined.seq);
+    let (ping_every, silent_for, within) = (app.config.ping_every, app.config.silent_for, app.config.send_within);
     for frame in joined.first {
-        if !send(&mut socket, frame.text).await {
+        if !send(&mut socket, frame.text, within).await {
             return;
         }
     }
-    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + PING_EVERY, PING_EVERY);
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + ping_every, ping_every);
     let mut heard = Instant::now();
     let mut resyncs = 0;
     loop {
@@ -79,7 +77,7 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                         }
                         seq = frame.seq;
                     }
-                    if !send(&mut socket, frame.text).await {
+                    if !send(&mut socket, frame.text, within).await {
                         return;
                     }
                 }
@@ -91,7 +89,7 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                     let (whole, at) = app.hub.resync();
                     seq = at;
                     if let Some(whole) = whole {
-                        if !send(&mut socket, whole.text).await {
+                        if !send(&mut socket, whole.text, within).await {
                             return;
                         }
                     }
@@ -103,10 +101,10 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                 Some(Ok(_)) => heard = Instant::now(),
             },
             _ = ping.tick() => {
-                if heard.elapsed() > SILENT_FOR {
+                if heard.elapsed() > silent_for {
                     return;
                 }
-                if !matches!(tokio::time::timeout(SEND_WITHIN, socket.send(Message::Ping(Bytes::new()))).await, Ok(Ok(()))) {
+                if !matches!(tokio::time::timeout(within, socket.send(Message::Ping(Bytes::new()))).await, Ok(Ok(()))) {
                     return;
                 }
             }
@@ -114,8 +112,8 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
     }
 }
 
-async fn send(socket: &mut WebSocket, text: Utf8Bytes) -> bool {
-    matches!(tokio::time::timeout(SEND_WITHIN, socket.send(Message::Text(text))).await, Ok(Ok(())))
+async fn send(socket: &mut WebSocket, text: Utf8Bytes, within: Duration) -> bool {
+    matches!(tokio::time::timeout(within, socket.send(Message::Text(text))).await, Ok(Ok(())))
 }
 
 /// The viewer's address: the connection's, or behind `trusted` proxies of ours (Caddy), the one they forwarded.
@@ -234,6 +232,38 @@ mod tests {
         headers.insert("x-forwarded-for", HeaderValue::from_static("6.6.6.6, 81.2.3.4"));
         assert_eq!(client_ip(&headers, peer, 1).to_string(), "81.2.3.4", "the hop Caddy added, not one a client sent");
         assert_eq!(client_ip(&headers, peer, 0), peer.ip(), "no proxy trusted: the header is ignored");
+        assert_eq!(client_ip(&headers, peer, 3), peer.ip(), "fewer hops than proxies of ours: not ours");
+        headers.insert("x-forwarded-for", HeaderValue::from_static("81.2.3.4, unknown"));
+        assert_eq!(client_ip(&headers, peer, 1), peer.ip(), "a hop that is no address");
+    }
+
+    #[test]
+    fn a_panic_elsewhere_does_not_lock_the_seats_up() {
+        let seats = Arc::new(Seats::new(10, 2, 60));
+        let held = seats.clone();
+        let _ = std::thread::spawn(move || {
+            let _book = held.book.lock().unwrap();
+            panic!("a task died holding the seats (this panic is the test's)");
+        })
+        .join();
+        assert!(seats.book.is_poisoned());
+        let seat = seats.take("1.1.1.1".parse().unwrap(), Instant::now()).expect("seats are still given");
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 1);
+        drop(seat);
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 0, "and given back");
+    }
+
+    #[test]
+    fn idle_addresses_are_forgotten_once_many_are_kept() {
+        let seats = Arc::new(Seats::new(usize::MAX, 2, 60));
+        let now = Instant::now();
+        for i in 0..ADDRESSES_KEPT as u32 - 1 {
+            drop(seats.take(IpAddr::V4(i.into()), now).unwrap()); // came and went
+        }
+        let _watching = seats.take("10.9.9.9".parse().unwrap(), now).unwrap();
+        assert_eq!(seats.book.lock().unwrap().len(), ADDRESSES_KEPT);
+        let _new = seats.take("10.8.8.8".parse().unwrap(), now + Duration::from_secs(120)).unwrap();
+        assert_eq!(seats.book.lock().unwrap().len(), 2, "the idle ones, their buckets full again, are forgotten");
     }
 
     #[test]
