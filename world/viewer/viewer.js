@@ -4,6 +4,7 @@
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
 import { createReplayUI } from './replay.js'
+import { browserOf, createFeedback, systemOf } from './feedback.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
 const POLL_MS = 1500
@@ -741,6 +742,27 @@ past = createReplayUI({
     }
   },
 })
+// ---- the bottle (behind the accounts site): a bug, a question or an idea for the makers -------------------------
+
+// What the screen shows, for a bug report the viewer chooses to attach it to (web/apps/feedback/views.py FACTS).
+function screenFacts() {
+  const replaying = Boolean(past?.on)
+  const clock = status?.clock
+  return {
+    view: replaying ? 'replay' : 'live',
+    ...(replaying && Number.isFinite(past.at) && past.at > 0 ? { moment: Math.round(past.at) } : {}),
+    ...(!replaying && Number.isFinite(clock?.hour) ? { day: clock.day || 1, hour: Math.round((((clock.hour % 24) + 24) % 24) * 100) / 100 } : {}),
+    camera,
+    stream: islandStream?.state || (status?.world ? 'live' : 'offline'),
+    size: `${innerWidth}x${innerHeight}`,
+    pixels: Math.round((devicePixelRatio || 1) * 100) / 100,
+    touch: matchMedia('(pointer: coarse)').matches,
+    browser: browserOf(navigator.userAgent),
+    system: systemOf(navigator.userAgent),
+  }
+}
+const bottle = createFeedback({ stage, dock, el, text, icon, post, store, facts: screenFacts, phone: PHONE })
+
 // A shared link to a moment (?t=…): into the past once the island's page has come up live.
 const sharedMoment = Date.parse(new URLSearchParams(location.search).get('t') || '')
 if (Number.isFinite(sharedMoment)) past.start(sharedMoment) // opens once the island's page can hear the screen
@@ -756,6 +778,7 @@ async function poll() {
   const now = status.now || Date.now() / 1000
   showView(status.view)
   drawAccount(status.account)
+  bottle.draw(account)
   takePowers(status.powers)
   takeNoteLimit(status.notes)
   if (status.account) drawPurse(account)

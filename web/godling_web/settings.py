@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.rules",
     "apps.credits",
     "apps.notes",
+    "apps.feedback",
     "apps.screen",
 ]
 

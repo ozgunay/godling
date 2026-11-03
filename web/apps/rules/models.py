@@ -26,6 +26,12 @@ class Rules(models.Model):
                               "(fresh accounts are cheap). Moderators still see every report.")
     reports_per_hour = models.PositiveIntegerField(
         default=10, validators=[MinValueValidator(1)], help_text="Reports one viewer may send in an hour.")
+    feedback_per_hour = models.PositiveIntegerField(
+        default=6, validators=[MinValueValidator(1)],
+        help_text="Feedback messages (bugs, questions, ideas) one viewer may send in an hour.")
+    feedback_email = models.EmailField(
+        blank=True, help_text="Where each feedback message is emailed as it arrives. Empty: none are emailed; they are "
+                              "all in the admin under Viewers' feedback.")
 
     class Meta:
         verbose_name = verbose_name_plural = "site rules"

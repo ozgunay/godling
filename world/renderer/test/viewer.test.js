@@ -92,13 +92,16 @@ async function boot({ statuses = [panelStatus()], answers = {}, phone = false, c
 
 const key = (type, code, extra = {}) => new KeyboardEvent(type, { code, key: extra.key ?? code, bubbles: true, cancelable: true, ...extra })
 
+// The page goes, as a reload or the end of a test takes it.
+function closePage() {
+  for (const [type, fn, options] of pageListeners.splice(0)) removeEventListener(type, fn, options)
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+}
+
 describe('the viewer screen', () => {
-  afterEach(() => {
-    for (const [type, fn, options] of pageListeners.splice(0)) removeEventListener(type, fn, options)
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
+  afterEach(closePage)
 
   it('shows the island, the clock, Godling\'s mind and body, and what viewers did', async () => {
     const { stage, view, $ } = await boot()
@@ -460,5 +463,125 @@ describe('the viewer screen', () => {
     expect(stage.querySelectorAll('.b-pop')).toHaveLength(1)
     slot('Stone').dispatchEvent(new MouseEvent('mouseenter'))
     expect($('.b-tip')).toBeNull()
+  })
+
+  it('the bottle: only behind the site; a signed-in viewer sends a bug with what their screen shows', async () => {
+    let screen = await boot()
+    expect(screen.$('.b-bottle-open').hidden).toBe(true) // the panel on its own has nowhere to send it
+    closePage()
+    screen = await boot({ statuses: [panelStatus({ account: account() })] })
+    const { $, posts, tick, stage } = screen
+    const opener = $('.b-bottle-open')
+    expect(opener.hidden).toBe(false)
+    opener.click()
+    expect($('.b-bottle').hidden).toBe(false)
+    expect(opener.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe($('#bottle-text'))
+    expect($('.bt-hint').textContent).toBe('Sent from your account, ann.')
+    expect($('.facts').textContent).toBe('1024×768 · live · day 3 14:30 · follow camera')
+    expect($('#bottle-text').placeholder).toBe('What happened, and what did you expect instead?')
+    $('.bt-send').click()
+    await tick(0)
+    expect($('.bt-hint').textContent).toBe('Write a few words first.')
+    expect(posts.some((p) => p.path === 'api/feedback')).toBe(false)
+    $('.bt-kind input[value=question]').click()
+    expect($('#bottle-text').placeholder).toBe('Ask the makers anything about Godling or the island.')
+    $('.bt-kind input[value=bug]').click()
+    $('#bottle-text').value = 'The log fell through the wall.'
+    $('#bottle-text').dispatchEvent(new Event('input'))
+    expect($('.b-bottle .count').textContent).toBe('30/2,000')
+    expect(JSON.parse(localStorage.getItem('godling.bottle'))).toEqual({ kind: 'bug', text: 'The log fell through the wall.' })
+    $('#bottle-text').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await tick(0)
+    const sent = posts.find((p) => p.path === 'api/feedback')
+    expect(sent.headers['X-CSRFToken']).toBe('abc123')
+    expect(sent.body).toMatchObject({ kind: 'bug', text: 'The log fell through the wall.', screen: {
+      view: 'live', day: 3, hour: 14.5, camera: 'follow', stream: 'live', size: '1024x768', touch: false } })
+    expect($('.bt-write').hidden).toBe(true)
+    expect($('.bt-sent').hidden).toBe(false)
+    expect(document.activeElement).toBe($('.bt-back'))
+    expect(JSON.parse(localStorage.getItem('godling.bottle')).text).toBe('')
+    $('.bt-again').click()
+    expect($('.bt-write').hidden).toBe(false)
+    $('#bottle-text').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect($('.b-bottle').hidden).toBe(true)
+    expect(document.activeElement).toBe(opener)
+    expect(stage.classList.contains('bottle-open')).toBe(false)
+    opener.click()
+    $('.bt-close').click()
+    expect($('.b-bottle').hidden).toBe(true)
+  })
+
+  it('the bottle: refusals, facts left off, the past, and a draft kept through signing in', async () => {
+    const out = panelStatus({ account: account({ signedIn: false, username: '' }) })
+    let screen = await boot({ statuses: [out] })
+    screen.$('.b-bottle-open').click()
+    expect(screen.$('.bt-send').hidden).toBe(true)
+    const signIn = screen.$('.bt-signin')
+    expect(signIn.hidden).toBe(false)
+    expect(signIn.getAttribute('href')).toBe('/accounts/login/?next=%2F')
+    expect(screen.$('.bt-hint').textContent).toBe('Sign in to send it. Your words wait here meanwhile.')
+    screen.$('.bt-kind input[value=idea]').click()
+    screen.$('#bottle-text').value = 'A coconut power.'
+    screen.$('#bottle-text').dispatchEvent(new Event('input'))
+    document.addEventListener('click', (e) => e.preventDefault(), { capture: true, once: true }) // no navigating in jsdom
+    signIn.click()
+    screen.$('.bt-write').requestSubmit() // signed out: nothing is sent
+    await screen.tick(0)
+    expect(screen.posts.some((p) => p.path === 'api/feedback')).toBe(false)
+    const kept = { 'godling.bottle': localStorage.getItem('godling.bottle'), 'godling.bottle.reopen': localStorage.getItem('godling.bottle.reopen') }
+    expect(kept['godling.bottle.reopen']).toBe('1')
+    closePage()
+
+    const answers = {
+      'api/feedback': (body) => (body.screen === null ? new Error('down')
+        : { ok: false, text: 'That is 6 messages this hour. The next can go in 12:00.', wait: 720 }),
+      'api/replay/index': { body: { segments: [{ start: NOW * 1000 - 3600e3, end: NOW * 1000, live: true }] } },
+    }
+    screen = await boot({ statuses: [panelStatus({ account: account() })], answers, stored: kept, phone: true })
+    const { $, posts, tick, fromIsland, stage } = screen
+    expect($('.b-bottle').hidden).toBe(false) // back from signing in: open again, words and kind kept
+    expect(document.activeElement).toBe($('.b-bottle')) // on a phone, no keyboard before the viewer has read it
+    expect($('#bottle-text').value).toBe('A coconut power.')
+    expect($('.bt-kind input[value=idea]').checked).toBe(true)
+    expect(localStorage.getItem('godling.bottle.reopen')).toBe('')
+    $('.bt-send').click()
+    await tick(0)
+    expect($('.bt-hint').textContent).toBe('That is 6 messages this hour. The next can go in 12:00.')
+    expect($('.bt-hint').classList.contains('no')).toBe(true)
+    expect($('#bottle-text').value).toBe('A coconut power.') // refused: the words stay
+    $('.bt-attach input').click()
+    $('.bt-send').click()
+    await tick(0)
+    expect(posts.filter((p) => p.path === 'api/feedback').at(-1).body.screen).toBeNull()
+    expect($('.bt-hint').textContent).toBe('The island is out of reach. Try again in a moment.')
+    // From the past, the report says when.
+    fromIsland({ type: 'godling-ready', live: true })
+    stage.querySelector('.b-rewind').click()
+    await tick(0)
+    $('.bt-attach input').click()
+    $('.bt-send').click()
+    await tick(0)
+    const fromThePast = posts.filter((p) => p.path === 'api/feedback').at(-1).body.screen
+    expect(fromThePast).toMatchObject({ view: 'replay', moment: NOW * 1000 - 600e3 })
+    expect(fromThePast.day).toBeUndefined() // the live clock says nothing about the moment watched
+    expect($('.facts').textContent).toContain('the past')
+  })
+
+  it('the bottle reads a browser and a system plainly', async () => {
+    const { browserOf, systemOf, factsLine } = await import('../../viewer/feedback.js')
+    const agents = {
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0': ['Edge 142', 'Windows'],
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1': ['Safari 18', 'iOS'],
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0': ['Firefox 144', 'macOS'],
+      'Mozilla/5.0 (Linux; Android 15; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36': ['Samsung Internet 28', 'Android'],
+      'Mozilla/5.0 (X11; CrOS x86_64 16093.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 OPR/120.0.0.0': ['Opera 120', 'ChromeOS'],
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36': ['Chrome 142', 'Linux'],
+      'curl/8.0': ['', ''],
+    }
+    for (const [ua, [browser, system]] of Object.entries(agents)) expect([browserOf(ua), systemOf(ua)]).toEqual([browser, system])
+    expect(factsLine({ size: '375x812', browser: 'Safari 18', system: 'iOS', view: 'replay', camera: 'free' }))
+      .toBe('375×812 · Safari 18 · iOS · the past · free camera')
+    expect(factsLine({})).toBe('')
   })
 })

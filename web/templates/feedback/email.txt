@@ -1,0 +1,13 @@
+{% autoescape off %}A viewer sent the makers a message from the island's screen.
+
+{{ feedback.get_kind_display }} from {{ who }}{% if email %} <{{ email }}>{% endif %}
+
+{{ feedback.text }}
+{% if facts %}
+What their screen showed:
+{% for line in facts %}  {{ line }}
+{% endfor %}{% else %}
+They did not attach what their screen showed.
+{% endif %}
+{% if admin_url %}In the admin: {{ admin_url }}{% endif %}
+{% endautoescape %}

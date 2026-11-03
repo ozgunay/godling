@@ -22,6 +22,16 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
 - **Many viewers, one question a second:** the island's news is fetched about once a second for everyone, and who is watching is counted across the site's workers (`apps/screen/island.py`).
 - **Blocked words**, a list in the admin, refuse notes and usernames that hold them. They are checked on the text as the island will show it: lookalike letters made plain, hidden characters dropped.
 - **Reports reach the note that was shown:** each note's id travels with it through the panel to its pop-up.
+- **Feedback while in beta (the bottle):** a "Feedback" button in the screen's bottom-right corner (on a phone, a bottle
+  icon above the hotbar) opens *Message in a bottle*. In it a viewer tells the makers about a bug, a question or an idea.
+  Godling never reads these.
+  - Sending needs an account. A signed-out viewer's words wait in the browser while they sign in, and the bottle opens
+    again on the way back.
+  - "Attach what my screen shows" sends what the viewer sees listed under it: live or the past (and when), the island's
+    day and hour, the camera, the window's size, and the browser and system by name and major version. It is on by
+    default. The site keeps only those facts, each in the shape the screen sends it (`apps/feedback/views.py`).
+  - At most 2,000 characters, and a few messages an hour per viewer (the site rules).
+  - Each one is kept for staff and emailed, from the worker, to the inbox the site rules name.
 - **Signing up**, as AgentOp has it:
   - username, email and password;
   - the email must be confirmed before signing in;
@@ -35,7 +45,8 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
 
 ## The admin (`/admin/`)
 What someone running the site changes lives in the database, not in settings or code (the user's wish).
-- **Site rules**, one page: welcome credits, test mode (free powers), seconds between a viewer's powers and notes, note length, the reports that hide a note, how old an account must be for its reports to count, and reports per viewer per hour.
+- **Site rules**, one page: welcome credits, test mode (free powers), seconds between a viewer's powers and notes, note length, the reports that hide a note, how old an account must be for its reports to count, reports per viewer per hour, feedback messages per viewer per hour, and the inbox feedback is emailed to (empty: none are emailed).
+- **Viewers' feedback:** every bug, question and idea from the bottle, new first, filtered by kind and status. Each has what the viewer's screen showed (when they attached it), a link to write back to their email, a status (new, being looked at, done; also set many at once) and a note for staff only.
 - **Signing in to the admin** goes through the site's own sign-in, and needs two-factor sign-in set up.
 - **Blocked words:** for notes, usernames or both; switched on and off in the list.
 - **Powers and credit packs:**

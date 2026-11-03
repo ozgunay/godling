@@ -7,8 +7,8 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 |---|---|
 | `mind/` | The layered mind: LLM (L3), attention (L2), body skills (L1), memory arms. Run instructions are in [`mind/README.md`](mind/README.md). |
 | `world/` | Godling's Mesa Island: the world script, the renderer and the models. The changes from upstream are in [`world/README.md`](world/README.md). |
-| `world/viewer/` | The viewers' screen, the Block HUD over the live island: sky powers, notes for Godling, pop-ups of what viewers did, the watcher count. `tools/guest_panel.py` serves it. The three HUD prototypes it was chosen from are in `prototypes/`. |
-| `web/` | The public site: viewer accounts (copied from AgentOp's django-allauth setup), credits with Stripe, note reports and the admin, in front of the viewer screen. See [`web/README.md`](web/README.md), ADR-012 and ADR-013. |
+| `world/viewer/` | The viewers' screen, the Block HUD over the live island: sky powers, notes for Godling, pop-ups of what viewers did, the watcher count, and (behind the site) the beta feedback bottle. `tools/guest_panel.py` serves it. The three HUD prototypes it was chosen from are in `prototypes/`. |
+| `web/` | The public site: viewer accounts (copied from AgentOp's django-allauth setup), credits with Stripe, note reports, viewers' feedback and the admin, in front of the viewer screen. See [`web/README.md`](web/README.md), ADR-012 and ADR-013. |
 | `relay/` | The island's stream relay, in Rust: one connection to the world's spectator stream, the same updates to every viewer, resuming after gaps. See [`relay/README.md`](relay/README.md) and ADR-015. |
 | `deploy/` | Running it all on one server with Docker Compose: Postgres, the site, the island (world, mind, panel, relay) and Caddy for HTTPS, with the island's spectator page public under `/island`. See [`deploy/README.md`](deploy/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |

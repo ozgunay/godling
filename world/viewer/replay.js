@@ -469,6 +469,7 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
   drawControls()
   return {
     get on() { return on },
+    get at() { return at }, // the playhead (UTC ms), for a viewer's bug report from the past
     start,
     stop,
     heard,
