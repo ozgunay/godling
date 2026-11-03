@@ -263,7 +263,7 @@ Taken as recommended: D1 everyone, all the history; D2 the browser plays static 
 | Site tests | 57 of 57 pass, 4 of them new |
 
 ### Left
-- **RP-01, RP-10, RP-11:** the live world's tick time with 100 replay viewers, and frame rate on a real mid-range phone. These are not measured yet. By design the world is not touched (the packer reads a file, and viewers read static files), but there are no numbers.
+- **RP-01, RP-10, RP-11:** measured on 3 November, under "Load and phone" below: every target met, with 100 viewers on the deployment and a phone emulated in Chrome. Still to do: the same on a real mid-range phone (its GPU), and M6's 24-hour soak.
 - **RP-07, old formats after a renderer update:** the format number is checked, and a newer one is refused with a message. Golden chunks kept for each format are not in place yet.
 - **The Clawblox attribute fix** (patches/): replays do not need it.
 - **Real R2:** only the stand-in has been tested. It needs a bucket, keys and a public address in `deploy/.env`.
@@ -329,3 +329,70 @@ Tested again:
 | A shared link opened cold | opened in replay once the island's page could hear it |
 | Playback at 4× | one tracks request in all |
 | Site | 112 tests pass |
+
+## Load and phone (3 November)
+Measured on the deployment itself: this branch's images under Docker Compose on the development PC (32 threads), with Caddy in front, the site on gunicorn (3 × 8 threads), Postgres, Redis, the island (the world, Godling's mind on DeepSeek, the panel and the packer) and the relay. Godling acted as in a real run, in rain, and 15 to 70 minutes of the past were recorded. Only three things differed from `deploy/`:
+- the world's per-tick profile was on (`CLAWBLOX_PROFILE_TICKS=1`), to read its tick times;
+- the relay took up to 1,000 sockets from one address, since all the test viewers came from one;
+- Caddy listened on 127.0.0.1:9443 under two `.localhost` names, beside another session's stack.
+
+How:
+- **The viewers** were a script asking, through Caddy, for what the screen and the island's page ask for:
+  - every viewer, live or in the past: the news every 1.5 s, and the live stream;
+  - in the past, also: the index every 10 s; tracks, marks and sky for the timeline; and the chunks at the playhead and three ahead, with the player's retries;
+  - 100 of them, in four processes, each starting at a random moment of the past. One who caught up with now started again somewhere else, as a new viewer would.
+- **The phone** was Chrome made into a Pixel 7a-class phone:
+  - its screen (412 × 915 at 2.625), touch, an Android user agent, and 4 cores, so the renderer chose the low tier, as it does on most phones;
+  - its CPU slowed 4×;
+  - DevTools' Slow 4G (562 ms, 1.44 Mbit/s) or Fast 4G (165 ms, 8.1 Mbit/s).
+  - Its GPU was the PC's, so its frame rates show the CPU's side only.
+- **Four phases of 5 minutes:** nobody watching; 100 watching live; 100 watching the past at 16×, with the phone seeking at the same time; nobody again.
+
+| Target | Result |
+|---|---|
+| Seek to the first frame on a phone over 4G: p95 ≤ 1.5 s | Met. Slow 4G was narrow at first: 1.37 s (p50 1.32 s), and 1.49 s while the 100 replayed. With the playhead's chunk now asked for first (below): 1.04 s. Fast 4G: 0.40 s |
+| 16× on a mid-range phone at the low tier: no stalls | Met: none in 60 s (15 minutes of the past) on Slow 4G, nor while the 100 replayed. 57 frames a second, as live; no frame over 50 ms in the quiet run. A chunk takes 4 ms to read on the slowed CPU |
+| Data per replay viewer: ≤ 3 KB/s at 1×, ≤ 50 KB/s at 16× | Met: chunks 2.4 KB/s at 1× (24 KB each, in rain) and 39 KB/s at 16×. Tracks, marks, sky and the index add 0.6 KB/s at 16× |
+| How far replay lags live: ≤ 20 s | Met: 2–11 s |
+| The packer's CPU: ≤ 5% of one core | Met: 1.0–1.1%, the same with or without viewers |
+| The live world with 100 replay viewers: tick p95 unchanged (RP-01, RP-10) | Met: 3.69 ms with 100 in the past, 3.69 ms with 100 live, 3.70 and 3.44 ms with nobody, at 62.1 ticks a second throughout. The live stream's updates still came every 33 ms (p95 35 ms), and the tick never went back |
+
+What the server spent (CPU in % of one core, and the data out of Caddy):
+
+| | Nobody | 100 live | 100 in the past at 16× |
+|---|---|---|---|
+| Caddy | 0% | 20% | 26% |
+| The site | 0% | 13% | 16% |
+| The relay | 0.5% | 10% | 11% |
+| The island (world, mind, panel, packer) | 41% | 43% | 44% |
+| Redis and Postgres | 1% | 2% | 2.5% |
+| Data out | 0 | 9.1 MB/s | 13.4 MB/s |
+
+Inside the server, chunks came in 1.3 ms (p95; the slowest 51 ms), the index in 3.5 ms, tracks in 14 ms and the news in 5 ms. There were no errors, no lost chunks, and no viewer was handed the whole island again.
+
+What the numbers say:
+- **Replay itself is cheap.** 100 viewers at 16× add about 10 points of one core to what 100 live viewers cost (Caddy 6, the site 2.5, and the relay, Redis and the panel the rest), and 4.3 MB/s. At 1× the data is a sixteenth of that. The world does not notice either.
+- **The live stream is the cost, for every viewer, and in the past too.** The island's page keeps it open while it plays the past, so that Go live is instant.
+  - It is 83 KB/s a viewer, 31 updates a second, sent as JSON with no compression: 8.8 MB/s for 100 viewers, two thirds of all the data out, and about 300 MB an hour on a phone.
+  - Only pieces that moved are sent, but an update is 2.5 KB. The rotations, each a 3×3 matrix of 8-digit numbers, are 42% of it. Godling's whole record (20 attributes) is 35%: it comes with every update, though it changed in only 7 of 299.
+  - What the usual game-networking tricks make of it, each on top of the last, measured on 600 real updates:
+
+    | | Per viewer |
+    |---|---|
+    | As sent: JSON, 31 updates a second | 86 KB/s |
+    | Compressed (WebSocket's permessage-deflate) | 12 KB/s |
+    | Rotations rounded to 0.001, as replay chunks keep them | 5.4 KB/s |
+    | Godling's record only when it changed | 5.2 KB/s |
+    | 10 updates a second, the renderer filling in between (it interpolates already) | 2.0 KB/s |
+
+  - Compressed, the whole island sent on connecting is 12 KB instead of 294 KB. The relay (ADR-015) does none of this yet.
+- **On a slow line, a seek waited for more than its chunk.** The player asked for the chunk at the playhead and the three after it at once, and the live stream shares the line too. (Chrome's emulation holds the socket back as a real line would: on a 10 KB/s line it got 5.4 KB/s.) So on Slow 4G the chunk needed came after 1.3 s, where alone it would take about 0.7 s.
+  - The player now asks for the playhead's chunk first, and for the three ahead once it is in (`renderer/src/replay.js`, with a test).
+  - Slow 4G seeks, p95: 1.04 s instead of 1.37 s on the quiet PC (a scratch build of the same change).
+  - Measured side by side on the deployment later, with the PC busier: 1.19 s against the old player's 1.70 s, which missed the target. Fast 4G stayed at 0.4–0.5 s, and 16× never stalled in 60 s.
+  - A smaller live stream would give most of the rest of the line back.
+
+Left from these measurements:
+- **The live stream's size, for every viewer (a choice):** made smaller in the relay (ADR-015), with the tricks above. It could also be closed while a viewer watches the past, at the price of Go live waiting for the island again.
+- **A real mid-range phone**, for its GPU: the emulation slowed only the CPU.
+- **M6's 24-hour soak** with packing on.
