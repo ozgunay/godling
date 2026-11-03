@@ -9,9 +9,10 @@ export default defineConfig({
     restoreMocks: true,
     coverage: {
       provider: 'v8',
-      // With allowExternal (the viewer lives beside the renderer), files are matched by their absolute paths.
-      include: ['**/world/renderer/src/**/*.js', '**/world/viewer/*.js', '**/world/viewer/prototypes/*.js'],
-      exclude: ['**/node_modules/**', '**/world/viewer/test/**'],
+      // Paths are relative to this folder (vitest 5 matches a file in it only so); allowExternal lets the viewer, which
+      // lives beside the renderer, in through its "../" paths.
+      include: ['src/**/*.js', '../viewer/*.js', '../viewer/prototypes/*.js'],
+      exclude: ['**/node_modules/**', '../viewer/test/**'],
       allowExternal: true,
       reporter: ['text', 'lcov', 'json-summary'],
       reportsDirectory: 'coverage',
