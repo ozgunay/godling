@@ -15,5 +15,6 @@ USER site
 EXPOSE 8000
 # Threads (gthread): a request waiting on the database, the cache or the panel holds one of 24 threads, not one of
 # 3 processes, so sign-in and Stripe's webhook always find one free (ADR-014). No request waits on the island long:
-# powers go through the worker, the news is shared.
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn godling_web.wsgi --bind 0.0.0.0:8000 --workers 3 --worker-class gthread --threads 8 --timeout 30 --access-logfile - --forwarded-allow-ips '*'"]
+# powers go through the worker, the news is shared. No control socket (gunicorn 26 makes one in a home this user does
+# not have, and nothing here uses it).
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn godling_web.wsgi --bind 0.0.0.0:8000 --workers 3 --worker-class gthread --threads 8 --timeout 30 --access-logfile - --forwarded-allow-ips '*' --no-control-socket"]
