@@ -1,0 +1,260 @@
+// The renderer as Clawblox's runtime drives it: createRenderer(ctx), then onResize, onState and onFrame with the
+// world's observations, and unmount. WebGL is stood in for (gl.js); models come from a fake loader.
+import * as THREE from 'three'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { install2d, renders } from './gl.js'
+import { canvas as makeCanvas, pointer } from './events.js'
+
+vi.mock('three', async () => (await import('./gl.js')).threeWithFakeGL())
+const files = {}
+vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: class {
+    loadAsync(url) {
+      const make = files[url.replace(/\?.*$/, '')]
+      return make ? Promise.resolve(make()) : Promise.reject(new Error(`404 ${url}`))
+    }
+  },
+}))
+const { createRenderer } = await import('../src/index.js')
+
+beforeAll(install2d)
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+function prop() {
+  const scene = new THREE.Group()
+  scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshStandardMaterial()))
+  return { scene, animations: [] }
+}
+function body() {
+  const scene = new THREE.Group()
+  scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 5, 1), new THREE.MeshStandardMaterial()))
+  return { scene, animations: ['Idle', 'Walk'].map((n) => new THREE.AnimationClip(n, 1, [
+    new THREE.NumberKeyframeTrack('.position[x]', [0, 1], [0, 1])])) }
+}
+files['/assets/palm.glb'] = prop
+files['/assets/crater.glb'] = prop
+files['/assets/fish.glb'] = prop
+files['/assets/stone.glb'] = prop
+files['/assets/godling.glb'] = body
+
+function runtime() {
+  const buffer = {
+    latest: null,
+    cleared: 0,
+    push(obs) { this.latest = obs },
+    interpolated() { return this.latest },
+    clear() { this.cleared += 1; this.latest = null },
+  }
+  const cameraModes = { api: { name: 'camera api' }, update: vi.fn(), dispose: vi.fn(), spectator: { state: { attach: null } } }
+  const ctx = {
+    canvas: makeCanvas(),
+    log: vi.fn(),
+    runtime: {
+      state: { createSnapshotBuffer: () => buffer },
+      three: { createCameraModeController: () => cameraModes, trackAssetLoad: (work) => work },
+      internal: { expose: vi.fn(), remove: vi.fn() },
+    },
+  }
+  return { ctx, buffer, cameraModes }
+}
+
+const I = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+const part = (id, role, position, size, extra = {}) => ({
+  id, position, size, render: { role, color: [0.5, 0.6, 0.7], ...(extra.render || {}) }, ...extra,
+  ...(extra.render ? { render: { role, color: [0.5, 0.6, 0.7], ...extra.render } } : {}),
+})
+
+function island(t = 0, more = []) {
+  return {
+    players: [
+      { id: 'p1', name: 'Godling', root_part_id: 100, humanoid_state: 'Running', position: [t, 2.5, 0],
+        attributes: { Thoughts: 1, Thought: 'fire', Feeling: 'happy', Gestures: 0 } },
+      { id: 'p2', name: 'Sky', position: [0, 0, 0] },
+      { id: 'p3', name: 'Ghost', root_part_id: 'x' },
+    ],
+    entities: [
+      part(1, 'Ocean', [0, -1, 0], [2000, 1, 2000]),
+      part(2, 'Ground', [0, -0.5, 0], [100, 1, 100], { attributes: { Surface: 'Sand' } }),
+      part(3, 'Ground', [0, 0, 0], [60, 1, 60]),
+      part(4, 'Wreck', [10, 1, 10], [6, 2, 4]),
+      part(5, 'Mesa', [-20, 5, 0], [10, 10, 10]),
+      part(6, 'Mesa', [-40, 6, 0], [10, 12, 10], { attributes: { Surface: 'Rock' } }),
+      part(7, 'Rock', [3, 1, 3], [1, 1, 1]),
+      part(8, 'Plank', [4, 1, 3], [3, 0.3, 1]),
+      part(9, 'Ring', [5, 1, 3], [3, 0.5, 3]),
+      part(10, 'SkyShadow', [6, 0.05, 3], [4, 0.1, 4]),
+      part(11, 'Blast', [6, 0.5, 3], [1, 1, 1], { attributes: { SkyId: 4, Radius: 7 }, render: { visible: false } }),
+      part(12, 'Crater', [6, 0.3, 3], [14, 0.6, 14], { attributes: { SkyId: 4 } }),
+      part(13, 'SkyNote', [7, 6, 3], [1, 0.2, 1]),
+      part(14, 'PickupObject', [8, 1.25, 3], [2.5, 2.5, 2.5], { rotation: I }),
+      part(15, 'Fire', [9, 1.5, 3], [2, 3, 2]),
+      part(16, 'Fish', [30, -0.6, 30], [1.3, 0.4, 0.5], { rotation: I }),
+      part(17, 'SandMark', [2, 0, -3], [4, 0.2, 0.4]),
+      part(18, 'Coconut', [2, 0.4, -4], [0.8, 0.8, 0.8]),
+      part(19, 'Volleyball', [2, 0.5, -5], [1, 1, 1]),
+      part(20, 'Catch', [2, 0.3, -6], [1.3, 0.4, 0.5], { attributes: { Cooked: true } }),
+      part(21, 'Catch', [2, 0.3, -7], [1.3, 0.4, 0.5]),
+      part(22, 'Tool', [2, 0.3, -8], [0.3, 0.3, 4], { attributes: { ToolKind: 'Spear' } }),
+      part(23, 'Thing', [2, 1, -9], [1, 1, 1], { render: { primitive: 'cylinder' } }),
+      part(24, 'Thing', [2, 1, -10], [1, 1, 1], { render: { primitive: 'ball' } }),
+      part(25, 'Thing', [2, 1, -11], [1, 1, 1], { render: { primitive: 'wedge' } }),
+      part(26, 'Hidden', [2, 1, -12], [1, 1, 1], { render: { transparency: 1 } }),
+      part(27, 'Palm', [12, 5, -12], [2, 10, 2], { model_url: '/assets/palm.glb' }),
+      part(28, 'Crater', [-12, 0.3, -12], [10, 0.6, 10], { attributes: { ModelUrl: 'asset://crater.glb' } }),
+      part(29, 'Fish', [32, -0.6, 32], [1.3, 0.4, 0.5], { model_url: '/assets/fish.glb' }),
+      part(30, 'Lost', [0, 1, 20], [1, 1, 1], { model_url: '/assets/missing.glb' }),
+      part(100, 'Body', [t, 2.5, 0], [2, 5, 2], { model_url: '/assets/godling.glb', model_yaw_offset_deg: 180, rotation: I }),
+      { id: 31, position: [0, 1, 25], size: [1, 1, 1], render: { role: 'NoColour' } }, // a part without its colour
+      { id: 32, name: 'Clock', position: [0, -50, 0], size: [1, 1, 1], render: { role: 'Clock', visible: false },
+        attributes: { TimeOfDay: 21.5, Rain: 0.6, WindX: 0.5, WindZ: 0, Fog: 0.7, Quake: 0.5, QuakePhase: 'shaking' } },
+      ...more,
+    ],
+    terrain: { revision: 1, voxel_size: 4, materials: ['Grass'], voxels: [0, -1, 0, 0, 255, 0] },
+  }
+}
+
+describe('the renderer', () => {
+  beforeEach(() => {
+    renders.count = 0
+    delete globalThis.__mesaCaptureConfig
+    history.replaceState(null, '', '/')
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete globalThis.__mesaCaptureConfig
+  })
+
+  it('draws the whole island on the high tier, then follows it as it changes', async () => {
+    globalThis.__mesaCaptureConfig = { quality: 'high', debugColliders: true, interpolationDelayMs: 50,
+      followPositionSmoothing: 5, followRotationSmoothing: 7 }
+    history.replaceState(null, '', '/?stats=1&dayMinutes=20')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { ctx, buffer, cameraModes } = runtime()
+    const r = createRenderer(ctx)
+    expect(ctx.log).toHaveBeenCalledWith('info', 'Renderer quality', expect.objectContaining({ tier: 'high' }))
+    expect(ctx.runtime.internal.expose).toHaveBeenCalledWith('camera', cameraModes.api)
+    r.onResize({ width: 800, height: 600, dpr: 2 })
+    r.onResize({ width: 400, height: 300 })
+    r.onFrame({ dt: 0.016 }) // nothing seen yet: nothing to draw
+    expect(renders.count).toBe(0)
+    r.onState(island(0))
+    await flush() // the models arrive
+    for (let t = 1; t <= 12; t++) r.onState(island(t * 0.3))
+    for (let k = 0; k < 40; k++) r.onFrame({ dt: 0.02 })
+    expect(renders.count).toBeGreaterThan(40)
+    expect(warn).toHaveBeenCalled() // the part without its colour is drawn magenta, and said so
+    const debug = globalThis.__godlingRenderer
+    expect(debug.tier.name).toBe('high')
+    expect(debug.info().modelsArrived).toBe(3) // the palm, the fish and Godling; asset://crater.glb is not served here
+    expect(debug.info().instances).toBeGreaterThan(20)
+    expect(debug.animations()).toHaveLength(1)
+    expect(debug.quake().phase).toBe('shaking')
+    expect(debug.blasts().blasts).toBe(1)
+    expect(debug.bubbles().assetBase).toBe('/assets/')
+    debug.bubbleSheet()
+    expect(cameraModes.update).not.toHaveBeenCalled() // nobody chosen to follow: the free camera flies
+    // pieces move, change colour and leave; a player is chosen to follow; the camera rides in Godling's head
+    const changed = island(5, [part(40, 'Ring', [9, 1, 9], [3, 0.5, 3])])
+    changed.entities = changed.entities.filter((e) => e.id !== 7)
+    changed.entities.find((e) => e.id === 14).render.color = [1, 0, 0]
+    changed.entities.find((e) => e.id === 14).rotation = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+    changed.entities.find((e) => e.id === 25).render.primitive = 'cylinder'
+    changed.selected_player_id = 'p1'
+    cameraModes.spectator.state.attach = { playerId: 'p1' }
+    r.onState(changed)
+    expect(cameraModes.update).toHaveBeenCalledWith(expect.objectContaining({ mode: 'follow' }))
+    const gone = { players: [], entities: [] }
+    r.onState(gone)
+    r.onState({}) // nothing at all: the camera looks at where it looked
+    r.unmount()
+    expect(ctx.runtime.internal.remove).toHaveBeenCalledWith('camera')
+    expect(cameraModes.dispose).toHaveBeenCalled()
+    expect(globalThis.__godlingRenderer).toBeUndefined()
+    expect(buffer.cleared).toBe(0)
+  })
+
+  it('takes the capture\'s frames as it times them, on the low tier', () => {
+    globalThis.__mesaCaptureConfig = { quality: 'low' }
+    history.replaceState(null, '', '/?time=17.5&rain=0.8&fog=0.4&quake=0.6&wind=1')
+    const { ctx, buffer } = runtime()
+    const r = createRenderer(ctx)
+    const obs = island(0)
+    r.onState({ ...obs, __mesaCaptureMeta: { resetBuffer: true, pushNowMs: 1000, renderNowMs: 1100, dt: 0.05 } })
+    expect(buffer.cleared).toBe(1)
+    r.onState({ ...obs, __mesaCaptureMeta: { push: false, dt: -1 } })
+    r.onState({ ...obs, __mesaCaptureMeta: {} })
+    buffer.latest = null
+    r.onFrame({ dt: 1 }) // the buffer had nothing: the last observation
+    expect(globalThis.__godlingRenderer.tier.name).toBe('low')
+    expect(renders.count).toBe(4)
+    r.unmount()
+  })
+
+  it('inside the viewer screen, follows Godling and does what the screen asks', () => {
+    history.replaceState(null, '', '/?embed=1&debugCollider=yes')
+    const screen = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', screen)
+    const { ctx, cameraModes } = runtime()
+    const r = createRenderer(ctx)
+    expect(document.head.querySelector('style').textContent).toContain('visibility: hidden')
+    r.onState(island(0))
+    expect(cameraModes.update).toHaveBeenCalledWith(expect.objectContaining({ mode: 'follow' }))
+    const say = (data, source = screen) => {
+      const event = new MessageEvent('message', { data })
+      Object.defineProperty(event, 'source', { value: source })
+      dispatchEvent(event)
+    }
+    say({ source: 'godling-viewer', type: 'godling-camera', mode: 'free' })
+    say({ source: 'godling-viewer', type: 'godling-key', code: 'KeyW', down: true })
+    cameraModes.update.mockClear()
+    r.onState(island(1))
+    expect(cameraModes.update).not.toHaveBeenCalled() // flying free now
+    say({ source: 'godling-viewer', type: 'godling-key', code: 'KeyW', down: false })
+    say({ source: 'godling-viewer', type: 'godling-camera', mode: 'follow' })
+    say({ source: 'someone-else', type: 'godling-camera', mode: 'free' })
+    say({ source: 'godling-viewer', type: 'godling-camera', mode: 'free' }, window) // not from the screen: ignored
+    r.onState(island(2))
+    expect(cameraModes.update).toHaveBeenCalled()
+    say({ source: 'godling-viewer', type: 'godling-aim', power: 'Meteor' })
+    ctx.canvas.dispatchEvent(pointer('pointermove', { x: 50, y: 50 }))
+    ctx.canvas.dispatchEvent(pointer('pointerdown', { x: 50, y: 50 }))
+    ctx.canvas.dispatchEvent(pointer('pointerup', { x: 50, y: 50 }))
+    dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    say({ source: 'godling-viewer', type: 'godling-aim', power: 'Stone' })
+    say({ source: 'godling-viewer', type: 'godling-aim' })
+    say({ source: 'godling-viewer', type: 'other' })
+    expect(screen.postMessage.mock.calls.every(([msg]) => msg.source === 'godling-renderer')).toBe(true)
+    r.unmount()
+  })
+
+  it('draws a marker it can see, a body that is not turned, and a part\'s own collider shape', async () => {
+    history.replaceState(null, '', '/?debugColliders=on')
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const obs = {
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0] }],
+      entities: [part(1, 'Body', [0, 2.5, 0], [2, 5, 2], { model_url: '/assets/godling.glb' }),
+        part(2, 'Blast', [5, 0.5, 0], [1, 1, 1], { attributes: { SkyId: 9 } }),
+        part(3, 'PickupObject', [9, 1, 0], [1, 1, 1], { shape: 'Ball' }),
+        part(4, 'PickupObject', [9, 1, 3], [1, 1, 1], { render: { primitive: 'sphere' } }),
+        part(5, 'Ring', [9, 1, 6], null)],
+    }
+    r.onState(obs)
+    await flush()
+    r.onState(obs)
+    r.onState(obs)
+    expect(globalThis.__godlingRenderer.animations()).toHaveLength(1)
+    r.unmount()
+  })
+
+  it('works without the runtime\'s extras', () => {
+    const { ctx } = runtime()
+    ctx.runtime.internal = undefined
+    ctx.runtime.three.createCameraModeController = () => ({ update: () => {}, spectator: null })
+    vi.stubGlobal('devicePixelRatio', undefined)
+    const r = createRenderer(ctx)
+    r.onResize({ width: 10, height: 0, dpr: NaN })
+    r.onState({ entities: [part(1, 'PickupObject', [0, 1, 0], [1, 1, 1])] })
+    r.unmount()
+  })
+})

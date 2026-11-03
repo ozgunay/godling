@@ -1391,6 +1391,9 @@ local function armRockImpact(rockPart)
         end
 
         state.lastImpactAt = now
+        if ROCK_MAX_IMPACT_CUBES < 1 then -- none at block scale (and math.clamp refuses a top below its bottom)
+            return
+        end
         local cubeCount = math.clamp(
             math.floor(impactEnergy / ROCK_ENERGY_PER_CUBE),
             1,
@@ -2951,8 +2954,12 @@ local function climb(player, inputData)
     for _, reach in ipairs({ 1.5, 2.2 }) do -- clear of the ladder for a 2-wide body; a little further if that is taken
         for _, sign in ipairs({ 1, -1 }) do
             local spot = Vector3.new(lp.X, 0, lp.Z) + face * (sign * reach)
-            local found = up and surfaceTopAt(spot.X, spot.Z, bottom + 0.9, top + 0.5, ladder)
-                or surfaceTopAt(spot.X, spot.Z, bottom - 1.2, bottom + 0.6, ladder)
+            local found -- (not `up and a or b`: with nothing at the top, that found the floor at its foot)
+            if up then
+                found = surfaceTopAt(spot.X, spot.Z, bottom + 0.9, top + 0.5, ladder)
+            else
+                found = surfaceTopAt(spot.X, spot.Z, bottom - 1.2, bottom + 0.6, ladder)
+            end
             if found and (bestTop == nil or (up and found > bestTop) or (not up and found < bestTop))
                 and bodyFits(player, spot, found, ladder) then
                 best, bestTop = spot, found

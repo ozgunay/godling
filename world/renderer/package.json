@@ -3,13 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "three": "0.187.0"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "@vitest/coverage-v8": "3.2.4",
+    "esbuild": "0.28.2",
+    "jsdom": "26.1.0",
+    "vitest": "3.2.4"
   },
   "clawbloxRenderer": {
     "apiVersion": 1,
