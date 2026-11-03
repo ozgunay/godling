@@ -17,6 +17,7 @@ import math
 import time
 from pathlib import Path
 
+from .files import write_atomic
 from .world import BODY_CENTRE_Y, BoxIndex, hdist
 
 SIGHT = 35.0  # how far Godling sees the ground and what lies on it
@@ -114,6 +115,6 @@ class Discovery:
     def save(self):
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"cells": sorted(self.cells), "names": sorted(self.names),
-                                             "seen": {n: list(p) for n, p in sorted(self.seen.items())}}))
+            write_atomic(self.path, json.dumps({"cells": sorted(self.cells), "names": sorted(self.names),
+                                                "seen": {n: list(p) for n, p in sorted(self.seen.items())}}))
         self._unsaved = 0

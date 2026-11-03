@@ -14,6 +14,7 @@ import json
 import time
 from pathlib import Path
 
+from .files import write_atomic
 from .skills import PRIMITIVES, Result
 from .world import PIECE_KINDS
 
@@ -33,7 +34,7 @@ class SkillLibrary:
         self.skills = json.loads(self.path.read_text()) if self.path.exists() else {}
 
     def save(self):
-        self.path.write_text(json.dumps(self.skills, indent=2))
+        write_atomic(self.path, json.dumps(self.skills, indent=2))
 
     # ---- teaching ---------------------------------------------------------------------
     def define(self, spec, tick=0):

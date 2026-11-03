@@ -109,3 +109,38 @@ groups:
         annotations:
           summary: "The server's CPU is {{ $value | humanizePercentage }} busy."
           description: The world's simulation shares it. Godling's own pace suffers first.
+
+  # What the backup service does (deploy/backup.sh, through node-exporter's textfile collector; ADR-018). The service
+  # writes when each job counts as late (from its intervals), and a heartbeat every minute: the file it writes stays
+  # in its volume after it stops, so only the heartbeat's age tells that it stopped.
+  - name: backups
+    rules:
+      - alert: BackupServiceDown
+        expr: absent(godling_backup_heartbeat_timestamp_seconds) or time() - godling_backup_heartbeat_timestamp_seconds > 600
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: The backup service has not been heard from for over 10 minutes.
+          description: It is stopped, failing to start, or node-exporter cannot read what it writes. Look at docker compose ps backup node-exporter, and docker compose logs backup.
+
+      - alert: DatabaseBackupLate
+        expr: time() - godling_backup_late_after_timestamp_seconds{what="db"} > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "The database backup is {{ $value | humanizeDuration }} past due."
+          description: No database backup has finished well for three of its intervals. docker compose logs backup says why (the bucket, its keys, a lock, the database); docker compose exec backup backup db tries one now.
+
+      - alert: BackupLate
+        expr: time() - godling_backup_late_after_timestamp_seconds{what!="db"} > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "The backups' {{ $labels.what }} job is {{ $value | humanizeDuration }} past due."
+          description: "It has not finished well for three of its intervals (the weekly check: a day past its week). docker compose exec backup backup {{ $labels.what }} runs it now and says why."
+
+      - alert: BackupsOnThisServer
+        expr: godling_backup_offsite == 0
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: The backups are kept on this server only.
+          description: A copy on the same disk does not survive losing the server. Set GODLING_BACKUP_REPOSITORY to a bucket (deploy/README.md, Backups).
