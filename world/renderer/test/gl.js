@@ -54,6 +54,7 @@ export async function threeWithFakeGL() {
     setClearColor() {}
     render(scene, camera) {
       renders.count += 1
+      renders.camera = camera
       this.last = { scene, camera }
     }
 
