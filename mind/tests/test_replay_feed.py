@@ -34,8 +34,9 @@ def test_the_world_never_crowds_godling_out():
     entries = [{"time": 1, "kind": "decision", "thought": "Hm.", "needs": ""}]
     entries += [{"time": 2 + i, "kind": "event", "text": f"Coconut_{i} appeared"} for i in range(20)]
     feed = replay.reduce_status(entries)["feed"]
-    assert len(feed) == 1 + replay.WORLD_KEPT and feed[0]["text"] == "Hm."
+    assert len(feed) == 1 + replay.FEED_KEPT // 2 and feed[0]["text"] == "Hm."
     assert feed[-1]["text"] == "Coconut_19 appeared"  # the newest of the world's lines
+    assert len(replay.reduce_status(entries, feed_kept=5)["feed"]) == 1 + 2  # half of a shorter feed, as reduceStatus
 
 
 def test_a_thought_is_not_said_again_after_a_line_of_its_own():
@@ -121,6 +122,35 @@ def test_a_replay_starts_where_the_screen_was(tmp_path):
     lead = lambda at: replay.read_tracks(run, at * 1000, at * 1000 + 60_000)["lead"]  # noqa: E731
     assert replay.reduce_status(lead(T + 1955))["now"] == {"time": T + 1950, "thinking": True}
     assert replay.reduce_status(lead(T + 2041))["now"] == {"time": T + 2040, "text": "p15.2", "step": 3, "of": 3}
+
+
+def test_lines_that_never_show_do_not_count_as_lines():
+    assert replay._makes_line({"kind": "decision", "thought": "Go."})
+    assert not replay._makes_line({"kind": "decision", "thought": ""})  # an agenda with no thought: no line
+    assert not replay._makes_line({"kind": "learn", "does": "hops"})
+    assert replay._makes_line({"kind": "sleep", "dream": "ships"}) and not replay._makes_line({"kind": "sleep"})
+    assert replay._makes_line({"kind": "project", "phase": "end", "ok": False})
+    assert not replay._makes_line({"kind": "project", "phase": "end", "ok": True})
+
+
+def test_a_quiet_island_does_not_send_the_lead_back_two_days(tmp_path, monkeypatch):
+    """The lead stops once it has Godling's lines: the world's older than those are never kept, however few it has."""
+    run = tmp_path / "run"
+    (run / "mind").mkdir(parents=True)
+    lines = [log_line(T - 30 * 3600, "event", text="A wave rolled in")]  # the island's only event, a day ago
+    lines += [log_line(T + 60 * n, "decision", thought=f"Plan {n}.", needs="") for n in range(30)]
+    lines += [log_line(T + 1750, "project", phase="start", goal="", intention="Rest"),
+              log_line(T + 1760, "bubble", ok=True, thing="sea", feeling="calm")]
+    (run / "mind/log.jsonl").write_text("".join(lines))
+    replay.Packer(run, store=replay.LocalStore())._tracks()
+    read = []
+    original = replay._read_lines
+    monkeypatch.setattr(replay, "_read_lines", lambda path: read.append(path.name) or original(path))
+    at = (T + 1800) * 1000
+    lead = replay.read_tracks(run, at, at + 60_000)["lead"]
+    assert len(lead) == 2 + 2 * replay.FEED_KEPT and lead[-3]["thought"] == "Plan 29."
+    assert all(e["kind"] != "event" for e in lead)
+    assert len(read) <= 3  # the span's hour, and the lead's hour or two, never two days of hours
 
 
 def test_a_mind_long_silent_does_not_make_all_of_its_silence_the_lead(tmp_path, monkeypatch):

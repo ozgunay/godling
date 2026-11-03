@@ -3,7 +3,7 @@
 // Godling's mind as it was shown live.
 import { describe, expect, it } from 'vitest'
 import CASE from '../../../mind/tests/feed.json'
-import { reduceStatus } from '../../viewer/replay.js'
+import { keepLines, lastOf, reduceStatus } from '../../viewer/replay.js'
 
 describe('the mind on the screen', () => {
   it('reads the log as the guest panel does', () => {
@@ -21,6 +21,16 @@ describe('the mind on the screen', () => {
     const { feed } = reduceStatus(entries)
     expect(feed).toHaveLength(5)
     expect(feed[0].text).toBe('Hm.')
-    expect(feed.at(-1).text).toBe('Coconut_19 appeared')
+    expect(feed[feed.length - 1].text).toBe('Coconut_19 appeared')
+    expect(reduceStatus(entries, 5).feed).toHaveLength(1 + 2) // half of a shorter feed, rounded down, as reduce_status
+  })
+
+  it('keeps the screen\'s fewer lines by the same rule', () => {
+    const line = (who, text, about) => ({ who, text, about })
+    const feed = [line('godling', 'Old plan.'), line('godling', 'A', 'failed'), line('notice', 'n1'), line('godling', 'B', 'failed'),
+      line('notice', 'n2'), line('sky', 's3')]
+    expect(keepLines(feed, 3, 1).map((l) => l.text)).toEqual(['Old plan.', 'B', 's3'])
+    expect(lastOf(feed, (l) => l.who === 'notice').text).toBe('n2')
+    expect(lastOf([], () => true)).toBeUndefined()
   })
 })

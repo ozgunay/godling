@@ -119,13 +119,32 @@ def moderate(status):
             kept.append({**p, "noteId": note.pk} if note else p)
         status["popups"] = kept
     mind = status.get("mind")
-    if hidden and isinstance(mind, dict) and mind.get("feed"):
-        mind["feed"] = [f if not any(h in (f.get("text") or "") for h in hidden)
-                        else {**f, "text": "A note drifted down; moderators have hidden it."} for f in mind["feed"]]
-    now = mind.get("now") if isinstance(mind, dict) else None
-    if hidden and isinstance(now, dict) and any(h in (now.get("text") or "") for h in hidden):
-        mind["now"] = {**now, "text": "…"}  # what Godling is doing, in its own words: held back as its lines are
+    if hidden and isinstance(mind, dict):
+        moderate_mind(mind, lambda words: isinstance(words, str) and any(h in words for h in hidden))
     return status
+
+
+def moderate_mind(mind, quotes):
+    """What the screen shows of Godling's mind, with every line that `quotes` a hidden note held back, as a replay holds
+    it back (moderate_past): a notice says a note was hidden; Godling's own words, what it needs and does now become
+    "…"."""
+    for key in ("thought", "needs", "intention"):
+        if quotes(mind.get(key)):
+            mind[key] = "…"
+    now = mind.get("now")
+    if isinstance(now, dict) and quotes(now.get("text")):
+        mind["now"] = {**now, "text": "…"}
+    feed = []
+    for f in mind.get("feed") or []:
+        if not isinstance(f, dict):
+            continue
+        if quotes(f.get("text")):
+            f = {**f, "text": "…" if f.get("who") == "godling" else HIDDEN_NOTE}
+        if quotes(f.get("name")):
+            f = {**f, "name": "…"}
+        feed.append(f)
+    if "feed" in mind:
+        mind["feed"] = feed
 
 
 def public_status():

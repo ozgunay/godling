@@ -58,7 +58,6 @@ FRAME_MS = 1000 // RATE
 SKY_EVERY_MS = 60_000
 MARK_APART = 20_000  # markers of one kind with no event of their own to tell them apart, closer than this, are one
 FEED_KEPT = 8  # lines of Godling's feed the screen gets, live (the guest panel) and in replay
-WORLD_KEPT = FEED_KEPT // 2  # of them the world's at most (notices, the sky's doings), so Godling's own lines stay
 LEAD_HOURS = 48  # how far back to look for what the screen showed when a replay starts
 LEAD_MOST = 300  # entries of the lead since the last decision at most (a mind that has not decided for hours)
 KEEP_RAW_DAYS = _env_float("GODLING_REPLAY_RAW_DAYS", 3)  # ADR-016 D4: raw recordings, for debugging
@@ -947,8 +946,8 @@ def read_tracks(run, t_from, t_to):
     entries = [dict(e) for h in _hours(t_from, t_to) for e in _read_lines(_track_file(root, h))
                if t_from <= e.get("time", 0) * 1000 <= t_to]  # copies: the lines read are kept for the next call
     lead, want, recent = [], {"decision", "bubble", "project"}, True
-    # Twice the feed's length of Godling's lines (the reading skips a thought said twice in a row), and the feed's
-    # length of the world's, of which it keeps half.
+    # Twice the feed's length of Godling's lines (the reading skips a thought said twice in a row), and the world's lines
+    # among them, up to the feed's length (it keeps half): a line of the world's older than all those is never kept.
     mind, world = 0, 0
     for h in list(_hours(t_from - LEAD_HOURS * 3_600_000, t_from))[::-1]:
         for e in reversed(_read_lines(_track_file(root, h))):
@@ -968,7 +967,7 @@ def read_tracks(run, t_from, t_to):
                     want.discard(kind)
             if kind == "decision" or len(lead) >= LEAD_MOST:
                 recent = False
-        if not want and not recent and mind >= 2 * FEED_KEPT and world >= FEED_KEPT:
+        if not want and not recent and mind >= 2 * FEED_KEPT:
             break
     lead.reverse()
     return {"format": FORMAT, "from": t_from, "to": t_to, "lead": lead, "entries": entries,
@@ -1023,20 +1022,23 @@ def agenda_of(decision):
 
 
 def _makes_line(e):
-    """Whether this entry adds one of Godling's own lines to the feed (reduce_status)."""
+    """Whether this entry adds one of Godling's own lines to the feed, as reduce_status reads it."""
     kind = e.get("kind")
-    return kind in ("decision", "learn") or kind == "sleep" and bool(e.get("dream")) or \
-        kind == "project" and e.get("phase") == "end" and e.get("ok") is False
+    return bool(kind == "decision" and e.get("thought") or kind == "learn" and e.get("name")
+                or kind == "sleep" and e.get("dream")
+                or kind == "project" and e.get("phase") == "end" and e.get("ok") is False)
 
 
-def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=WORLD_KEPT):
+def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=None):
     """What the screen shows of Godling's mind after these log entries, in order: the guest panel's reading of the log
     (mind_status). The viewers' screen reads replay's tracks the same way (reduceStatus, world/viewer/replay.js).
 
     `now` is what Godling is doing at this moment, with the time it began: a project ({"text": its intention, "step",
     "of": where it is in the agenda}), or {"thinking": True} while the body stands until its mind has thought; None
     between them. The feed holds its thoughts, what it could not finish, what it learned and dreamt (`about` says
-    which), and what it noticed; at most `world_kept` of its lines are the world's, so they never crowd Godling out."""
+    which), and what it noticed; at most `world_kept` of its lines (half, unless said) are the world's, so they never
+    crowd Godling out."""
+    world_kept = feed_kept // 2 if world_kept is None else world_kept
     out = {"thought": "", "needs": "", "intention": "", "now": None}
     feed, agenda, step, said = [], 0, 0, None  # said: the last thought in the feed, which is not said again
 

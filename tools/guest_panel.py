@@ -378,7 +378,9 @@ class Island:
     def status(self, client):
         c = self.clock or {}
         clock = {"hour": c.get("TimeOfDay"), "day": c.get("Day"), "rain": c.get("Rain") or 0, "fog": c.get("Fog") or 0,
-                 "wind": math.hypot(c.get("WindX") or 0, c.get("WindZ") or 0), "quake": c.get("QuakePhase") or ""}
+                 "wind": math.hypot(c.get("WindX") or 0, c.get("WindZ") or 0), "quake": c.get("QuakePhase") or "",
+                 # when the Clock was read: the screen dates its lines from it, right even while the world is away
+                 "at": self.clock_at or None}
         godling = None
         if c.get("GodlingHealth") is not None:
             godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,

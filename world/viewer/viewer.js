@@ -3,7 +3,7 @@
 // site (web/, ADR-012) does, in front of the panel: then powers and notes need a signed-in account, and the status
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
-import { createReplayUI } from './replay.js'
+import { createReplayUI, isThought, keepLines, lastOf } from './replay.js'
 import { browserOf, createFeedback, systemOf } from './feedback.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
@@ -217,18 +217,19 @@ const ABOUT = {
   learned: ['idea', (f) => `Learned “${String(f.name).replace(/_/g, ' ')}”${f.words ? `: ${f.words.replace(/\$(\w+)/g, 'the $1')}` : ''}`],
   dream: ['moon', (f) => `Dreamt: ${f.words}`],
 }
-// A line longer than this many characters may be cut by its clamp (two lines of about 50 characters; unfolded, the
-// newest thought three), so it carries a chevron and opens in full on a click or a tap.
-const OPENS_FROM = { line: 70, latest: 110 }
+// A Godling line longer than this may be cut by its clamp however wide the feed is (about 17 characters a line in the
+// narrowest window), so it is a button that opens it in full; it shows its chevron once it is cut (measureCuts).
+const OPENS_FROM = 24
+const lineId = (f) => `${f.time}|${f.words.slice(0, 80)}`
 
-// `fresh`: the lines shown folded only because they are new, each with its age in seconds: they fade out by FRESH.
-function drawFeed(lines, times, phone, fresh = new Map()) {
-  const key = JSON.stringify([lines.map((f, i) => [times[i], f.who, f.about, f.name, f.words, fresh.has(f)]), opened,
-    phone, folded])
+// `latest`: the newest thought, shown at more length. `fresh`: the lines shown folded only because they are new, each
+// with its age in seconds: they fade out by FRESH.
+function drawFeed(lines, times, latest, fresh) {
+  const key = JSON.stringify([lines.map((f, i) => [times[i], f.who, f.about, f.name, f.words, fresh.has(f), f === latest]),
+    opened, folded])
   if (key === feedDrawn) return
   feedDrawn = key
   const focused = feed.contains(document.activeElement) ? document.activeElement.dataset.key : null
-  const latest = lines.findLast((f) => f.who === 'godling' && !f.about) // the newest thought, shown at more length
   feed.replaceChildren(...lines.map((f, i) => {
     const li = el('li', `line ${f.who}${f.about ? ` ${f.about}` : ''}${f === latest ? ' latest' : ''}`)
     li.style.setProperty('--age', lines.length - 1 - i)
@@ -247,12 +248,11 @@ function drawFeed(lines, times, phone, fresh = new Map()) {
       return li
     }
     const words = say ? say(f) : `“${f.words}”` // whole: the clamp cuts what does not fit, at a word
-    const most = f !== latest || folded ? OPENS_FROM.line : OPENS_FROM.latest
-    if (words.length <= most) {
+    if (words.length <= OPENS_FROM) {
       li.append(text('span', 'text', words))
       return li
     }
-    const id = `${f.time}|${f.words.slice(0, 80)}`
+    const id = lineId(f)
     const open = el('button', 'open')
     open.type = 'button'
     open.dataset.key = id
@@ -261,15 +261,25 @@ function drawFeed(lines, times, phone, fresh = new Map()) {
     open.insertAdjacentHTML('beforeend', icon(opened === id ? 'less' : 'more', 2))
     open.addEventListener('click', () => {
       opened = opened === id ? '' : id
-      drawFeed(lines, times, phone, fresh)
+      if (mindShown) drawMind(...mindShown) // folded, an opened line stays while it is read
     })
     li.classList.toggle('opened', opened === id)
     li.append(open)
     return li
   }))
   if (!lines.length) feed.append(el('li', 'line notice waiting', `<time></time>${icon('godling', 2)}<span class="text">Godling is waking up…</span>`))
+  measureCuts()
   if (focused) [...feed.querySelectorAll('.open')].find((b) => b.dataset.key === focused)?.focus()
 }
+
+// The lines the clamp cuts at the feed's width now, and the one opened, show the chevron that opens or closes them.
+function measureCuts() {
+  for (const open of feed.querySelectorAll('.open')) {
+    const words = open.querySelector('.text')
+    open.classList.toggle('cut', open.getAttribute('aria-expanded') === 'true' || words.scrollHeight > words.clientHeight + 1)
+  }
+}
+addEventListener('resize', measureCuts)
 
 // What the bubble's picture stands for (mind/godling/bubble.py THINGS): what Godling has in mind while it thinks.
 const THINKING_ABOUT = {
@@ -297,35 +307,32 @@ function drawNow(now, bubble, at) {
   if (aside) doing.append(text('span', 'aside', aside))
 }
 
-function drawMind(m, hour, now) {
-  mindShown = [m, hour, now]
+// `hour` is the island's hour as the world's clock read it at `hourAt` (the panel's clock.at; in a replay, the playhead),
+// and `now` the time of this status.
+function drawMind(m, hour, now, hourAt) {
+  mindShown = [m, hour, now, hourAt]
   const phone = PHONE()
+  const read = Number.isFinite(hourAt) ? hourAt : now
   const all = (m?.feed || []).map((f) => ({ ...f, words: plain(f.text, f.who) }))
     .filter((f) => f.words || f.about === 'learned' && f.name)
-  const full = [] // the lines shown unfolded
-  const most = phone ? 3 : FEED_SHOWN
-  let world = 0
-  for (let i = all.length - 1; i >= 0 && full.length < most; i--) {
-    if (all[i].who !== 'godling' && world++ >= (phone ? 1 : WORLD_SHOWN)) continue
-    full.unshift(all[i])
-  }
-  const latest = all.findLast((f) => f.who === 'godling' && !f.about)
-  if (latest && !full.includes(latest)) { // the newest thought always shows, however much came of the plan since
-    if (full.length >= most) full.shift()
-    full.unshift(latest)
-  }
+  const full = keepLines(all, phone ? 3 : FEED_SHOWN, phone ? 1 : WORLD_SHOWN) // the lines shown unfolded
+  const latest = lastOf(full, isThought)
   const ids = full.map((f) => `${f.time}|${f.who}|${f.text}`)
   const times = full.map((f, i) => {
-    if (!stamps.has(ids[i]) && Number.isFinite(hour) && f.time) stamps.set(ids[i], clockText(hour - ((now - f.time) * 24) / DAY_SECONDS))
+    if (!stamps.has(ids[i]) && Number.isFinite(hour) && f.time) stamps.set(ids[i], clockText(hour - ((read - f.time) * 24) / DAY_SECONDS))
     return stamps.get(ids[i]) || ''
   })
   for (const id of stamps.keys()) if (!ids.includes(id)) stamps.delete(id)
   const fresh = new Map()
-  if (folded) {
-    for (const f of full.filter((l) => l !== latest && now - l.time < FRESH).slice(phone ? -1 : -2)) fresh.set(f, now - f.time)
+  let shown = full
+  if (folded) { // the newest thought (with none, the newest line), a line opened to be read, and new lines a while
+    const head = latest || full[full.length - 1]
+    for (const f of full.filter((l) => l !== head && lineId(l) !== opened && now - l.time < FRESH).slice(phone ? -1 : -2)) {
+      fresh.set(f, now - f.time)
+    }
+    shown = full.filter((f) => f === head || fresh.has(f) || lineId(f) === opened)
   }
-  const shown = folded ? full.filter((f) => f === latest || fresh.has(f)) : full
-  drawFeed(shown, shown.map((f) => times[full.indexOf(f)]), phone, fresh)
+  drawFeed(shown, shown.map((f) => times[full.indexOf(f)]), latest, fresh)
   mind.classList.toggle('folded', folded)
   const more = full.length - shown.length
   fold.hidden = folded && !more
@@ -883,7 +890,7 @@ past = createReplayUI({
     drawLive(status?.watching || 0, status?.world)
     if (!on && status) {
       drawClock(status.clock, status.world)
-      drawMind(status.mind, status.clock?.hour, status.now || Date.now() / 1000)
+      drawMind(status.mind, status.clock?.hour, status.now || Date.now() / 1000, status.clock?.at)
       drawBody(status.godling)
     }
   },
@@ -940,7 +947,7 @@ async function poll() {
   drawLive(status.watching || 0, status.world)
   if (!past.on) { // in the past, the replay fills these (replay.js)
     drawClock(status.clock, status.world)
-    drawMind(status.mind, status.clock?.hour, now)
+    drawMind(status.mind, status.clock?.hour, now, status.clock?.at)
     drawBody(status.godling)
   }
   for (const p of status.popups || []) popup(p, !past.on && (!first && now - p.time < POPUP_MS / 1000 || first && now - p.time < 4))

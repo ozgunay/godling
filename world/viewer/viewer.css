@@ -125,12 +125,14 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .b-feed .opened .text { display: block; }
 .b-feed .open {
   display: flex; align-items: flex-end; gap: 0.4rem; width: 100%; margin: 0; padding: 0; border: 0; background: none;
-  text-align: left; font: inherit; letter-spacing: inherit; text-shadow: inherit;
+  text-align: left; font: inherit; letter-spacing: inherit; text-shadow: inherit; cursor: default;
 }
 .b-feed .open .text { flex: 1; }
-.b-feed .open .px { flex: none; margin: 0 0 0.25rem; opacity: 0.7; }
-.b-feed .open:hover .text { color: var(--mist); }
-.b-feed .open:hover .px { opacity: 1; }
+.b-feed .open .px { flex: none; margin: 0 0 0.25rem; opacity: 0.7; visibility: hidden; }
+.b-feed .open.cut { cursor: pointer; }
+.b-feed .open.cut .px { visibility: visible; }
+.b-feed .open.cut:hover .text { color: var(--mist); }
+.b-feed .open.cut:hover .px { opacity: 1; }
 .b-feed time { font: 400 0.68rem/1.9 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
 .b-feed .px { margin-top: 0.2rem; }
 .b-feed .sky .text { color: var(--gold); }

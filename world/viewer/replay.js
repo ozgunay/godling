@@ -21,9 +21,35 @@ const PROBLEMS = {
   unsupported: 'This browser cannot play the island’s past. A newer browser can.',
 }
 
+// The last item that passes `test`, or undefined (Array.prototype.findLast needs Safari 15.4; phones older than that
+// watch too).
+export function lastOf(items, test) {
+  for (let i = items.length - 1; i >= 0; i--) if (test(items[i])) return items[i]
+  return undefined
+}
+export const isThought = (line) => line.who === 'godling' && !line.about
+
+// The newest `most` lines of a feed, at most `worldMost` of them the world's (notices, the sky's doings), so they never
+// crowd Godling's own out; and its newest thought always, however much came after it. The screen keeps fewer than the
+// panel sends (viewer.js), by the same rule.
+export function keepLines(feed, most, worldMost) {
+  const kept = []
+  let world = 0
+  for (let i = feed.length - 1; i >= 0 && kept.length < most; i--) {
+    if (feed[i].who !== 'godling' && world++ >= worldMost) continue
+    kept.unshift(feed[i])
+  }
+  const latest = lastOf(feed, isThought)
+  if (latest && !kept.includes(latest)) {
+    if (kept.length >= most) kept.shift()
+    kept.unshift(latest)
+  }
+  return kept
+}
+
 // What the screen shows of Godling's mind after these entries of its log, the way the guest panel reads it live
 // (mind/godling/replay.py reduce_status).
-export function reduceStatus(entries, feedKept = 8, worldKept = feedKept / 2) {
+export function reduceStatus(entries, feedKept = 8, worldKept = Math.floor(feedKept / 2)) {
   const out = { thought: '', needs: '', intention: '', now: null }
   const feed = []
   let agenda = 0
@@ -53,28 +79,17 @@ export function reduceStatus(entries, feedKept = 8, worldKept = feedKept / 2) {
       if (e.ok === false && text) say(e, 'failed', text)
       out.now = null
     } else if (e.kind === 'plan_discarded') { // something happened that it stopped for, to think again
-      if (feed.at(-1)?.about === 'failed') feed.at(-1).about = 'stopped'
+      const last = feed[feed.length - 1]
+      if (last?.about === 'failed') last.about = 'stopped'
     } else if (e.kind === 'learn' && e.name) say(e, 'learned', e.does || '', { name: e.name })
     else if (e.kind === 'sleep' && e.dream) say(e, 'dream', e.dream)
     else if (e.kind === 'event') feed.push({ time: e.time, who: e.sky ? 'sky' : 'notice', text: e.text, glance: null })
     else if (e.kind === 'glance') {
-      const seen = [...feed].reverse().find((n) => n.text === e.text && n.glance === null)
+      const seen = lastOf(feed, (n) => n.text === e.text && n.glance === null)
       if (seen) seen.glance = e.turned ? e.degrees : 0
     }
   }
-  // At most `worldKept` of the lines kept are the world's, so they never crowd Godling's own out.
-  const kept = []
-  let world = 0
-  for (let i = feed.length - 1; i >= 0 && kept.length < feedKept; i--) {
-    if (feed[i].who !== 'godling' && world++ >= worldKept) continue
-    kept.unshift(feed[i])
-  }
-  const latest = feed.findLast((f) => f.who === 'godling' && !f.about)
-  if (latest && !kept.includes(latest)) { // its newest thought always stays
-    if (kept.length >= feedKept) kept.shift()
-    kept.unshift(latest)
-  }
-  out.feed = kept
+  out.feed = keepLines(feed, feedKept, worldKept)
   return out
 }
 

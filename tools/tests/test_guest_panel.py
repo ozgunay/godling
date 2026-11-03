@@ -235,8 +235,11 @@ def test_status_with_godling():
     island = gp.Island(FakeSky(), 180, 60)
     island.clock = {"TimeOfDay": 12, "Day": 3, "Rain": 0.5, "WindX": 3, "WindZ": 4, "QuakePhase": "rumble",
                     "GodlingHealth": 90, "GodlingHunger": 40, "GodlingCold": 1, "GodlingBracing": True}
+    assert island.status("")["clock"]["at"] is None  # never read: the screen dates its lines from the status's time
+    island.clock_at = 1_793_700_000.5  # when the Clock was read, for the screen to date its lines from
     s = island.status("")
-    assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble"}
+    assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble",
+                          "at": 1_793_700_000.5}
     assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False}
     assert s["notes"]["wait"] == 0
 

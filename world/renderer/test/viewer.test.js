@@ -2,6 +2,8 @@
 // every 1.5 s, and answers clicks, keys and the island's messages. fetch is answered here; timers are fake.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as icons from '../../viewer/icons.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const NOW = 1_800_000_000 // seconds, the panel's clock
 
@@ -481,6 +483,9 @@ describe('the viewer screen', () => {
     const then = panelStatus({ mind: { needs: '', feed: [lift, dream, thought,
       { time: NOW - 25, who: 'godling', about: 'learned', name: 'wait_a_bit', text: '' },
       { time: NOW - 20, who: 'notice', text: 'Volleyball is gone from the world' }] } })
+    // The page lays its lines out: a line longer than about 150 characters is more than its clamp holds
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function () { return this.textContent.length > 150 ? 90 : 40 })
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(() => 40)
     const { stage, $, tick } = await boot({ statuses: [first, then], stored: { 'godling.mind': 'open' } })
     const texts = () => [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
     expect(texts()).toEqual(['Couldn’t finish: stack a second block on the one', 'Stopped to think again: fasten the column',
@@ -489,10 +494,13 @@ describe('the viewer screen', () => {
     expect(stage.querySelectorAll('.b-feed .failed, .b-feed .stopped')).toHaveLength(2)
     const open = $('.b-feed .latest .open') // the newest thought, too long for its three lines
     expect(open.getAttribute('aria-expanded')).toBe('false')
-    expect(stage.querySelector('.b-feed .dream .open')).toBeNull() // short enough to show whole
+    expect(open.classList.contains('cut')).toBe(true) // so it shows its chevron
+    expect($('.b-feed .dream .open').classList.contains('cut')).toBe(false) // whole in its lines: no chevron
+    expect(stage.querySelector('.b-feed .line:not(.latest):not(.dream) .open')).not.toBeNull()
     const chevron = open.querySelector('svg').outerHTML
     open.click()
     expect($('.b-feed .latest .open').getAttribute('aria-expanded')).toBe('true')
+    expect($('.b-feed .latest .open').classList.contains('cut')).toBe(true) // opened, it shows the chevron to close
     expect($('.b-feed .latest .open svg').outerHTML).not.toBe(chevron) // it points the other way
     expect($('.b-feed .latest').classList.contains('opened')).toBe(true)
     $('.b-feed .latest .open').focus()
@@ -536,6 +544,47 @@ describe('the viewer screen', () => {
     $('.b-fold').click()
     expect(texts()).toEqual(['“The newest thought.”'])
     expect(localStorage.getItem('godling.mind')).toBe('folded')
+  })
+
+  it('folded, keeps a new line a viewer opened to read, and with no thought shows the newest line', async () => {
+    const learned = { time: NOW - 5, who: 'godling', about: 'learned', name: 'lift_on_top',
+      text: 'Fetch the nearest free block and set it on top of the stack $object belongs to' }
+    const feed = [{ time: NOW - 40, who: 'godling', text: 'A thought.' }, learned]
+    const { stage, $, tick } = await boot({ statuses: [panelStatus({ mind: { needs: '', feed } }),
+      panelStatus({ mind: { needs: '', feed }, now: NOW + 30 }),
+      panelStatus({ mind: { needs: '', feed: [learned, { time: NOW - 2, who: 'notice', text: 'Rain began' }] }, now: NOW + 60 })] })
+    $('.b-feed .learned .open').click()
+    expect(stage.querySelector('.b-feed .learned').classList.contains('fresh')).toBe(false) // opened, it no longer fades
+    await tick(1500) // thirty seconds on: no longer new, but opened
+    expect(stage.querySelector('.b-feed .learned .open').getAttribute('aria-expanded')).toBe('true')
+    $('.b-feed .learned .open').click() // closed: it folds away
+    expect(stage.querySelector('.b-feed .learned')).toBeNull()
+    await tick(1500) // no thought in the feed: the newest line, never "waking up"
+    expect([...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)).toEqual(['Rain began'])
+    expect(stage.querySelector('.b-feed .waiting')).toBeNull()
+  })
+
+  it('dates lines by when the world\'s clock was read, right while the world is away', async () => {
+    const feed = [{ time: NOW - 60, who: 'godling', text: 'A thought.' }]
+    const away = panelStatus({ world: false, clock: { hour: 14.5, day: 3, at: NOW - 120 }, mind: { needs: '', feed } })
+    const { $ } = await boot({ statuses: [away] })
+    // The clock read 14:30 two minutes ago, the line came one minute after that: 14:30 + 60 s of island time
+    expect($('.b-feed time').textContent).toBe('15:06')
+  })
+
+  it('works on phones whose browsers predate findLast and at (Safari 15.4)', async () => {
+    const sources = ['viewer.js', 'replay.js'].map((name) => readFileSync(resolve(process.cwd(), '../viewer', name), 'utf8'))
+    for (const source of sources) expect(source).not.toMatch(/\.(findLast|findLastIndex|at)\(/)
+    const findLast = Object.getOwnPropertyDescriptor(Array.prototype, 'findLast')
+    delete Array.prototype.findLast
+    try {
+      const { $, tick } = await boot({ statuses: [panelStatus()], stored: { 'godling.mind': 'open' } })
+      await tick(1500) // still polling: the feed and the Now line drawn
+      expect($('.b-feed .latest .text').textContent).toBe('“Two logs now. One more and the gate gets its lintel.”')
+      expect($('.b-now .what').textContent).toBe('Carry logs to the gate')
+    } finally {
+      Object.defineProperty(Array.prototype, 'findLast', findLast)
+    }
   })
 
   it('keeps the newest thought in the feed, however much came of the plan since', async () => {
