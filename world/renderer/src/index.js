@@ -521,9 +521,11 @@ export function createRenderer(ctx) {
     return DEFAULT_SUN
   }
 
+  // The island is drawn this far behind the stream, between the states either side. The relay sends ten updates a
+  // second (ADR-017): two gaps' worth, so an update that comes late does not leave things standing still.
   const interpolationDelayMs = Number.isFinite(captureConfig.interpolationDelayMs)
     ? Math.max(0, Number(captureConfig.interpolationDelayMs))
-    : 100
+    : 200
   const followPositionSmoothing = Number.isFinite(captureConfig.followPositionSmoothing)
     ? Math.max(0, Number(captureConfig.followPositionSmoothing))
     : 10
@@ -1162,6 +1164,8 @@ export function createRenderer(ctx) {
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
+    state: () => latestObs, // the island as last drawn: between two updates, as interpolated
+    interpolationDelayMs,
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),

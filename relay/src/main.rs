@@ -15,6 +15,7 @@ Set by the environment:
   RELAY_TRUSTED_PROXIES   proxies of ours in front, whose X-Forwarded-For is believed (default 0)
   RELAY_BUFFER            frames a viewer may fall behind before a resync (default 256)
   RELAY_RESUME_FRAMES     updates kept for viewers coming back (default 300)
+  RELAY_UPDATES_PER_SECOND  updates a second to viewers, the world's gathered (default 10; 0: each as it comes)
 
 GET /metrics gives the counts in Prometheus' format; GET <base>/relay/status, the world and the viewers as JSON.";
 

@@ -385,7 +385,7 @@ What the numbers say:
     | Godling's record only when it changed | 5.2 KB/s |
     | 10 updates a second, the renderer filling in between (it interpolates already) | 2.0 KB/s |
 
-  - Compressed, the whole island sent on connecting is 12 KB instead of 294 KB. The relay (ADR-015) does none of this yet.
+  - Compressed, the whole island sent on connecting is 12 KB instead of 294 KB. The relay (ADR-015) does none of this yet. *Since built (ADR-017): the island gzipped (17 KB), and the updates ten a second, rounded, the players only when they change, gzipped once: 5 KB/s a viewer.*
 - **On a slow line, a seek waited for more than its chunk.** The player asked for the chunk at the playhead and the three after it at once, and the live stream shares the line too. (Chrome's emulation holds the socket back as a real line would: on a 10 KB/s line it got 5.4 KB/s.) So on Slow 4G the chunk needed came after 1.3 s, where alone it would take about 0.7 s.
   - The player now asks for the playhead's chunk first, and for the three ahead once it is in (`renderer/src/replay.js`, with a test).
   - Slow 4G seeks, p95: 1.04 s instead of 1.37 s on the quiet PC (a scratch build of the same change).
@@ -393,6 +393,6 @@ What the numbers say:
   - A smaller live stream would give most of the rest of the line back.
 
 Left from these measurements:
-- **The live stream's size, for every viewer (a choice):** made smaller in the relay (ADR-015), with the tricks above. It could also be closed while a viewer watches the past, at the price of Go live waiting for the island again.
+- **The live stream's size, for every viewer (a choice):** made smaller in the relay (ADR-015), with the tricks above. It could also be closed while a viewer watches the past, at the price of Go live waiting for the island again. *Made smaller in ADR-017 (5 KB/s); it stays open in the past.*
 - **A real mid-range phone**, for its GPU: the emulation slowed only the CPU.
 - **M6's 24-hour soak** with packing on.

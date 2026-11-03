@@ -3,6 +3,7 @@
 //! the whole island, then `spectator_delta`s, chat, speech and audio, in order. The relay adds `relay_seq` (and on a
 //! whole island, `relay_epoch`) so a page that reconnects can say where it left off, and `{"type":"relay"}` news:
 //! the world up or down, and how many watch.
+mod gather;
 pub mod hub;
 pub mod island;
 mod upstream;
@@ -44,11 +45,14 @@ pub struct Config {
     /// Proxies of ours in front (RELAY_TRUSTED_PROXIES; deploy/: Caddy, 1): the viewer's address is then read from
     /// the X-Forwarded-For they add.
     pub trusted_proxies: usize,
-    /// Frames a viewer may fall behind before it is handed the whole island again (RELAY_BUFFER, default 256: eight
-    /// seconds of the stream).
+    /// Frames a viewer may fall behind before it is handed the whole island again (RELAY_BUFFER, default 256: about
+    /// twenty seconds of the stream).
     pub buffer: usize,
-    /// Updates kept for viewers coming back from a gap (RELAY_RESUME_FRAMES, default 300: ten seconds).
+    /// Updates kept for viewers coming back from a gap (RELAY_RESUME_FRAMES, default 300: thirty seconds).
     pub resume_frames: usize,
+    /// Updates a second to viewers (RELAY_UPDATES_PER_SECOND, default 10). The world sends 31; the relay gathers
+    /// what they did into one (gather.rs), and the page draws between them. 0: each as the world sends it.
+    pub updates_per_second: usize,
     /// How often everyone hears how many watch.
     pub status_every: Duration,
     /// How often a viewer's socket is pinged (20 s), and how long a viewer may stay silent before it is let go (60 s:
@@ -82,6 +86,7 @@ impl Config {
             trusted_proxies: number("RELAY_TRUSTED_PROXIES", 0)?,
             buffer: number("RELAY_BUFFER", 256)?,
             resume_frames: number("RELAY_RESUME_FRAMES", 300)?,
+            updates_per_second: number("RELAY_UPDATES_PER_SECOND", 10)?,
             status_every: Duration::from_secs(5),
             ping_every: Duration::from_secs(20),
             silent_for: Duration::from_secs(60),
@@ -99,7 +104,19 @@ pub struct App {
 
 /// Follow the world and serve viewers on `listener` until `shutdown` completes.
 pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Output = ()> + Send + 'static) -> std::io::Result<()> {
-    let hub = Arc::new(Hub::new(config.buffer, config.resume_frames));
+    let hub = Arc::new(Hub::new(config.buffer, config.resume_frames, config.updates_per_second > 0));
+    if config.updates_per_second > 0 {
+        let gathered = hub.clone();
+        let every = Duration::from_secs(1) / config.updates_per_second as u32;
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(every);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                gathered.flush();
+            }
+        });
+    }
     tokio::spawn(upstream::follow(hub.clone(), config.upstream.clone(), config.token.clone(), config.world_quiet));
     let news = hub.clone();
     let every = config.status_every;

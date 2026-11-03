@@ -24,13 +24,19 @@ the part of the island the whole internet talks to holds the spectator token and
 | `RELAY_CONNECTS_PER_MINUTE` | 60 | New sockets one address may open a minute after that burst: each is handed the whole island. |
 | `RELAY_TRUSTED_PROXIES` | 0 | Proxies of ours in front (Caddy: 1); the viewer's address is then read from their X-Forwarded-For. |
 | `RELAY_BUFFER` | 256 | Frames a viewer may fall behind before it is handed the whole island again. |
-| `RELAY_RESUME_FRAMES` | 300 | Updates kept for viewers coming back (ten seconds of the stream). |
+| `RELAY_RESUME_FRAMES` | 300 | Updates kept for viewers coming back (thirty seconds of the stream). |
+| `RELAY_UPDATES_PER_SECOND` | 10 | Updates a second to viewers. The world sends 31; the relay gathers what they did into one, and the page draws between them. 0: each as the world sends it. |
 
 ## What a viewer gets
 The stream Clawblox's page already speaks, so the page works through the relay unchanged:
 - first the whole island (no `type`), with `relay_epoch` and `relay_seq`; a page that asks with `?gz=1` gets it as one
   gzipped binary message instead, made once for everyone (276 KB becomes about 17);
-- then the world's messages in order (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`;
+- then the world's messages in order (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`.
+  The world's deltas come gathered, ten a second (`src/gather.rs`): one update does what the world's three did, as the
+  page would have applied them one by one (the latest place of each thing that moved, what was added and removed, every
+  event once). Places and the players' numbers are rounded to 0.001, the players come only when they changed, and a page
+  that asked for `gz=1` gets each update gzipped, made once for everyone: 74 KB a second as the world sends it becomes
+  about 5;
 - and the relay's own news, `{"type":"relay","world":"up"|"down","viewers":n,…}`, on connecting, when the world goes
   down or comes back, and every five seconds.
 

@@ -88,6 +88,6 @@ The relay's own job: send the same message to N viewers 15 times a second for 15
 - **Not tested**: building the images and Caddy's routes, as in ADR-013 (no Docker engine here).
 
 ## Next
-- **Bandwidth** (the real bill): send viewers 15 updates a second from the relay's own copy (the renderer then draws 150 ms behind), the player list only when it changes, then a compact format (quaternions, rounded positions) and one compression per update for everyone. Target: under 5 KB/s per viewer.
+- **Bandwidth** (the real bill): send viewers 15 updates a second from the relay's own copy (the renderer then draws 150 ms behind), the player list only when it changes, then a compact format (quaternions, rounded positions) and one compression per update for everyone. Target: under 5 KB/s per viewer. *Built in ADR-017, at ten a second and 200 ms: 5.0 KB/s.*
 - **The screen's live data on the same socket**: the relay fetches the shared part of the status once a second and pushes it, retiring the 1.5 s polling of every viewer; its viewer count replaces the panel's.
 - **Tickets**, if hotlinking or abuse shows up: short-lived, one use, from the site.

@@ -89,7 +89,7 @@ impl Island {
     }
 }
 
-fn truthy(value: &Value) -> bool {
+pub(crate) fn truthy(value: &Value) -> bool {
     !matches!(value, Value::Null | Value::Bool(false)) && value.as_f64() != Some(0.0) && value.as_str() != Some("")
 }
 

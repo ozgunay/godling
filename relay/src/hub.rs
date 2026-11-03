@@ -18,6 +18,7 @@ use flate2::Compression;
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
+use crate::gather::Gathered;
 use crate::island::{with_seq, Island};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,17 +36,23 @@ pub struct Frame {
     pub seq: u64,
     pub kind: Kind,
     pub text: Utf8Bytes, // sent as it is to every viewer: made once, shared
-    /// A whole island gzipped, made once too, for pages that ask (`?gz=1`): 276 KB becomes about 11.
+    /// The same gzipped, made once too, for pages that ask (`?gz=1`): a whole island's 276 KB becomes about 17.
+    /// None when gzip would not make it smaller.
     pub gz: Option<Bytes>,
 }
 
 impl Frame {
     fn whole(island: &Island, epoch: u64, seq: u64) -> Frame {
         let text = island.to_json(epoch, seq);
-        let mut gz = GzEncoder::new(Vec::with_capacity(text.len() / 16), Compression::fast());
-        let gz = gz.write_all(text.as_bytes()).and_then(|()| gz.finish()).ok().map(Bytes::from);
+        let gz = gzipped(&text, Compression::fast());
         Frame { seq, kind: Kind::Whole, text: text.into(), gz }
     }
+}
+
+fn gzipped(text: &str, level: Compression) -> Option<Bytes> {
+    let mut gz = GzEncoder::new(Vec::with_capacity(text.len() / 8), level);
+    let gz = gz.write_all(text.as_bytes()).and_then(|()| gz.finish()).ok()?;
+    (gz.len() < text.len()).then(|| Bytes::from(gz))
 }
 
 /// What the relay counts, for `/metrics` and the alerts built on it (deploy/monitoring).
@@ -77,12 +84,15 @@ struct Inner {
     world_up: bool,
     recent: VecDeque<Frame>, // the updates since the island was last whole, for viewers who come back
     whole: Option<Frame>,    // the island as one message, made at most once for each place in the stream
+    pending: Gathered,       // the world's deltas since the last update sent (gather.rs)
+    players: Option<Value>,  // the players last sent: viewers keep them until an update brings others
 }
 
 pub struct Hub {
     inner: Mutex<Inner>,
     tx: broadcast::Sender<Frame>,
     resume_frames: usize,
+    gathering: bool, // deltas wait for flush(); else each goes out as it comes
     viewers: AtomicUsize,
     resumes: AtomicU64, // viewers back from a gap who caught up without the whole island
     resyncs: AtomicU64,
@@ -108,13 +118,25 @@ impl Drop for Watching {
 
 impl Hub {
     /// `buffer`: frames a viewer may fall behind before it is handed the whole island again. `resume_frames`: the
-    /// updates kept for viewers who come back (300 is ten seconds of the world's stream).
-    pub fn new(buffer: usize, resume_frames: usize) -> Hub {
+    /// updates kept for viewers who come back (300 is thirty seconds at ten updates a second). `gathering`: the world's
+    /// deltas wait for `flush`, which the relay calls RELAY_UPDATES_PER_SECOND times a second; else each goes out as it
+    /// comes.
+    pub fn new(buffer: usize, resume_frames: usize, gathering: bool) -> Hub {
         let (tx, _) = broadcast::channel(buffer.max(1));
         Hub {
-            inner: Mutex::new(Inner { island: None, epoch: 0, seq: 0, world_up: false, recent: VecDeque::new(), whole: None }),
+            inner: Mutex::new(Inner {
+                island: None,
+                epoch: 0,
+                seq: 0,
+                world_up: false,
+                recent: VecDeque::new(),
+                whole: None,
+                pending: Gathered::default(),
+                players: None,
+            }),
             tx,
             resume_frames,
+            gathering,
             viewers: AtomicUsize::new(0),
             resumes: AtomicU64::new(0),
             resyncs: AtomicU64::new(0),
@@ -136,6 +158,8 @@ impl Hub {
         inner.seq += 1;
         inner.world_up = true;
         inner.recent.clear();
+        inner.pending = Gathered::default(); // deltas from before this island: it already holds what they did
+        inner.players = None;
         let whole = Frame::whole(&island, inner.epoch, inner.seq);
         inner.island = Some(island);
         inner.whole = Some(whole.clone());
@@ -145,18 +169,60 @@ impl Hub {
         true
     }
 
-    /// A world message after the island: a delta (`delta`, applied here too) or one only passed on (chat, speech,
-    /// audio). Ignored before the first island, which every connection to the world starts with.
-    pub fn update(&self, message: &str, delta: Option<&Map<String, Value>>) {
+    /// A world delta: gathered, to go out with the others at the next `flush` (or at once, when not gathering).
+    /// Ignored before the first island, which every connection to the world starts with.
+    pub fn delta(&self, delta: &Map<String, Value>) {
         let mut inner = self.lock();
-        let Some(island) = inner.island.as_mut() else { return };
-        if let Some(delta) = delta {
-            island.apply(delta);
+        if inner.island.is_none() {
+            return;
         }
+        inner.pending.add(delta);
+        if !self.gathering {
+            self.send_gathered(&mut inner);
+        }
+    }
+
+    /// A world message only passed on (chat, speech, audio), as it is: after the deltas gathered before it.
+    pub fn pass(&self, message: &str) {
+        let mut inner = self.lock();
+        if inner.island.is_none() {
+            return;
+        }
+        self.send_gathered(&mut inner);
         let seq = inner.seq + 1;
         let Some(text) = with_seq(message, seq) else { return };
         inner.seq = seq;
-        let frame = Frame { seq, kind: Kind::Update, text: text.into(), gz: None };
+        self.send_update(&mut inner, Frame { seq, kind: Kind::Update, text: text.into(), gz: None });
+    }
+
+    /// The deltas gathered since the last flush, out as one update.
+    pub fn flush(&self) {
+        let mut inner = self.lock();
+        self.send_gathered(&mut inner);
+    }
+
+    fn send_gathered(&self, inner: &mut Inner) {
+        if inner.pending.is_empty() {
+            return;
+        }
+        let mut delta = std::mem::take(&mut inner.pending).finish();
+        // The world sends its players (Godling's record) with every delta; viewers keep the last they were sent.
+        if delta.get("players") == inner.players.as_ref() {
+            delta.remove("players");
+        } else if let Some(players) = delta.get("players") {
+            inner.players = Some(players.clone());
+        }
+        let Some(island) = inner.island.as_mut() else { return };
+        island.apply(&delta);
+        inner.seq += 1;
+        let seq = inner.seq;
+        delta.insert("relay_seq".into(), seq.into());
+        let text = Value::Object(delta).to_string();
+        let gz = gzipped(&text, Compression::default());
+        self.send_update(inner, Frame { seq, kind: Kind::Update, text: text.into(), gz });
+    }
+
+    fn send_update(&self, inner: &mut Inner, frame: Frame) {
         inner.recent.push_back(frame.clone());
         while inner.recent.len() > self.resume_frames {
             inner.recent.pop_front();
@@ -164,9 +230,11 @@ impl Hub {
         let _ = self.tx.send(frame);
     }
 
-    /// The world's stream ended: viewers keep the island they hold and are told it is down.
+    /// The world's stream ended: what was gathered goes out, and viewers keep the island they hold and are told it is
+    /// down.
     pub fn world_lost(&self) {
         let mut inner = self.lock();
+        self.send_gathered(&mut inner);
         if inner.world_up {
             inner.world_up = false;
             let _ = self.tx.send(self.status(&inner));
@@ -301,9 +369,100 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
-    fn delta(tick: u64) -> (String, Map<String, Value>) {
+    fn delta(tick: u64) -> Map<String, Value> {
         let value = json!({"type": "spectator_delta", "tick": tick, "entities": [{"id": 1, "p": [tick, 0, 0]}]});
-        (value.to_string(), value.as_object().unwrap().clone())
+        value.as_object().unwrap().clone()
+    }
+
+    fn parsed(frame: &Frame) -> Value {
+        serde_json::from_str(frame.text.as_str()).unwrap()
+    }
+
+    fn inflated(gz: &[u8]) -> String {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(gz), &mut text).unwrap();
+        text
+    }
+
+    #[test]
+    fn gathered_deltas_go_out_as_one_update_at_the_flush() {
+        let hub = Arc::new(Hub::new(16, 8, true));
+        seen(&hub);
+        let (mut joined, _w) = hub.join(None);
+        let before = joined.seq;
+        for tick in 2..5 {
+            hub.delta(&delta(tick));
+        }
+        assert!(joined.rx.try_recv().is_err(), "nothing out before the flush");
+        hub.flush();
+        let update = joined.rx.try_recv().expect("one update");
+        assert_eq!((update.kind, update.seq), (Kind::Update, before + 1));
+        let update = parsed(&update);
+        assert_eq!((update["tick"].as_u64(), update["relay_seq"].as_u64()), (Some(4), Some(before + 1)));
+        assert_eq!(update["entities"], json!([{"id": 1, "p": [4, 0, 0]}]), "only where it got to");
+        assert!(joined.rx.try_recv().is_err(), "one update for the three");
+        hub.flush();
+        assert!(joined.rx.try_recv().is_err(), "nothing gathered, nothing sent");
+        let (late, _w) = hub.join(None);
+        assert_eq!(parsed(&late.first[1])["entities"][0]["position"], json!([4, 0, 0]), "the island holds it too");
+    }
+
+    #[test]
+    fn a_passed_message_goes_after_the_deltas_that_came_before_it() {
+        let hub = Arc::new(Hub::new(16, 8, true));
+        seen(&hub);
+        let (mut joined, _w) = hub.join(None);
+        hub.delta(&delta(2));
+        hub.pass(r#"{"type":"chat_message","text":"hello"}"#);
+        hub.delta(&delta(3));
+        let first = parsed(&joined.rx.try_recv().unwrap());
+        let second = parsed(&joined.rx.try_recv().unwrap());
+        assert_eq!((first["type"].as_str(), first["tick"].as_u64()), (Some("spectator_delta"), Some(2)));
+        assert_eq!(second["type"], "chat_message");
+        assert_eq!(second["relay_seq"].as_u64(), Some(first["relay_seq"].as_u64().unwrap() + 1));
+        assert!(joined.rx.try_recv().is_err(), "tick 3 waits for the flush");
+        hub.world_lost();
+        assert_eq!(parsed(&joined.rx.try_recv().unwrap())["tick"], 3, "the stream ending sends what was gathered");
+    }
+
+    #[test]
+    fn players_go_out_only_when_they_changed() {
+        let hub = Arc::new(Hub::new(16, 8, false));
+        seen(&hub);
+        let (mut joined, _w) = hub.join(None);
+        let with = |tick: u64, health: u64| {
+            let mut fields = delta(tick);
+            fields.insert("players".into(), json!([{"name": "Godling", "health": health}]));
+            fields
+        };
+        for (tick, health) in [(2, 100), (3, 100), (4, 90)] {
+            hub.delta(&with(tick, health));
+        }
+        let sent: Vec<Value> = (0..3).map(|_| parsed(&joined.rx.try_recv().unwrap())["players"].clone()).collect();
+        assert_eq!(sent, vec![json!([{"name": "Godling", "health": 100}]), Value::Null, json!([{"name": "Godling", "health": 90}])]);
+        let (late, _w) = hub.join(None);
+        assert_eq!(parsed(&late.first[1])["players"], json!([{"name": "Godling", "health": 90}]));
+        seen(&hub);
+        hub.delta(&with(5, 90));
+        let after: Vec<Frame> = std::iter::from_fn(|| joined.rx.try_recv().ok()).collect();
+        assert_eq!(parsed(after.last().unwrap())["players"], json!([{"name": "Godling", "health": 90}]), "a new island: sent again");
+    }
+
+    #[test]
+    fn updates_are_gzipped_once_when_that_makes_them_smaller() {
+        let hub = Arc::new(Hub::new(16, 8, false));
+        seen(&hub);
+        let (mut joined, _w) = hub.join(None);
+        hub.delta(&delta(2));
+        assert!(joined.rx.try_recv().unwrap().gz.is_none(), "a small update would only grow");
+        let moves: Vec<Value> = (0..60).map(|id| json!({"id": id, "p": [id as f64 * 1.5, 2.25, -3.125]})).collect();
+        let mut big = delta(3);
+        big.insert("entities".into(), Value::Array(moves));
+        hub.delta(&big);
+        let update = joined.rx.try_recv().unwrap();
+        let gz = update.gz.as_ref().expect("gzipped");
+        assert!(gz.len() < update.text.len() / 2, "{} against {}", gz.len(), update.text.len());
+        assert_eq!(inflated(gz), update.text.as_str(), "the same bytes, gzipped");
     }
 
     fn seen(hub: &Hub) {
@@ -316,11 +475,11 @@ mod tests {
 
     #[test]
     fn a_new_viewer_gets_the_whole_island_at_the_latest_place() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         seen(&hub);
         for tick in 2..5 {
-            let (text, fields) = delta(tick);
-            hub.update(&text, Some(&fields));
+            let fields = delta(tick);
+            hub.delta(&fields);
         }
         let (joined, _watching) = hub.join(None);
         assert_eq!(kinds(&joined), vec![Kind::Status, Kind::Whole]);
@@ -332,13 +491,13 @@ mod tests {
 
     #[test]
     fn a_returning_viewer_gets_only_what_it_missed_while_it_is_held() {
-        let hub = Arc::new(Hub::new(16, 3));
+        let hub = Arc::new(Hub::new(16, 3, false));
         seen(&hub);
         let epoch = hub.lock().epoch;
         let start = hub.lock().seq;
         for tick in 2..6 {
-            let (text, fields) = delta(tick);
-            hub.update(&text, Some(&fields));
+            let fields = delta(tick);
+            hub.delta(&fields);
         }
         let (joined, _w) = hub.join(Some((epoch, start + 2)));
         assert_eq!(kinds(&joined), vec![Kind::Status, Kind::Update, Kind::Update]);
@@ -356,10 +515,10 @@ mod tests {
 
     #[test]
     fn a_new_world_starts_a_new_epoch_and_forgets_the_old_updates() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         seen(&hub);
-        let (text, fields) = delta(2);
-        hub.update(&text, Some(&fields));
+        let fields = delta(2);
+        hub.delta(&fields);
         let first_epoch = hub.lock().epoch;
         let first_seq = hub.lock().seq;
         hub.world_lost();
@@ -373,8 +532,8 @@ mod tests {
 
     #[test]
     fn nothing_before_the_first_island() {
-        let hub = Arc::new(Hub::new(16, 8));
-        hub.update(r#"{"type":"chat_message"}"#, None);
+        let hub = Arc::new(Hub::new(16, 8, false));
+        hub.pass(r#"{"type":"chat_message"}"#);
         let (joined, _w) = hub.join(None);
         assert_eq!(kinds(&joined), vec![Kind::Status]);
         assert_eq!(hub.report()["world"], "down");
@@ -382,11 +541,11 @@ mod tests {
 
     #[test]
     fn a_viewer_that_fell_behind_is_handed_the_island_where_the_stream_is() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         assert_eq!(hub.resync().0.map(|frame| frame.kind), None, "no island yet: nothing to hand");
         seen(&hub);
-        let (text, fields) = delta(2);
-        hub.update(&text, Some(&fields));
+        let fields = delta(2);
+        hub.delta(&fields);
         let now = hub.lock().seq;
         let (whole, at) = hub.resync();
         let whole = whole.expect("the island as it is now");
@@ -398,7 +557,7 @@ mod tests {
 
     #[test]
     fn a_panic_elsewhere_does_not_lock_the_hub_up() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         let held = hub.clone();
         let _ = std::thread::spawn(move || {
             let _inner = held.inner.lock().unwrap();
@@ -412,7 +571,7 @@ mod tests {
 
     #[test]
     fn everyone_hears_how_many_watch() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         let (mut joined, _w) = hub.join(None);
         hub.tell_status();
         let news = joined.rx.try_recv().expect("the news");
@@ -423,7 +582,7 @@ mod tests {
 
     #[test]
     fn watchers_are_counted_while_they_watch() {
-        let hub = Arc::new(Hub::new(16, 8));
+        let hub = Arc::new(Hub::new(16, 8, false));
         let (_j1, w1) = hub.join(None);
         let (_j2, _w2) = hub.join(None);
         assert_eq!(hub.report()["viewers"], 2);

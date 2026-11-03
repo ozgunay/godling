@@ -148,6 +148,7 @@ describe('the renderer', () => {
     expect(warn).toHaveBeenCalled() // the part without its colour is drawn magenta, and said so
     const debug = globalThis.__godlingRenderer
     expect(debug.tier.name).toBe('high')
+    expect(debug.interpolationDelayMs).toBe(50) // a capture sets its own
     expect(debug.info().modelsArrived).toBe(3) // the palm, the fish and Godling; asset://crater.glb is not served here
     expect(debug.info().instances).toBeGreaterThan(20)
     expect(debug.animations()).toHaveLength(1)
@@ -190,6 +191,8 @@ describe('the renderer', () => {
     buffer.last = null
     r.onFrame({ dt: 1 }) // the buffer had nothing: the last observation
     expect(globalThis.__godlingRenderer.tier.name).toBe('low')
+    expect(globalThis.__godlingRenderer.interpolationDelayMs).toBe(200) // two of the relay's gaps (ADR-017)
+    expect(globalThis.__godlingRenderer.state().entities).toHaveLength(obs.entities.length) // as last drawn
     expect(renders.count).toBe(4)
     r.unmount()
   })

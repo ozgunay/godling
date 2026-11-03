@@ -5,10 +5,10 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 
 const RELAY: &str = env!("CARGO_BIN_EXE_godling-relay");
-const SETTINGS: [&str; 12] = [
+const SETTINGS: [&str; 13] = [
     "RELAY_LISTEN", "RELAY_UPSTREAM", "RELAY_SPECTATOR_TOKEN", "WORLD_SPECTATOR_TOKEN", "RELAY_BASE_PATH",
     "RELAY_ORIGINS", "RELAY_MAX_VIEWERS", "RELAY_MAX_PER_IP", "RELAY_CONNECTS_PER_MINUTE", "RELAY_TRUSTED_PROXIES",
-    "RELAY_BUFFER", "RELAY_RESUME_FRAMES",
+    "RELAY_BUFFER", "RELAY_RESUME_FRAMES", "RELAY_UPDATES_PER_SECOND",
 ];
 
 /// The relay with only these settings, none of the test runner's own.
