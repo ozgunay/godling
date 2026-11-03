@@ -19,6 +19,7 @@ vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
   },
 }))
 const { createRenderer } = await import('../src/index.js')
+const { handed } = await import('./rig.js')
 
 beforeAll(install2d)
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -39,6 +40,7 @@ files['/assets/crater.glb'] = prop
 files['/assets/fish.glb'] = prop
 files['/assets/stone.glb'] = prop
 files['/assets/godling.glb'] = body
+files['/assets/handed.glb'] = () => handed({ clips: ['Idle', 'Walk'] })
 
 function runtime() {
   const buffer = {
@@ -270,6 +272,52 @@ describe('the renderer', () => {
     r.onState(obs)
     r.onState(obs)
     expect(globalThis.__godlingRenderer.animations()).toHaveLength(1)
+    r.unmount()
+  })
+
+  it('draws a tool in the hand of the body that holds it, and where the world has it otherwise', async () => {
+    const { ctx, cameraModes } = runtime()
+    const r = createRenderer(ctx)
+    const tool = (id, kind, position, holder) => part(id, 'Tool', position, [0.4, 0.4, 1], { rotation: I,
+      attributes: { ToolKind: kind, ...(holder ? { HeldBy: holder } : {}) } })
+    const obs = (holder) => ({
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0] },
+        { id: 'p2', name: 'Plain', root_part_id: 2, position: [9, 2.5, 0] }],
+      entities: [
+        part(1, 'Body', [0, 2.5, 0], [2, 5, 2], { model_url: '/assets/handed.glb', rotation: I }),
+        part(2, 'Body', [9, 2.5, 0], [2, 5, 2], { model_url: '/assets/godling.glb' }), // a model without a hand bone
+        tool(3, 'Axe', [0, 6.5, 0], holder), // carried over the head, as the world does (main.lua HOLD_OFFSET)
+        tool(4, 'Hammer', [9, 6.5, 0], 'Plain'),
+        tool(5, 'Spear', [4, 0.2, 4], 'Nobody'), // a holder not on the island
+        tool(6, 'Spear', [5, 0.2, 5]), // lying on the grass
+      ],
+    })
+    const frames = (n, state) => {
+      for (let i = 0; i < n; i++) {
+        r.onState(state)
+        r.onFrame({ dt: 0.05 })
+      }
+    }
+    const hands = () => globalThis.__godlingRenderer.hands()
+    r.onState(obs('Godling'))
+    await flush() // the models arrive
+    frames(12, obs('Godling'))
+    expect(hands()).toEqual([expect.objectContaining({ id: 3, body: 1, weight: 1 })])
+    const [axe] = hands()
+    expect(axe.at[1]).toBeLessThan(4) // in the hand at the body's side, not over its head at 6.5
+    expect(Math.hypot(axe.at[0], axe.at[2])).toBeLessThan(2.5)
+    // The camera inside Godling's head (its own view): that body is not drawn, and the axe goes back over the head.
+    cameraModes.spectator.state.attach = { playerId: 'p1' }
+    frames(12, obs('Godling'))
+    expect(hands()).toEqual([])
+    cameraModes.spectator.state.attach = null
+    frames(12, obs('Godling'))
+    expect(hands()).toHaveLength(1)
+    // Set down: out of the hand, then where the world has it.
+    frames(2, obs(null))
+    expect(hands()[0].weight).toBeLessThan(1)
+    frames(12, obs(null))
+    expect(hands()).toEqual([])
     r.unmount()
   })
 

@@ -1234,6 +1234,7 @@ end
 local function setPlayerBlockState(player, block)
     -- Intentionally keep pickup/held state implicit in observations.
     -- Agents can infer state from world changes and LastActionResult.
+    -- (The piece itself names its holder, "HeldBy", for the renderer to put a tool in the hand: pickupBlock.)
 end
 
 local function setupPlayer(player, shouldSpawnAtStart)
@@ -1467,6 +1468,7 @@ local function releaseHeldBlock(player)
     end
 
     heldBlocksByPlayer[player] = nil
+    block:SetAttribute("HeldBy", nil)
     setPlayerBlockState(player, nil)
     setCarryPace(player, nil)
     return block
@@ -1560,6 +1562,8 @@ local function pickupBlock(player, inputData)
     end
 
     heldBlocksByPlayer[player] = block
+    -- Carried over the head (HOLD_OFFSET), where the mind looks for it; the renderer draws a tool in the hand instead.
+    block:SetAttribute("HeldBy", player.Name)
     setCarryPace(player, block)
     wakeRestingOn(block)
     block:SetAttribute("Settled", false)

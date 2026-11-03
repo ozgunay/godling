@@ -313,6 +313,7 @@ def island_of(snapshot):
         if role not in DECOR_ROLES and part["anchored"] and not part["can_collide"]:
             continue  # carried down by the sky and not landed yet (a meteor): it would hang in the air
         attrs.pop("FelledAt", None)  # a time on the old process's clock
+        attrs.pop("HeldBy", None)  # in a hand that lets go when the world stops
         kept = {"name": name, "pos": part["cframe"]["position"], "turn": orientation(part["cframe"]["rotation"]),
                 "size": part["size"], "color": part["color"], "anchored": part["anchored"],
                 "collide": part["can_collide"], "attrs": attrs}

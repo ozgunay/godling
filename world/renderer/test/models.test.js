@@ -12,6 +12,7 @@ vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
   },
 }))
 const { createCharacterController, createModelLibrary } = await import('../src/models.js')
+const { handed } = await import('./rig.js')
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -161,5 +162,56 @@ describe('characters', () => {
     expect(controller.upsert({ entityId: 2, root, modelUrl: '/other.glb' })).toBe(false)
     controller.clear()
     expect(controller.debug()).toEqual([])
+  })
+})
+
+describe('the hand', () => {
+  async function body(make) {
+    files['/handed.glb'] = make
+    const models = createModelLibrary({})
+    models.get('/handed.glb')
+    await flush()
+    const controller = createCharacterController(models)
+    const root = new THREE.Group()
+    root.position.set(10, 0, 4)
+    return { controller, root }
+  }
+  const pose = (m) => {
+    const at = new THREE.Vector3()
+    const turn = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    m.decompose(at, turn, scale)
+    return { at, turn, scale }
+  }
+
+  it('grips at the middle of the right mitten, turned as the hand is, wherever a clip puts the hand', async () => {
+    const { controller, root } = await body(() => handed())
+    const out = new THREE.Matrix4()
+    expect(controller.grip(1, out)).toBeNull() // not drawn yet
+    controller.upsert({ entityId: 1, root, modelUrl: '/handed.glb', size: [2, 5, 2], yawOffsetDeg: 90 })
+    const hand = root.getObjectByName('mixamorigRightHand')
+    for (const dt of [0, 0.5]) { // at rest, then swayed by Idle
+      controller.update(1, { dt })
+      expect(controller.grip(1, out)).toBe(out)
+      const { at, turn, scale } = pose(out)
+      expect(at.distanceTo(hand.localToWorld(new THREE.Vector3(0, 0.1, 0)))).toBeLessThan(1e-6)
+      expect(turn.angleTo(hand.getWorldQuaternion(new THREE.Quaternion()))).toBeLessThan(1e-6)
+      expect(scale.toArray().map((v) => Number(v.toFixed(6)))).toEqual([1, 1, 1]) // the world's scale, not the model's
+    }
+    expect(hand.rotation.x).toBeGreaterThan(0.2) // the clip moved it
+    const twin = new THREE.Group() // a second body on the same model: its own hand, measured once for both
+    controller.upsert({ entityId: 2, root: twin, modelUrl: '/handed.glb', size: [2, 5, 2] })
+    const { at } = pose(controller.grip(2, out))
+    expect(at.distanceTo(twin.getObjectByName('mixamorigRightHand').localToWorld(new THREE.Vector3(0, 0.1, 0)))).toBeLessThan(1e-6)
+  })
+
+  it('a model without the hand bone has no grip; a hand without a mitten grips at the bone', async () => {
+    const plain = await body(() => character(['Idle'])) // animated, but not rigged
+    plain.controller.upsert({ entityId: 1, root: plain.root, modelUrl: '/handed.glb' })
+    expect(plain.controller.grip(1, new THREE.Matrix4())).toBeNull()
+    const bare = await body(() => handed({ mitten: false }))
+    bare.controller.upsert({ entityId: 2, root: bare.root, modelUrl: '/handed.glb' })
+    const { at } = pose(bare.controller.grip(2, new THREE.Matrix4()))
+    expect(at.distanceTo(bare.root.getObjectByName('mixamorigRightHand').getWorldPosition(new THREE.Vector3()))).toBeLessThan(1e-6)
   })
 })

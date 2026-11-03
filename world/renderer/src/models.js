@@ -96,9 +96,37 @@ const ONE_SHOTS = [
   { attribute: 'Strikes', clip: 'Strike', seconds: 1.0 }, // a hammer blow on the quarry
 ]
 const AIRBORNE_CLIPS = { Jumping: 'Jump', Freefall: 'Fall' } // humanoid state -> looping clip
+const HAND_BONE = 'mixamorigRightHand' // three.js drops the ':' of the Mixamo rig's "mixamorig:RightHand"
+
+// Where a tool is held (hands.js): the middle of the right mitten, in the hand bone's own frame. Each part of Godling
+// is rigid and fully weighted to one bone (art/build_godling.py), so the mitten is the vertices that follow that
+// bone, measured once in the rest pose. Null for a model without the bone.
+function measureGrip(scene) {
+  const hand = scene.getObjectByName(HAND_BONE)
+  if (!hand?.isBone) return null
+  scene.updateMatrixWorld(true)
+  const toHand = new THREE.Matrix4().copy(hand.matrixWorld).invert()
+  const mitten = new THREE.Box3()
+  const at = new THREE.Vector3()
+  scene.traverse((node) => {
+    const bone = node.isSkinnedMesh ? node.skeleton.bones.indexOf(hand) : -1
+    const { position, skinIndex, skinWeight } = node.geometry?.attributes || {}
+    if (bone < 0 || !skinIndex || !skinWeight) return
+    for (let i = 0; i < position.count; i++) {
+      let weight = 0
+      for (let k = 0; k < 4; k++) if (skinIndex.getComponent(i, k) === bone) weight += skinWeight.getComponent(i, k)
+      if (weight > 0.5) mitten.expandByPoint(node.getVertexPosition(i, at).applyMatrix4(node.matrixWorld).applyMatrix4(toHand))
+    }
+  })
+  return mitten.isEmpty() ? new THREE.Vector3() : mitten.getCenter(new THREE.Vector3())
+}
 
 export function createCharacterController(models) {
   const states = new Map()
+  const gripAt = new THREE.Vector3()
+  const gripTurn = new THREE.Quaternion()
+  const gripScale = new THREE.Vector3()
+  const unit = new THREE.Vector3(1, 1, 1)
 
   function upsert({ entityId, root, modelUrl, size, yawOffsetDeg }) {
     let state = states.get(entityId)
@@ -118,6 +146,9 @@ export function createCharacterController(models) {
     pivot.add(model)
     for (const child of [...root.children]) root.remove(child)
     root.add(pivot)
+    if (template.grip === undefined) template.grip = measureGrip(template.scene)
+    state.hand = template.grip ? model.getObjectByName(HAND_BONE) : null
+    state.grip = template.grip
 
     state.mixer = new THREE.AnimationMixer(model)
     state.clips = new Map(template.animations.map((clip) => [clip.name.toLowerCase(), clip]))
@@ -224,6 +255,17 @@ export function createCharacterController(models) {
   return {
     upsert,
     update,
+    // The body's grip in the world as it is posed now (call after update): at the middle of its right mitten, turned
+    // as the hand is (X towards the thumb, Y along the fingers, Z out of the palm), at the world's own scale. Into
+    // `out`; null until the body is drawn, or when its model has no hand.
+    grip(entityId, out) {
+      const state = states.get(entityId)
+      if (!state?.ready || !state.hand) return null
+      state.hand.updateWorldMatrix(true, false)
+      state.hand.matrixWorld.decompose(gripAt, gripTurn, gripScale)
+      gripAt.copy(state.grip).applyMatrix4(state.hand.matrixWorld)
+      return out.compose(gripAt, gripTurn, unit)
+    },
     remove: (entityId) => states.delete(entityId),
     clear: () => states.clear(),
     // For checks: each character's one-shot in progress and the clips that weigh in now.

@@ -39,6 +39,7 @@ T.test("a picked-up block rises into the hands, and the hands are then full", fu
     T.eq(g:GetAttribute("Gesture"), "PickUp")
     T.eq(g:GetAttribute("Reaches"), 1)
     T.eq(block.CanCollide, false)
+    T.eq(block:GetAttribute("HeldBy"), "Godling", "it names its holder, for the renderer's hand")
     e.step(0.5)
     T.ok(block.Position.Y < e.hrp(g).Position.Y + 4 - 0.1, "half way up")
     e.step(0.6)
@@ -94,6 +95,7 @@ T.test("a block set down is lowered into its grid cell, turned as asked", functi
     local p = e.hrp(g).Position
     T.eq(w.act(g, "Place", { position = { p.X + 3.1, 1.3, p.Z + 0.4 }, rotation = 90 }), "PlaceSuccess")
     T.eq(g:GetAttribute("Gesture"), "PutDown")
+    T.eq(block:GetAttribute("HeldBy"), nil, "no longer in a hand")
     T.eq(block.Anchored, true, "carried down by the world")
     e.step(0.6)
     T.ok(math.abs(block.Position.X % 2.5) > 0.01 or block.Position.Y > 1.4, "still on its way")
