@@ -18,6 +18,7 @@ import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
+import { createStateBuffer } from './buffer.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -521,11 +522,6 @@ export function createRenderer(ctx) {
     return DEFAULT_SUN
   }
 
-  // The island is drawn this far behind the stream, between the states either side. The relay sends ten updates a
-  // second (ADR-017): two gaps' worth, so an update that comes late does not leave things standing still.
-  const interpolationDelayMs = Number.isFinite(captureConfig.interpolationDelayMs)
-    ? Math.max(0, Number(captureConfig.interpolationDelayMs))
-    : 200
   const followPositionSmoothing = Number.isFinite(captureConfig.followPositionSmoothing)
     ? Math.max(0, Number(captureConfig.followPositionSmoothing))
     : 10
@@ -533,7 +529,11 @@ export function createRenderer(ctx) {
     ? Math.max(0, Number(captureConfig.followRotationSmoothing))
     : 14
 
-  const stateBuffer = ctx.runtime.state.createSnapshotBuffer({ maxSnapshots: 8, interpolationDelayMs })
+  // The island is drawn a moment behind the stream, between the states either side (buffer.js): two of the stream's
+  // gaps, so an update that comes late does not leave things standing still; a capture may set its own.
+  const stateBuffer = createStateBuffer({
+    delayMs: Number.isFinite(captureConfig.interpolationDelayMs) ? Math.max(0, Number(captureConfig.interpolationDelayMs)) : undefined,
+  })
   const cameraModes = ctx.runtime.three.createCameraModeController(THREE, camera, {
     canvas: ctx.canvas,
     stateBuffer,
@@ -1165,7 +1165,7 @@ export function createRenderer(ctx) {
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
     state: () => latestObs, // the island as last drawn: between two updates, as interpolated
-    interpolationDelayMs,
+    delay: () => stateBuffer.delayMs(), // how far behind the stream it is drawn, in ms
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),

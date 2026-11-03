@@ -75,6 +75,32 @@ impl Island {
         }
     }
 
+    /// Leaves out of a delta what this island, and so every viewer, already holds: a kept field (players, sounds, game
+    /// status, terrain) equal to the island's, and a place or rotation equal to the entity's. The world sends its players
+    /// with every delta, and a rotation whenever its f32 moved at all, which after rounding is mostly not. A move left
+    /// with nothing goes.
+    pub fn drop_unchanged(&self, delta: &mut Map<String, Value>) {
+        for key in ["players", "sounds", "game_status", "terrain"] {
+            if delta.get(key).is_some_and(|value| self.top.get(key) == Some(value)) {
+                delta.remove(key);
+            }
+        }
+        let Some(Value::Array(entries)) = delta.get_mut("entities") else { return };
+        entries.retain_mut(|entry| {
+            let held = entry.get("id").and_then(Value::as_u64).and_then(|id| self.entities.get(&id));
+            let (Some(entity), Value::Object(fields)) = (held, entry) else { return true };
+            if fields.contains_key("add") || fields.contains_key("rm") {
+                return true;
+            }
+            for (key, name) in [("p", "position"), ("r", "rotation")] {
+                if fields.get(key).is_some_and(|value| entity.get(name) == Some(value)) {
+                    fields.remove(key);
+                }
+            }
+            fields.contains_key("p") || fields.contains_key("r")
+        });
+    }
+
     /// The island as one message, in the world's own shape, with where it stands in the relay's stream.
     pub fn to_json(&self, epoch: u64, seq: u64) -> String {
         serde_json::to_string(&Whole { island: self, epoch, seq }).expect("an island always serializes")

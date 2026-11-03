@@ -31,6 +31,31 @@ describe('dust', () => {
     expect(dust.info().watched).toBe(0)
   })
 
+  it('a short drop lands as hard at ten updates a second as at the world\'s rate; a slow slide does not', () => {
+    // A stone's bottom dropped 1.6 from rest under the world's gravity, as the renderer draws it: the stream's states
+    // `every` seconds apart, eased between them at 60 frames a second.
+    const drawn = (every) => {
+      const { dust } = setup()
+      const height = (t) => 1.25 + Math.max(0, 1.6 - 5 * t * t)
+      let time = 0
+      for (let frame = 0; frame < 60; frame++) {
+        const t = frame / 60
+        const a = Math.floor(t / every) * every
+        const y = height(a) + (height(a + every) - height(a)) * ((t - a) / every)
+        time += 1 / 60
+        dust.update({ time, daylight: 1 })
+        dust.watch(piece(1, y), 1 / 60, 0, null)
+      }
+      return dust.info().alive
+    }
+    expect(drawn(1 / 31)).toBeGreaterThan(0)
+    expect(drawn(0.1)).toBeGreaterThan(0) // seen at most ~4.5 a second, it still lands at 5.7
+    const { dust, step } = setup()
+    for (let i = 0; i <= 20; i++) step(piece(2, 5 - i * 0.15)) // 3 units down a slope at 1.5 a second
+    step(piece(2, 2))
+    expect(dust.info().alive).toBe(0)
+  })
+
   it('a quake rattles and slides pieces, and dust takes the oldest place', () => {
     const { dust, step } = setup()
     step(piece(2, 1.25, 0))

@@ -2,7 +2,8 @@
 //! (31 a second); the relay sends viewers one every RELAY_UPDATES_PER_SECOND, doing what those did as the page would
 //! have applied them one by one (Clawblox's `applySpectatorDelta`, mirrored in `island.rs`): the latest place of each
 //! thing that moved, what was added and removed, the latest players, sounds and terrain, and every event once.
-//! Positions and rotations are rounded to 0.001 on the way, as the replay's chunks keep them (ADR-016).
+//! Rotations and the players' numbers are rounded to 0.001 on the way, as the replay's chunks keep rotations and
+//! attributes (ADR-016); positions come from the world already rounded to 0.01.
 use std::collections::HashMap;
 
 use serde_json::{json, Map, Number, Value};
@@ -45,9 +46,10 @@ impl Gathered {
                     }
                 }
                 ("entities" | "recent_events", _) => {}
-                _ => {
+                _ if fits(key, value) => {
                     self.top.insert(key.clone(), value.clone());
                 }
+                _ => {}
             }
         }
     }
@@ -92,6 +94,21 @@ impl Gathered {
         }
     }
 
+    /// Whether `delta` must start the next update instead of joining this one: it brings back an id this one removed,
+    /// or removes one this one added. Gathered into one, the first would be eased on the page from where the thing
+    /// vanished (it keeps a re-added id in place), and the second would never be seen at all.
+    pub fn needs_split(&self, delta: &Map<String, Value>) -> bool {
+        let Some(Value::Array(entries)) = delta.get("entities") else { return false };
+        entries.iter().any(|entry| {
+            let Some(id) = entry.get("id").and_then(Value::as_u64) else { return false };
+            match self.last.get(&id) {
+                Some(Last::Removed) => entry.get("add").is_some_and(Value::is_object),
+                Some(Last::Entry(at)) => entry.get("rm").is_some_and(truthy) && self.entries[*at].get("add").is_some(),
+                None => false,
+            }
+        })
+    }
+
     fn push(&mut self, id: u64, entry: Value) {
         self.entries.push(entry);
         self.last.insert(id, Last::Entry(self.entries.len() - 1));
@@ -129,7 +146,36 @@ fn place_of(entry: &mut Value) -> (&mut Map<String, Value>, [&'static str; 2]) {
     }
 }
 
-/// Every number with a fraction, to 0.001: a millimetre of position, a thousandth of a rotation's matrix.
+/// Whether the page takes this value for this field (`applySpectatorDelta`; `Island::apply` checks the same): a later
+/// delta's value of the wrong kind must not replace an earlier one's that the page would have used.
+fn fits(key: &str, value: &Value) -> bool {
+    match key {
+        "tick" | "server_time_ms" => value.is_number(),
+        "game_status" => value.is_string(),
+        "players" | "sounds" => value.is_array(),
+        "terrain" => value.is_object(),
+        _ => true,
+    }
+}
+
+/// The whole island as the world sends it, rounded as the updates are, so a viewer's island and the relay's hold the
+/// same numbers and an unchanged rotation is seen to be unchanged.
+pub fn round_whole(snapshot: &mut Value) {
+    if let Some(players) = snapshot.get_mut("players") {
+        rounded(players);
+    }
+    if let Some(Value::Array(entities)) = snapshot.get_mut("entities") {
+        for entity in entities {
+            for key in ["position", "rotation"] {
+                if let Some(value) = entity.get_mut(key) {
+                    rounded(value);
+                }
+            }
+        }
+    }
+}
+
+/// Every number with a fraction, to 0.001: a thousandth of a rotation's matrix, of a player's numbers.
 pub fn rounded(value: &mut Value) {
     match value {
         Value::Number(number) if number.is_f64() => {
@@ -191,6 +237,17 @@ mod tests {
         assert_eq!(out["recent_events"], json!([{"id": 1}, {"id": 2}]));
         assert_eq!(out["players"], json!([{"name": "Godling", "health": 80}]));
         assert!(gathered(&[json!({"tick": 1})]).get("recent_events").is_none(), "no events: none sent");
+    }
+
+    #[test]
+    fn a_later_value_of_the_wrong_kind_does_not_replace_an_earlier_one() {
+        let out = gathered(&[
+            json!({"tick": 5, "game_status": "playing", "players": [{"name": "Godling"}], "terrain": {"chunks": 3}}),
+            json!({"tick": "six", "game_status": 2, "players": null, "terrain": null, "sounds": {}}),
+        ]);
+        assert_eq!((&out["tick"], &out["game_status"]), (&json!(5), &json!("playing")));
+        assert_eq!((&out["players"], &out["terrain"]), (&json!([{"name": "Godling"}]), &json!({"chunks": 3})));
+        assert!(out.get("sounds").is_none(), "as the page ignores them");
     }
 
     #[test]

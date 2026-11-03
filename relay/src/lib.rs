@@ -22,6 +22,8 @@ use tokio::net::TcpListener;
 use crate::hub::Hub;
 use crate::viewer::Seats;
 
+const MOST_UPDATES_PER_SECOND: usize = 60;
+
 /// Everything a deployment sets (`from_env`: `RELAY_*`).
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -45,13 +47,15 @@ pub struct Config {
     /// Proxies of ours in front (RELAY_TRUSTED_PROXIES; deploy/: Caddy, 1): the viewer's address is then read from
     /// the X-Forwarded-For they add.
     pub trusted_proxies: usize,
-    /// Frames a viewer may fall behind before it is handed the whole island again (RELAY_BUFFER, default 256: about
-    /// twenty seconds of the stream).
+    /// Frames a viewer may fall behind before it is handed the whole island again (RELAY_BUFFER, default eight
+    /// seconds of the stream: 80 at ten updates a second).
     pub buffer: usize,
-    /// Updates kept for viewers coming back from a gap (RELAY_RESUME_FRAMES, default 300: thirty seconds).
+    /// Updates kept for viewers coming back from a gap (RELAY_RESUME_FRAMES, default ten seconds of the stream: 100).
+    /// One further back than the whole island is big is handed the island instead.
     pub resume_frames: usize,
-    /// Updates a second to viewers (RELAY_UPDATES_PER_SECOND, default 10). The world sends 31; the relay gathers
-    /// what they did into one (gather.rs), and the page draws between them. 0: each as the world sends it.
+    /// Updates a second to viewers (RELAY_UPDATES_PER_SECOND, 0 to 60, default 10). The world sends 31; the relay
+    /// gathers what they did into one (gather.rs), and the page draws between them, as far behind as two gaps. 0: one
+    /// update for each of the world's, still rounded and without what viewers already hold.
     pub updates_per_second: usize,
     /// How often everyone hears how many watch.
     pub status_every: Duration,
@@ -74,6 +78,12 @@ impl Config {
         };
         let token = std::env::var("RELAY_SPECTATOR_TOKEN").or_else(|_| std::env::var("WORLD_SPECTATOR_TOKEN")).unwrap_or_default();
         let origins = var("RELAY_ORIGINS", "").split(',').map(str::trim).filter(|o| !o.is_empty()).map(String::from).collect();
+        let updates_per_second = number("RELAY_UPDATES_PER_SECOND", 10)?;
+        if updates_per_second > MOST_UPDATES_PER_SECOND {
+            return Err(format!("RELAY_UPDATES_PER_SECOND is at most {MOST_UPDATES_PER_SECOND} (the world sends 31)"));
+        }
+        // The frames a viewer may lag and come back over, as seconds of the stream at its rate (the world's 31 at 0).
+        let rate = if updates_per_second == 0 { 31 } else { updates_per_second };
         Ok(Config {
             listen: var("RELAY_LISTEN", "127.0.0.1:8082"),
             upstream: var("RELAY_UPSTREAM", "ws://127.0.0.1:8080/spectate/ws"),
@@ -84,9 +94,9 @@ impl Config {
             max_per_ip: number("RELAY_MAX_PER_IP", 64)?,
             connects_per_minute: number("RELAY_CONNECTS_PER_MINUTE", 60)?,
             trusted_proxies: number("RELAY_TRUSTED_PROXIES", 0)?,
-            buffer: number("RELAY_BUFFER", 256)?,
-            resume_frames: number("RELAY_RESUME_FRAMES", 300)?,
-            updates_per_second: number("RELAY_UPDATES_PER_SECOND", 10)?,
+            buffer: number("RELAY_BUFFER", 8 * rate)?,
+            resume_frames: number("RELAY_RESUME_FRAMES", 10 * rate)?,
+            updates_per_second,
             status_every: Duration::from_secs(5),
             ping_every: Duration::from_secs(20),
             silent_for: Duration::from_secs(60),
@@ -107,7 +117,8 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
     let hub = Arc::new(Hub::new(config.buffer, config.resume_frames, config.updates_per_second > 0));
     if config.updates_per_second > 0 {
         let gathered = hub.clone();
-        let every = Duration::from_secs(1) / config.updates_per_second as u32;
+        // from_env allows 1 to 60; a Config made in code is held to a period of at least a millisecond.
+        let every = Duration::from_millis(1000 / config.updates_per_second.min(1000) as u64);
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(every);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

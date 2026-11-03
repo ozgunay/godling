@@ -6,6 +6,9 @@ import { install2d, renders } from './gl.js'
 import { canvas as makeCanvas, pointer } from './events.js'
 
 vi.mock('three', async () => (await import('./gl.js')).threeWithFakeGL())
+// The state buffer (buffer.js, tested on its own) stood in for, keeping only the last state; what it was made with.
+const held = vi.hoisted(() => ({ buffer: null, options: null }))
+vi.mock('../src/buffer.js', () => ({ createStateBuffer: (options) => { held.options = options; return held.buffer } }))
 const files = {}
 vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
   GLTFLoader: class {
@@ -38,14 +41,16 @@ files['/assets/stone.glb'] = prop
 files['/assets/godling.glb'] = body
 
 function runtime() {
-  const buffer = { // as the runtime's (createSnapshotBuffer), keeping only the last state
+  const buffer = {
     last: null,
     cleared: 0,
     push(obs) { this.last = obs },
     latest() { return this.last },
     interpolated() { return this.last },
     clear() { this.cleared += 1; this.last = null },
+    delayMs: () => 200,
   }
+  held.buffer = buffer
   const cameraModes = { api: { name: 'camera api' }, update: vi.fn(), dispose: vi.fn(), spectator: { state: { attach: null } } }
   const ctx = {
     canvas: makeCanvas(),
@@ -148,7 +153,7 @@ describe('the renderer', () => {
     expect(warn).toHaveBeenCalled() // the part without its colour is drawn magenta, and said so
     const debug = globalThis.__godlingRenderer
     expect(debug.tier.name).toBe('high')
-    expect(debug.interpolationDelayMs).toBe(50) // a capture sets its own
+    expect(held.options.delayMs).toBe(50) // a capture sets its own
     expect(debug.info().modelsArrived).toBe(3) // the palm, the fish and Godling; asset://crater.glb is not served here
     expect(debug.info().instances).toBeGreaterThan(20)
     expect(debug.animations()).toHaveLength(1)
@@ -191,7 +196,8 @@ describe('the renderer', () => {
     buffer.last = null
     r.onFrame({ dt: 1 }) // the buffer had nothing: the last observation
     expect(globalThis.__godlingRenderer.tier.name).toBe('low')
-    expect(globalThis.__godlingRenderer.interpolationDelayMs).toBe(200) // two of the relay's gaps (ADR-017)
+    expect(held.options.delayMs).toBeUndefined() // otherwise the buffer follows the stream
+    expect(globalThis.__godlingRenderer.delay()).toBe(200)
     expect(globalThis.__godlingRenderer.state().entities).toHaveLength(obs.entities.length) // as last drawn
     expect(renders.count).toBe(4)
     r.unmount()

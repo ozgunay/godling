@@ -18,12 +18,12 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 - **Address blocks**: an IPv6 address counts by its /64; IPv4 inside IPv6 counts as that IPv4 address.
 - **Pacing**: per block, at most 64 sockets at once (`RELAY_MAX_PER_IP`: a household or an office behind one address) and new sockets from a bucket of 64 that refills at 60 a minute (`RELAY_CONNECTS_PER_MINUTE`); 5000 viewers in all (`RELAY_MAX_VIEWERS`). Refused with 429 (or 503 when full) and `Retry-After`, and counted by reason. A page coming back from a gap mostly resumes, and pages back off on their own, so a relay coming back is spread out. Floods from many addresses are Cloudflare's to stop.
 - **Gzipped islands**: a page that asks (`?gz=1`) gets the whole island as one gzipped binary message, made once for everyone: 276 KB becomes about 17.
-- **Smaller updates** (below, "The live stream made smaller"): ten a second, each doing what the world's three did; places rounded to 0.001; the players only when they changed; gzipped once for everyone. 74 KB a second a viewer becomes 5.
+- **Smaller updates** (below, "The live stream made smaller"): ten a second, each doing what the world's three did; rotations rounded to 0.001; nothing every viewer already holds; gzipped once for everyone. 74 KB a second a viewer becomes 3.1.
 - **`/metrics`** in Prometheus' format: viewers and the cap, the world up or down, connections, refusals by reason (origin, busy, address, rate), viewers let go by reason, resumes, resyncs, bytes and messages sent. Not reachable from outside.
 
 ### The renderer (`world/renderer`)
-- Draws the island 200 ms behind the stream, not 100: two of the relay's gaps, so one late update does not leave things standing still.
-- A check hook beside the others: `__godlingRenderer.state()`, the island as last drawn.
+- Its own state buffer (`buffer.js`): rotations turned between states, everything else from the older state until the newer one's moment, drawn two of the stream's measured gaps behind (200 ms at ten a second, 100 straight from the world), states kept for a time.
+- Check hooks beside the others: `__godlingRenderer.state()`, the island as last drawn, and `delay()`.
 
 ### The page (`patches/v3`)
 - Asks for and inflates gzipped islands, keeping messages in order.
@@ -59,36 +59,41 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 - **The smaller stream**: the relay's tests (29 unit, 5 of the program, 19 end to end), among them gathered deltas leaving the island exactly as the deltas one by one (40 random streams, gathered 2, 3 and 5 at a time), the players sent only when they change, chat after the deltas before it, and 31 world updates a second reaching a viewer as about ten, gzipped. The renderer's 102 tests. The measurements above.
 
 ## The live stream made smaller
-ADR-016's load test found the live stream is most of what a viewer costs, and ADR-015 had planned for it ("Next": fewer updates, the player list only when it changes, rounded places, one compression per update for everyone; under 5 KB/s a viewer). Built in the relay (`relay/src/gather.rs`, `hub.rs`), with no change to the world or the page:
-- **Ten updates a second** (`RELAY_UPDATES_PER_SECOND`; 0 sends each as the world does). The world sends 31; the relay gathers what they did into one, as the page would have applied them one by one: the latest place of each thing that moved, what was added and removed, the latest players, sounds and terrain, every event once. Chat, speech and audio still go out at once, after what came before them. The relay's own island takes the gathered update, so a late viewer holds what the others do.
-- **Places rounded to 0.001** (a millimetre, a thousandth of a rotation's matrix), as the replay's chunks keep them; the players' numbers too.
-- **Godling's record only when it changes**: the world sends the players with every delta (a third of the bytes); viewers keep the last they were sent.
-- **Gzipped once per update, for everyone**, for pages that ask (`gz=1`; patched Clawblox's page does), when that makes it smaller. The page already inflated gzipped messages in order.
-- **The renderer** draws 200 ms behind the stream (it was 100): with ten updates a second, one late update would otherwise stop things mid-walk.
+ADR-016's load test found the live stream is most of what a viewer costs, and ADR-015 had planned for it ("Next": fewer updates, the player list only when it changes, rounded places, one compression per update for everyone; under 5 KB/s a viewer). Built in the relay (`relay/src/gather.rs`, `hub.rs`, `island.rs`) and the renderer (`world/renderer/src/buffer.js`), with no change to the world or Clawblox's page:
+- **Ten updates a second** (`RELAY_UPDATES_PER_SECOND`, 0 to 60; 0 sends one for each of the world's). The world sends 31; the relay gathers what they did into one, as the page would have applied them one by one: the latest place of each thing that moved, what was added and removed, the latest players, sounds and terrain (a later value of the wrong kind never replaces an earlier one), every event once. Something removed and back, or added and gone, within one gathering goes out over two updates, so it is seen as the page would have seen it. The relay's own island takes each update, so a late viewer holds what the others do.
+- **Only what viewers do not already hold**: a field (players, sounds, game status, terrain) or a place or rotation equal to what the relay's island holds is left out. The world sends its players with every delta, and a rotation whenever its f32 moved at all (the fish are re-aimed every Heartbeat), which after rounding is mostly not.
+- **Rounded**: rotations and the players' numbers to 0.001, as the replay's chunks keep rotations and attributes; positions come from the world at 0.01. The whole island is rounded the same way when the relay receives it.
+- **Gzipped once per update, for everyone**, for pages that ask (`gz=1`; patched Clawblox's page does), when that makes it smaller; passed messages over 1 KB (a chunk of speech) too.
+- **Chat, speech and audio** go out right after the next update, so they never cut one short (each would have meant one more, unevenly spaced).
+- **The renderer's own state buffer** (`buffer.js`), in place of Clawblox's, which eased positions only and showed everything else from the newer state: rotations are turned between the two states (slerp); what is there, attributes and a character's state are the older state's until the drawn moment reaches the newer one (so a blast shows when the falling stone is drawn arriving, not a whole gap before); the delay is two of the stream's measured gaps, at least 100 ms (200 at ten a second, 100 straight from the world or in a fast replay); states are kept for a time, not by count, so a fast replay still has two to draw between.
+- **Dust** judges a landing by how far a piece fell, not by the speed it is seen at (an average over the stream's gap, which missed short drops).
+- **Limits in seconds of the stream**: a viewer may fall eight seconds behind before it is handed the island again (`RELAY_BUFFER`, 80 at ten a second), and one coming back catches up on up to ten seconds (`RELAY_RESUME_FRAMES`, 100), unless what it missed weighs more than the whole island: then the island.
 
-What a viewer receives, on the deployment under Docker, the world as before (30 s each):
+What a viewer receives, on the deployment under Docker, the world as before (40 s each):
 
 | | Updates a second | KB/s |
 |---|---|---|
 | Before: every world delta, as JSON | 31 | 74 |
-| Now, as text | 10 | 13.4 |
-| Now, gzipped (the island's page) | 10 | 5.0 |
+| Ten a second, rounded, players when changed (first version) | 10 | 13.4 as text, 5.0 gzipped |
+| Now: also nothing viewers hold | 10 | 6.5 as text, **3.1 gzipped** |
 
-The whole island on connecting: 17 KB gzipped (280 as text). On a scratch world with Godling walking, 15.5 KB/s with every delta (rounded, gzipped) and 5.5 at ten a second.
+The whole island on connecting: 16 KB gzipped (275 as text).
 
-**Motion**: Godling walking, recorded where he is drawn on every frame.
-- In a browser (headless Chromium, and the desktop app's browser on a GPU at 30 fps): no frame mid-walk on which he stood still, at 31 updates with 100 ms, ten with 100 ms, and ten with 200 ms.
-- Clawblox's snapshot buffer replayed at 60 fps on recorded arrival times, with a phone's 4G added (most updates 20 to 60 ms on their way, one in twenty 100 to 250 ms): frames mid-walk on which he stood still, and how evenly he moved (the spread of his steps; lower is smoother):
+**Motion.**
+- Positions: Godling walking, where he is drawn on every frame. In a browser (headless Chromium): no frame mid-walk on which he stood still, at 31 updates with 100 ms, ten with 100 ms, and ten with 200 ms. Clawblox's snapshot buffer replayed at 60 fps on recorded arrival times, with a phone's 4G added (most updates 20 to 60 ms on their way, one in twenty 100 to 250 ms):
 
-| | Standing still | Spread |
-|---|---|---|
-| 31 a second, 100 ms (before) | 0.5% | 1.17 |
-| Ten a second, 100 ms | 1.4% | 0.75 |
-| Ten a second, 200 ms (now) | 0.1% | 0.77 |
+  | | Standing still | Spread (lower is smoother) |
+  |---|---|---|
+  | 31 a second, 100 ms (before) | 0.5% | 1.17 |
+  | Ten a second, 100 ms | 1.4% | 0.75 |
+  | Ten a second, 200 ms | 0.1% | 0.77 |
 
-On a steady network none stood still at all.
+- Rotations (found by the review: nothing turned them between states, so at ten a second a turn of Godling's came as snaps of up to 57°): his facing recorded from the relay over 60 s of walking and turning at ten a second, drawn at 60 fps. Through Clawblox's buffer he stood still on 155 of 173 frames mid-turn, with steps up to 75°; through the new one, on none of 256, the biggest step 12.6°. In headless Chromium (13 frames a second), the biggest step went from 124° to 67° (the frame rate's own limit for a turn of 10 rad/s).
+- A replay at 4x (pushes on two draws of three): the new buffer eases every frame (Clawblox's, with 200 ms and eight states, stood still on a third of them).
 
-**Compression per viewer** (permessage-deflate) is left out. On the new stream it would make 5.0 KB/s about 1.8, for 0.4 of a core and up to 100 KB of memory a viewer at 5000 viewers; but the relay's WebSocket library (tungstenite, under axum) does not offer it, so it would mean another library for the viewers' side, and a cost for every socket held open, which is what a flood holds. At 5 KB/s, 1000 viewers around the clock are 13 TB a month; worth it only when the traffic bill says so.
+**Compression per viewer** (permessage-deflate) is left out. On the stream before "nothing viewers hold" it would have made 5.0 KB/s about 1.8, for 0.4 of a core and up to 100 KB of memory a viewer at 5000 viewers; but the relay's WebSocket library (tungstenite, under axum) does not offer it, so it would mean another library for the viewers' side, and a cost for every socket held open, which is what a flood holds. At 3 KB/s, 1000 viewers around the clock are 8 TB a month; worth it only when the traffic bill says so.
+
+**Reviewed** (PR #45, at the most thorough level: nine reviewers on separate angles, each finding checked by another): fifteen findings, all addressed here. The ones not reachable with today's world (an id removed and back within 100 ms, things living under 100 ms, values of the wrong kind, a mistyped update rate) are guarded anyway.
 
 ## Not done here
 - **A real server**: `deploy/check.sh` from another machine, with DNS, Let's Encrypt and Cloudflare. The local run uses Caddy's own CA on `*.localhost`.

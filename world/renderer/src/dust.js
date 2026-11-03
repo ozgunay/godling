@@ -2,12 +2,15 @@ import * as THREE from 'three'
 
 // Dust: puffs where a loose piece lands hard (a dropped stone, a felled log, a sky drop), and where the earthquake
 // (the Clock's Quake) rocks or slides pieces along the ground. The renderer only sees where pieces are, so it watches
-// each loose piece's speed: a fall that stops is a landing; in a quake, a piece shifting with no fall is rocking where
+// each loose piece's height: a fall that stops is a landing, as hard as a fall from rest over that drop (the speed it
+// is seen at is an average over the stream's gap, ten a second through the relay, and would miss short drops); in a quake, a piece shifting with no fall is rocking where
 // it lies (a little dust now and then) or sliding (a trail). Puffs are a fixed pool of pixel billboards that rise a little, grow and fade in their shader; a new puff
 // takes the oldest one's place, so all the dust is one draw call and nothing moves on the CPU.
 
 const LIFE = 1.4 // seconds a puff lasts
-const LANDING = 5 // falling faster than this (units per second) and then stopping is a landing
+const LANDING = 5 // landing faster than this (units per second) raises dust
+const GRAVITY = 10 // the world's (world/main.lua: Workspace.Gravity), for how fast a drop lands
+const FALLING = 0.4 // seen falling at least this share of that speed: a fall, not a slow slide down a slope
 const SLIDE = 2.5 // sliding faster than this during a quake trails dust
 const TRAIL_EVERY = 0.12 // seconds between a sliding piece's puffs
 const RATTLE = 0.2 // a piece shifting even this fast in a quake raises a little dust: it is rocking where it lies
@@ -129,7 +132,7 @@ export function createDust(scene, tier) {
       const [x, y, z] = entity.position
       const piece = pieces.get(entity.id)
       if (!piece) {
-        pieces.set(entity.id, { x, y, z, fall: 0, lastPuff: -1 })
+        pieces.set(entity.id, { x, y, z, top: null, fall: 0, lastPuff: -1 })
         return
       }
       const dx = x - piece.x
@@ -140,6 +143,7 @@ export function createDust(scene, tier) {
       piece.z = z
       if (!(dt > 0)) return
       if (dx * dx + dy * dy + dz * dz > TELEPORT * TELEPORT) {
+        piece.top = null
         piece.fall = 0
         return
       }
@@ -150,13 +154,18 @@ export function createDust(scene, tier) {
       const halfHeight = r ? (Math.abs(r[1][0]) * size[0] + Math.abs(r[1][1]) * size[1] + Math.abs(r[1][2]) * size[2]) / 2 : size[1] / 2
       const bottom = y - halfHeight
       if (seaLevel != null && bottom < seaLevel + 0.3) {
+        piece.top = null
         piece.fall = 0
         return
       }
       const footprint = Math.min(4, Math.max(size[0], size[2]))
-      if (vy < -LANDING) piece.fall = Math.max(piece.fall, -vy)
-      else if (piece.fall > 0 && vy > -1) {
-        burst(x, bottom, z, footprint, piece.fall)
+      if (vy < -1) { // coming down: from where, and the fastest it is seen
+        if (piece.top == null) piece.top = y - dy
+        piece.fall = Math.max(piece.fall, -vy)
+      } else if (piece.top != null) { // stopped: a landing, if it dropped far and fast enough
+        const landed = Math.sqrt(2 * GRAVITY * Math.max(0, piece.top - y))
+        if (landed > LANDING && piece.fall >= FALLING * landed) burst(x, bottom, z, footprint, Math.max(piece.fall, landed))
+        piece.top = null
         piece.fall = 0
       }
       const sliding = across > SLIDE

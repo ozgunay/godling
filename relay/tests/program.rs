@@ -62,6 +62,10 @@ fn a_setting_that_is_not_a_number_stops_it() {
     let out = relay(&[("RELAY_MAX_VIEWERS", "lots")]).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("RELAY_MAX_VIEWERS is not a number"));
+    // Too many updates a second would make the flush's period zero (or wrap): refused at the start, not frozen later.
+    let out = relay(&[("RELAY_UPDATES_PER_SECOND", "10000000000")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("RELAY_UPDATES_PER_SECOND is at most 60"));
 }
 
 #[test]
