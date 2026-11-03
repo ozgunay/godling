@@ -183,9 +183,10 @@ GODLING_STRIPE_WEBHOOK_SECRET = os.environ.get("GODLING_STRIPE_WEBHOOK_SECRET", 
 GODLING_VIEW_URL = os.environ.get("GODLING_VIEW_URL", "")
 # The live run, for the admin's log viewer (apps.users.log_views).
 GODLING_RUN_DIR = os.environ.get("GODLING_RUN_DIR", "")
-# Where browsers fetch replay chunks (ADR-016): Caddy's /replay from the runs volume, or the public address of the
-# bucket the island uploads them to (GODLING_REPLAY_BUCKET and GODLING_REPLAY_PUBLIC_URL on the island).
-GODLING_REPLAY_URL = os.environ.get("GODLING_REPLAY_URL", "/replay").rstrip("/")
+# Where browsers fetch replay chunks (ADR-016): the island's origin, where Caddy serves them from the runs volume
+# (https://<island domain>/replay). Empty, the guest panel's own (GODLING_PANEL_URL), for a development site. Chunks
+# already uploaded to a bucket are fetched from the bucket's public address, which the island's index names.
+GODLING_REPLAY_URL = os.environ.get("GODLING_REPLAY_URL", "").rstrip("/")
 
 LANGUAGE_CODE = "en"
 TIME_ZONE = "UTC"

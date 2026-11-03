@@ -37,7 +37,9 @@
 	# and never changed once written, so they are cached for good. (With a bucket, browsers fetch them from there.)
 	handle_path /replay/chunks/* {
 		root * /runs/live/replay/chunks
-		header Cache-Control "public, max-age=31536000, immutable"
+		# Kept for good only when there: a chunk asked for before it is written must be asked for again.
+		@chunk file
+		header @chunk Cache-Control "public, max-age=31536000, immutable"
 		header Access-Control-Allow-Origin *
 		file_server
 	}

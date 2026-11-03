@@ -269,3 +269,57 @@ Taken as recommended: D1 everyone, all the history; D2 the browser plays static 
 - **Real R2:** only the stand-in has been tested. It needs a bucket, keys and a public address in `deploy/.env`.
 - **The free camera's position in shared links.**
 - **D7, the timelapse:** after the release, as decided.
+
+## After the review of PR #22
+An extensive review (nine angles, each finding verified independently) found 26 real problems, and they are fixed:
+
+- **The screen's tracks never loaded on a slow link.** A new request went out with every playhead report (four a second), and only the newest answer was kept. Now there is one request at a time, kept if it covers the playhead, from two minutes before it to thirty after.
+- **The packer could stall for good.** A bad row (the world writes a NaN coordinate as null) or a failing recording was retried forever. That stopped the deletion of old recordings and the disk warning, so the disk would fill.
+  - A bad row is now skipped and said in `replay.log`. Coordinates that are not numbers are kept as null.
+  - A recording that will not pack holds up neither the others nor the keeping job, and an old one is left after five tries.
+- **The recording being written grew without limit**, about 5 GB a day, until the world restarted. Its packed rows older than `GODLING_REPLAY_RAW_DAYS` are now deleted once an hour, a few thousand at a time. Live: 10,076 rows went in 0.16 s while the world kept writing, with no recording warnings.
+- **Object storage:**
+  - A chunk that failed to upload eight times was dropped, and a later success moved past it. It is now put back in the queue.
+  - Progress is kept as the oldest chunk not yet up, so a local day is deleted only once all of it is up.
+  - The index used to send browsers to the bucket before chunks were there. It now says up to when the bucket has them (`chunks_url_until`), and browsers fetch later chunks from the island.
+  - The bucket needs a CORS rule for the island's page: the packer sets one, or says it could not.
+  - A bucket without a public address is refused.
+- **The start of a replay could be lost.** A shared link started 1.5 s after the island's page loaded, but the renderer starts listening later than that. The renderer now says when it can hear the screen (`godling-ready`), and the screen opens the moment then. A replay started before the first live frame now draws too.
+- **Not-yet-written chunks:**
+  - The player asked for chunks past the index's end, cached the 404s as holes, and skipped them later. It no longer asks past the end, and it tries a failed chunk four times before skipping it.
+  - Caddy sent its keep-for-a-year header with 404s too; now only with chunks that exist.
+- **Moderation in the past is an allow-list now.**
+  - A note is shown only while its row exists and is not hidden, with its author's name and its text from that row. Deleting a note or an account removes it from the past too, along with the paper glider's line quoting it.
+  - A hidden note is looked for in Godling's words regardless of case, and only from 8 characters up, so a hidden "no" no longer blanks every "know".
+  - Report is offered only within the site's 30-minute window.
+- **The site's replay endpoints** wait at most 5 s on the island, and the index is shared for 3 s, as the live status is. Without `GODLING_REPLAY_URL`, a development site points browsers at the panel's chunks.
+- **Old runs drew with an old renderer.** Each start now copies in today's renderer and models, while a run keeps its own world script.
+- **Smaller fixes:**
+  - **Markers:**
+    - an earthquake is marked at its rumble;
+    - one event is one marker, by its sky id;
+    - the first faint of a world start is marked, whatever the order of the players;
+    - markers come back in time order.
+  - **Chunks** name models `asset://name.glb`, so they still draw if the island moves.
+  - **The timeline:**
+    - a week's timeline downloads its sky data one sample per bar pixel, not one per minute;
+    - it reloads only when now has moved on a fiftieth of its span;
+    - replayed pop-ups show again on each pass;
+    - the screen redraws only what changed;
+    - a problem is told once;
+    - a bad index answer no longer replaces the last good one;
+    - a cancelled touch no longer freezes the playhead.
+  - **Stopping and accessibility:**
+    - the badge's label says Replay;
+    - the packer saves its progress during a catch-up and stops promptly;
+    - it runs in its own session, so Ctrl+C reaches it only after the world.
+
+Tested again:
+
+| Check | Result |
+|---|---|
+| Accuracy, after the trim | 150 of 150 moments of a live run |
+| Synthetic checks of the packer (`test_replay_fixes.py` in the session scratchpad) | all pass: a bad row, two recordings, one marker per event, the quake at its rumble, the first faint with Sky first, upload retries, the backlog mark |
+| A shared link opened cold | opened in replay once the island's page could hear it |
+| Playback at 4× | one tracks request in all |
+| Site | 112 tests pass |

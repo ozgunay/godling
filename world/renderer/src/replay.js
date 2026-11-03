@@ -1,17 +1,25 @@
 // Replay (ADR-016): the island's past, played here from the chunks the packer writes (mind/godling/replay.py).
 // The viewers' screen (world/viewer) says where and how fast to play. This fetches the 10 s chunks around its own
-// playhead, rebuilds each frame's whole state, and hands the frame due now to the renderer, so every viewer has a
-// playhead of their own and the server only serves files. The live stream keeps coming meanwhile: going live again
-// is instant.
+// playhead, rebuilds the frame due now from the chunk's keyframe and the changes after it, and hands it to the
+// renderer, so every viewer has a playhead of their own and the server only serves files. The live stream keeps
+// coming meanwhile: going live again is instant.
 
 const FORMAT = 1 // the newest chunk format this renderer can draw
 const AHEAD = 3 // chunks fetched ahead of the playhead
 const TELL_MS = 250 // how often the screen hears where the playhead is
+const RETRY_MS = 2000 // a chunk that did not come is asked for again after this…
+const TRIES = 4 // …this many times, before its 10 s are skipped as lost
 const TOP_KEPT = ['players', 'recent_events', 'sounds', 'game_status']
+const ASSET_PATH = /^(?:[^?#]*\/)?assets\/([^/?#]+)$/
 
 async function readChunk(res) {
   const bytes = new Uint8Array(await res.arrayBuffer())
   if (bytes[0] === 0x1f && bytes[1] === 0x8b) { // still gzipped: no server or CDN unpacked it on the way
+    if (typeof DecompressionStream !== 'function') {
+      const err = new Error('this browser cannot unpack the past')
+      err.unsupported = true
+      throw err
+    }
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
     return JSON.parse(await new Response(stream).text())
   }
@@ -30,83 +38,119 @@ function hudOf(obs) {
   return out
 }
 
-export function createReplay({ onFrame, onReset, tell, assetBase }) {
-  let base = '' // where the chunks are, absolute
+// The last frame at or before t, by index, or -1.
+function frameIndex(frames, t) {
+  if (!frames.length || frames[0].t > t) return -1
+  let lo = 0
+  let hi = frames.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (frames[mid].t <= t) lo = mid
+    else hi = mid - 1
+  }
+  return lo
+}
+
+export function createReplay({ onFrame, onReset, tell, assetBase, defaultAssetBase }) {
+  let base = '' // where the island serves the chunks, absolute
+  let remote = '' // the bucket's public address, when chunks also go there…
+  let remoteUntil = 0 // …for chunks starting before this (UTC ms), which are up
   let segments = [] // [{ start, end, live }], oldest first
   let chunkMs = 10000
   let playhead = 0 // UTC ms
   let speed = 1
   let paused = false
   let active = false
-  let shown = null // the frame on screen
+  let shown = null // the observation on screen
   let lastStep = 0
   let lastTell = 0
   let waiting = false
-  let problem = ''
-  const chunks = new Map() // t0 -> { frames } | { loading } | { missing }
+  const told = new Set() // problems already told to the screen
+  const chunks = new Map() // t0 -> a chunk being played | { loading } | { failed, tries, at }
 
-  // The world records its models as /assets/<name>; the live island serves them where its own entities say.
+  // Chunks name models asset://name.glb (older ones by the path they were served at): resolved where this island
+  // serves models, learned from the live entities, or else beside this renderer.
+  const prefix = () => assetBase() || defaultAssetBase
   const fixAsset = (e) => {
     const url = e.model_url
-    const at = assetBase()
-    if (typeof url !== 'string' || !at || !url.startsWith('/assets/')) return e
-    return { ...e, model_url: at + url.slice(8) }
+    if (typeof url !== 'string') return e
+    const name = url.startsWith('asset://') ? url.slice(8) : (!url.startsWith(prefix()) && ASSET_PATH.exec(url)?.[1])
+    if (!name) return e
+    const attrs = e.attributes?.ModelUrl ? { ...e.attributes, ModelUrl: prefix() + name } : e.attributes
+    return { ...e, model_url: prefix() + name, ...(attrs ? { attributes: attrs } : {}) }
   }
 
-  // Every frame of a chunk as a whole observation, as the live stream's would be. Unchanged entities are shared.
-  function build(chunk) {
-    const frames = []
-    let ents = new Map()
-    let top = {}
-    for (const f of chunk.frames || []) {
-      if (f.full) {
-        top = { ...f.full }
-        delete top.entities
-        ents = new Map(f.full.entities.map((e) => [e.id, fixAsset(e)]))
-      } else {
-        if (f.e) {
-          ents = new Map(ents)
-          for (const e of f.e) {
-            if (e.add) ents.set(e.add.id, fixAsset(e.add))
-            else if (e.rm) ents.delete(e.id)
-            else if (ents.has(e.id)) {
-              const was = ents.get(e.id)
-              ents.set(e.id, { ...was, ...(e.p ? { position: e.p } : {}), ...(e.r ? { rotation: e.r } : {}) })
-            }
-          }
-        }
-        top = { ...top, tick: f.tick ?? top.tick, server_time_ms: f.ms ?? top.server_time_ms }
-        for (const key of TOP_KEPT) if (key in f) top[key] = f[key]
-      }
-      frames.push({ t: f.t, obs: { ...top, entities: [...ents.values()] } })
+  // A chunk as it came, built frame by frame as the playhead reaches them: its keyframe, then the changes in place
+  // (a seek back starts again from the keyframe). Only the frame shown is copied out.
+  const prepare = (raw) => ({ frames: raw.frames || [], ents: null, top: null, idx: -1, obs: null, obsIdx: -1 })
+  function frameOf(c, idx) {
+    if (c.ents === null || idx < c.idx) {
+      const full = c.frames[0].full || {}
+      c.top = { ...full }
+      delete c.top.entities
+      c.ents = new Map((full.entities || []).map((e) => [e.id, fixAsset(e)]))
+      c.idx = 0
     }
-    return frames
+    while (c.idx < idx) {
+      const f = c.frames[++c.idx]
+      for (const e of f.e || []) {
+        if (e.add) c.ents.set(e.add.id, fixAsset(e.add))
+        else if (e.rm) c.ents.delete(e.id)
+        else {
+          const was = c.ents.get(e.id)
+          if (was) c.ents.set(e.id, { ...was, ...(e.p ? { position: e.p } : {}), ...(e.r ? { rotation: e.r } : {}) })
+        }
+      }
+      c.top = { ...c.top, tick: f.tick ?? c.top.tick, server_time_ms: f.ms ?? c.top.server_time_ms }
+      for (const key of TOP_KEPT) if (key in f) c.top[key] = f[key]
+    }
+    if (c.obsIdx !== idx) {
+      c.obs = { ...c.top, entities: [...c.ents.values()] }
+      c.obsIdx = idx
+    }
+    return c.obs
+  }
+
+  function problem(kind) {
+    if (told.has(kind)) return
+    told.add(kind)
+    tell({ type: 'godling-replay-problem', problem: kind })
   }
 
   function chunkUrl(t0) {
     const iso = new Date(t0).toISOString()
-    return `${base}/chunks/${iso.slice(0, 10)}/${iso.slice(11, 13)}/${t0}.json.gz`
-  }
-
-  function load(t0) {
-    if (chunks.has(t0)) return
-    chunks.set(t0, { loading: true })
-    fetch(chunkUrl(t0)).then(async (res) => {
-      if (!res.ok) throw new Error(String(res.status))
-      const chunk = await readChunk(res)
-      if (chunk.format > FORMAT) {
-        problem = 'newer'
-        chunks.set(t0, { missing: true })
-        return
-      }
-      if (chunks.get(t0)?.loading) chunks.set(t0, { frames: build(chunk) })
-    }).catch(() => {
-      if (chunks.get(t0)?.loading) chunks.set(t0, { missing: true })
-    })
+    return `${remote && t0 < remoteUntil ? remote : base}/chunks/${iso.slice(0, 10)}/${iso.slice(11, 13)}/${t0}.json.gz`
   }
 
   const edge = () => (segments.length ? segments[segments.length - 1].end - 100 : 0)
   const segmentAt = (t) => segments.find((s) => t >= s.start && t < s.end)
+  const recorded = (t0) => segments.some((s) => s.start < t0 + chunkMs && s.end > t0) // a chunk the index says exists
+
+  function load(t0) {
+    const was = chunks.get(t0)
+    if (was && !(was.failed && was.tries < TRIES && performance.now() - was.at > RETRY_MS)) return
+    const tries = was?.tries || 0
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    chunks.set(t0, { loading: true, controller })
+    fetch(chunkUrl(t0), controller ? { signal: controller.signal } : undefined).then(async (res) => {
+      if (!res.ok) throw new Error(String(res.status))
+      const chunk = await readChunk(res)
+      if (!chunks.get(t0)?.loading) return
+      if (chunk.format > FORMAT) {
+        problem('newer')
+        chunks.set(t0, { failed: true, tries: TRIES, at: performance.now() })
+      } else chunks.set(t0, prepare(chunk))
+    }).catch((err) => {
+      if (err?.name === 'AbortError' || !chunks.get(t0)?.loading) return
+      if (err?.unsupported) problem('unsupported')
+      chunks.set(t0, { failed: true, tries: err?.unsupported ? TRIES : tries + 1, at: performance.now() })
+    })
+  }
+
+  function forget(t0) {
+    chunks.get(t0)?.controller?.abort()
+    chunks.delete(t0)
+  }
 
   // Where the playhead may be: inside a segment. In a gap (the island was restarting), on to the next one.
   function settle(t) {
@@ -118,37 +162,31 @@ export function createReplay({ onFrame, onReset, tell, assetBase }) {
     return next ? next.start : edge()
   }
 
-  function frameAt(frames, t) {
-    let lo = 0
-    let hi = frames.length - 1
-    if (!frames.length || frames[0].t > t) return null
-    while (lo < hi) { // the last frame at or before t
-      const mid = (lo + hi + 1) >> 1
-      if (frames[mid].t <= t) lo = mid
-      else hi = mid - 1
-    }
-    return frames[lo]
-  }
-
   function step(nowMs = performance.now()) {
     if (!active) return
     const dt = Math.min(Math.max(nowMs - lastStep, 0), 250)
     lastStep = nowMs
     const t0 = playhead - (playhead % chunkMs)
-    for (let k = 0; k <= AHEAD; k++) load(t0 + k * chunkMs)
-    for (const key of chunks.keys()) if (key < t0 - chunkMs || key > t0 + (AHEAD + 1) * chunkMs) chunks.delete(key)
+    for (let k = 0; k <= AHEAD; k++) {
+      const t = t0 + k * chunkMs
+      if (t <= edge() && recorded(t)) load(t) // never past what the index says is written: not yet there
+    }
+    for (const key of [...chunks.keys()]) if (key < t0 - chunkMs || key > t0 + (AHEAD + 1) * chunkMs) forget(key)
     const here = chunks.get(t0)
-    if (here?.missing) { // a hole in the record: skip it
+    if (here?.failed && here.tries >= TRIES) { // lost, after every try: skip its 10 s
       playhead = settle(t0 + chunkMs)
       waiting = false
     } else if (!here?.frames) {
-      waiting = true // the chunk is on its way: hold the playhead
+      waiting = true // on its way, or being asked for again: hold the playhead
     } else {
       waiting = false
-      const frame = frameAt(here.frames, playhead)
-      if (frame && frame !== shown) {
-        shown = frame
-        onFrame(frame.obs)
+      const idx = frameIndex(here.frames, playhead)
+      if (idx >= 0) {
+        const obs = frameOf(here, idx)
+        if (obs !== shown) {
+          shown = obs
+          onFrame(obs)
+        }
       }
       if (!paused) {
         const wanted = playhead + dt * speed
@@ -159,8 +197,7 @@ export function createReplay({ onFrame, onReset, tell, assetBase }) {
     }
     if (nowMs - lastTell > TELL_MS) {
       lastTell = nowMs
-      tell({ type: 'godling-replay-time', t: playhead, waiting, paused, speed, edge: edge(), problem,
-        ...(shown ? hudOf(shown.obs) : {}) })
+      tell({ type: 'godling-replay-time', t: playhead, waiting, paused, edge: edge(), ...(shown ? hudOf(shown) : {}) })
     }
   }
 
@@ -173,22 +210,25 @@ export function createReplay({ onFrame, onReset, tell, assetBase }) {
   return {
     get active() { return active },
     step,
-    // { action: 'start' | 'seek' | 'speed' | 'pause' | 'segments' | 'live', ... } from the screen
+    // From the screen: { action: 'start' | 'seek' | 'segments' | 'live', … }, and speed, paused, base, remote and
+    // remoteUntil whatever the action.
     command(m) {
-      if (m.segments) segments = [...m.segments].sort((a, b) => a.start - b.start)
+      if (Array.isArray(m.segments)) segments = [...m.segments].sort((a, b) => a.start - b.start)
       if (m.chunkMs) chunkMs = Number(m.chunkMs)
       if (m.base) base = String(m.base).replace(/\/$/, '')
+      if (m.remote !== undefined) remote = String(m.remote || '').replace(/\/$/, '')
+      if (Number.isFinite(m.remoteUntil)) remoteUntil = m.remoteUntil
       if (m.speed) speed = Math.min(16, Math.max(0.25, Number(m.speed)))
       if (typeof m.paused === 'boolean') paused = m.paused
       if (m.action === 'start') {
         active = true
-        problem = ''
+        told.clear()
         lastStep = performance.now()
         seek(m.t)
       } else if (m.action === 'seek') seek(m.t)
       else if (m.action === 'live') {
         active = false
-        chunks.clear()
+        for (const key of [...chunks.keys()]) forget(key)
         shown = null
         onReset()
       }

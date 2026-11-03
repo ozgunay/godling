@@ -97,7 +97,7 @@ function tellView(message) {
 }
 view.addEventListener('load', () => {
   tellView({ type: 'godling-camera', mode: camera })
-  past?.reloaded()
+  past?.reloading() // the island's page says when it can hear the screen (godling-ready)
 })
 
 // ---- top: live and watching, the clock, the camera ----------------------------------------
@@ -470,7 +470,10 @@ addEventListener('message', (event) => {
     endAim()
     call(p, slots[POWERS.indexOf(p)], [Number(data.x), Number(data.z)])
   } else if (data.type === 'godling-aim-cancel') endAim()
-  else if (String(data.type).startsWith('godling-replay')) past?.heard(data)
+  else if (data.type === 'godling-ready') { // the island's page can hear the screen now: its camera, and the past
+    tellView({ type: 'godling-camera', mode: camera })
+    past?.heard(data)
+  } else if (String(data.type).startsWith('godling-replay')) past?.heard(data)
   else if (data.type === 'godling-stream') {
     islandStream = { state: String(data.state), world: data.world === 'down' ? 'down' : 'up' }
     drawLive(status?.watching || 0, status?.world)
@@ -566,10 +569,13 @@ function drawLive(n, panelUp) {
     : s.state === 'live' ? (s.world === 'down' ? 'Restarting' : 'Live')
     : STREAM_WORDS[s.state] || 'Offline'
   const up = word === 'Live'
-  live.classList.toggle('down', !up)
-  live.querySelector('.word').textContent = past?.on ? 'Replay' : word
+  const replaying = Boolean(past?.on)
+  live.classList.toggle('down', !up && !replaying)
+  live.classList.toggle('past', replaying)
+  live.querySelector('.word').textContent = replaying ? 'Replay' : word
   live.querySelector('.n').textContent = n.toLocaleString('en')
-  live.setAttribute('aria-label', up ? `Live, ${n} watching` : word)
+  live.setAttribute('aria-label', replaying ? `Replay of the island's past; ${n} watching it live`
+    : up ? `Live, ${n} watching` : word)
 }
 
 // ---- keys: numbers pick a slot; in the free camera, W A S D Q E fly it ---------------------
@@ -715,7 +721,7 @@ function takeNoteLimit(notes) {
 // ---- the island's past (ADR-016): a timeline, speeds and markers; the island's page plays it -----------------------
 
 past = createReplayUI({
-  stage, dock, liveBadge: live, el, text, icon, tellView, tell,
+  stage, dock, el, text, icon, tellView, tell,
   show(s) {
     if (s.act) return popup(s.act)
     drawClock(s.clock, true)
@@ -737,7 +743,7 @@ past = createReplayUI({
 })
 // A shared link to a moment (?t=…): into the past once the island's page has come up live.
 const sharedMoment = Date.parse(new URLSearchParams(location.search).get('t') || '')
-if (Number.isFinite(sharedMoment)) view.addEventListener('load', () => setTimeout(() => past.start(sharedMoment), 1500), { once: true })
+if (Number.isFinite(sharedMoment)) past.start(sharedMoment) // opens once the island's page can hear the screen
 
 let first = true
 async function poll() {

@@ -88,7 +88,7 @@ NOTE_LIMIT = 140  # characters (the world caps a note at 160 too)
 NOTE_QUEUE = 5  # notes waiting for their turn at most; past that, try again later
 NAME_LIMIT = 18
 POPUPS_KEPT = 12
-FEED_KEPT = 8  # lines of Godling's feed sent to the screen
+FEED_KEPT = replay.FEED_KEPT  # lines of Godling's feed sent to the screen, live and in replay
 # A stand-in for real moderation, which comes with accounts: no links or handles, no shouting, none of these words.
 BLOCKED = re.compile(r"\b(fuck\w*|shit\w*|cunt\w*|bitch\w*|whore\w*|nigg\w*|fag\w*|retard\w*|rape\w*|kill yourself)",
                      re.IGNORECASE)
@@ -201,12 +201,12 @@ def replay_tracks(run_dir, t_from, t_to):
 
 
 def span(query, most_ms):
-    """`from` and `to` (UTC ms) of a replay request, at most `most_ms` apart, or None."""
+    """`from` and `to` (UTC ms) of a replay request, at most `most_ms` apart and not past tomorrow, or None."""
     try:
         t_from, t_to = int(query.get("from", [""])[0]), int(query.get("to", [""])[0])
     except ValueError:
         return None
-    return (t_from, t_to) if 0 <= t_to - t_from <= most_ms else None
+    return (t_from, t_to) if 0 <= t_from <= t_to <= time.time() * 1000 + 86_400_000 and t_to - t_from <= most_ms         else None
 
 
 def world_up(base):
@@ -410,12 +410,13 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
     class Handler(BaseHTTPRequestHandler):
         timeout = 10  # seconds a connection may sit idle: a client that trickles its request in is let go
 
-        def _send(self, body, kind="application/json", code=200):
+        def _send(self, body, kind="application/json", code=200, headers=None):
             data = body.encode() if isinstance(body, str) else body
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
+            for name, value in {"Cache-Control": "no-store", **(headers or {})}.items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
@@ -451,9 +452,8 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
             if not run_dir:
                 return self._json({"ok": False, "text": "No replays without --run-dir."}, 404)
             query = urllib.parse.parse_qs(url.query)
-            if url.path == "/api/replay/index":
-                index = replay.read_index(run_dir)
-                return self._json({**index, "chunks": index.get("chunks_url") or "replay"})
+            if url.path == "/api/replay/index":  # chunks from here; with a bucket, those up before chunks_url_until there
+                return self._json({**replay.read_index(run_dir), "chunks": "replay"})
             if url.path == "/api/replay/tracks":
                 got = span(query, 3 * 3_600_000)
                 return self._json(replay_tracks(run_dir, *got) if got else {"ok": False}, 200 if got else 400)
@@ -461,19 +461,19 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
                 got = span(query, 8 * 86_400_000)
                 if not got:
                     return self._json({"ok": False}, 400)
-                read = replay.read_marks if url.path.endswith("marks") else replay.read_sky
-                return self._json(read(run_dir, *got))
+                if url.path.endswith("marks"):
+                    return self._json(replay.read_marks(run_dir, *got))
+                try:  # a long timeline needs far fewer samples than one a minute
+                    every = max(replay.SKY_EVERY_MS, int((query.get("every") or ["0"])[0]))
+                except ValueError:
+                    every = replay.SKY_EVERY_MS
+                return self._json(replay.read_sky(run_dir, *got, every))
             chunk = replay.chunk_file(run_dir, url.path.removeprefix("/replay/"))
-            if chunk is None:
-                return self._send("Not here.", "text/plain", 404)
-            data = chunk.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/gzip")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-            self.send_header("Access-Control-Allow-Origin", "*")  # the island's page fetches them; nobody's data
-            self.end_headers()
-            self.wfile.write(data)
+            if chunk is None:  # a chunk not written yet: not to be kept, and readable by the island's page
+                return self._send("Not here.", "text/plain", 404, {"Access-Control-Allow-Origin": "*"})
+            # Written once and never changed: kept for good. The island's page fetches them; they hold nobody's data.
+            self._send(chunk.read_bytes(), "application/gzip", 200, {"Cache-Control": "public, max-age=31536000, immutable",
+                                                                    "Access-Control-Allow-Origin": "*"})
 
         def do_POST(self):
             url = urllib.parse.urlsplit(self.path)

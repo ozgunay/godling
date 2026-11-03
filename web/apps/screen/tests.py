@@ -426,49 +426,94 @@ class ReplayTests(TestCase):
     """The island's past (ADR-016): anyone watches it all; what it says of viewers is looked up when served."""
 
     def setUp(self):
-        self.answers = {}
+        cache.clear()
+        self.answers, self.asked = {}, []
 
-        def fake_relay(method, path, body=None):
+        def fake_relay(method, path, body=None, timeout=15):
+            self.asked.append((path, timeout))
             return self.answers.get(path.split("?")[0], {"ok": False})
 
         patcher = mock.patch("apps.screen.island.relay", side_effect=fake_relay)
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @override_settings(GODLING_REPLAY_URL="https://replay.example.org/godling")
-    def test_the_index_names_where_the_chunks_are(self):
-        self.answers["/api/replay/index"] = {"format": 1, "segments": [{"id": "a", "start": 1, "end": 2}], "chunks": "replay"}
+    def tracks(self, entries, acts, ago_ms=60_000):
+        now = int(time.time() * 1000)
+        self.answers["/api/replay/tracks"] = {"format": 1, "from": now - ago_ms, "to": now, "lead": [],
+                                              "entries": entries, "acts": acts}
+        return self.client.get(f"/api/replay/tracks?from={now - ago_ms}&to={now}").json()
+
+    @override_settings(GODLING_REPLAY_URL="https://island.example.org/replay")
+    def test_the_index_names_where_the_chunks_are_and_is_shared(self):
+        self.answers["/api/replay/index"] = {"format": 1, "segments": [{"id": "a", "start": 1, "end": 2}],
+                                             "chunks": "replay", "chunks_url": "https://bucket.example.org/island",
+                                             "chunks_url_until": 5}
         index = self.client.get("/api/replay/index").json()
-        self.assertEqual(index["chunks"], "https://replay.example.org/godling")
-        self.assertEqual(index["segments"][0]["id"], "a")
-        self.answers["/api/replay/index"]["chunks_url"] = "https://bucket.example.org/island"
-        self.assertEqual(self.client.get("/api/replay/index").json()["chunks"], "https://bucket.example.org/island")
+        self.assertEqual(index["chunks"], "https://island.example.org/replay")  # the island's origin
+        self.assertEqual((index["chunks_url"], index["chunks_url_until"]), ("https://bucket.example.org/island", 5))
+        self.client.get("/api/replay/index")
+        self.assertEqual(len(self.asked), 1)  # one copy for every viewer for a few seconds
+        self.assertLessEqual(self.asked[0][1], 5)  # and no long wait on the island
+
+    @override_settings(GODLING_REPLAY_URL="", GODLING_PANEL_URL="http://127.0.0.1:8081")
+    def test_without_a_setting_the_panel_serves_the_chunks(self):
+        self.answers["/api/replay/index"] = {"format": 1, "segments": [], "chunks": "replay"}
+        self.assertEqual(self.client.get("/api/replay/index").json()["chunks"], "http://127.0.0.1:8081/replay")
 
     def test_marks_and_sky_pass_through_and_nothing_else_is_asked(self):
         self.answers["/api/replay/marks"] = [{"t": 5, "m": "rain"}]
         self.assertEqual(self.client.get("/api/replay/marks?from=0&to=10").json(), [{"t": 5, "m": "rain"}])
+        self.answers["/api/replay/sky"] = [{"t": 5, "hour": 7}]
+        self.client.get("/api/replay/sky?from=0&to=10&every=600000")
+        self.assertIn("every=600000", self.asked[-1][0])
         self.assertEqual(self.client.get("/api/replay/chunks").status_code, 404)
+        self.assertEqual(self.client.get("/api/replay/tracks?from=x&to=y").status_code, 400)  # the panel's refusal
 
-    def test_hidden_notes_and_gone_accounts_leave_the_past(self):
-        mara = make_user("mara")
+    def test_hidden_and_deleted_notes_and_gone_accounts_leave_the_past(self):
+        mara, sam = make_user("mara"), make_user("sam")
         kept = Note.objects.create(author=mara, text="hello island")
         hidden = Note.objects.create(author=mara, text="buy cheap gold", status=Note.HIDDEN)
-        now = int(time.time() * 1000)
-        self.answers["/api/replay/tracks"] = {
-            "format": 1, "from": now - 60_000, "to": now, "lead": [],
-            "entries": [{"time": now / 1000, "kind": "event", "text": 'A paper glider drifted down. It reads: "buy cheap gold"'},
-                        {"time": now / 1000, "kind": "decision", "thought": "The note says buy cheap gold", "needs": "logs"}],
-            "acts": [{"time": now / 1000, "id": 1, "kind": "note", "name": "mara", "text": "hello island", "ref": kept.pk},
-                     {"time": now / 1000, "id": 2, "kind": "note", "name": "mara", "text": "buy cheap gold", "ref": hidden.pk},
-                     {"time": now / 1000, "id": 3, "kind": "power", "name": "gone_viewer", "power": "Stone", "text": "x"}]}
-        tracks = self.client.get(f"/api/replay/tracks?from={now - 60_000}&to={now}").json()
-        self.assertEqual([a["id"] for a in tracks["acts"]], [1, 3])
-        self.assertEqual(tracks["acts"][0]["noteId"], kept.pk)
+        deleted = Note.objects.create(author=sam, text="visit my page soon")
+        deleted_id = deleted.pk
+        sam.delete()  # the account goes, and its notes with it
+        t = time.time()
+        tracks = self.tracks(
+            [{"time": t, "kind": "event", "sky": "Note", "text": 'A paper glider drifted down. It reads: "buy cheap gold"'},
+             {"time": t, "kind": "event", "sky": "Note", "text": 'A paper glider drifted down. It reads: "visit my page soon"'},
+             {"time": t, "kind": "event", "sky": "Note", "text": 'A paper glider drifted down. It reads: "hello island"'},
+             {"time": t, "kind": "decision", "thought": "The note says Buy Cheap Gold", "needs": "logs"},
+             {"time": t, "kind": "decision", "thought": "Someone wants me to visit my page soon", "needs": ""}],
+            [{"time": t, "id": 1, "kind": "note", "name": "mara", "text": "hello island", "ref": kept.pk},
+             {"time": t, "id": 2, "kind": "note", "name": "mara", "text": "buy cheap gold", "ref": hidden.pk},
+             {"time": t, "id": 3, "kind": "note", "name": "sam", "text": "visit my page soon", "ref": deleted_id},
+             {"time": t, "id": 4, "kind": "power", "name": "gone_viewer", "power": "Stone", "text": "x"}])
+        self.assertEqual([a["id"] for a in tracks["acts"]], [1, 4])
+        self.assertEqual((tracks["acts"][0]["name"], tracks["acts"][0]["noteId"]), ("mara", kept.pk))
         self.assertNotIn("ref", tracks["acts"][0])
         self.assertEqual(tracks["acts"][1]["name"], "Someone")
-        self.assertEqual(tracks["entries"][0]["text"], "A note drifted down; moderators have hidden it.")
-        self.assertEqual(tracks["entries"][1]["thought"], "…")
-        self.assertEqual(tracks["entries"][1]["needs"], "logs")
+        hidden_line = "A note drifted down; moderators have hidden it."
+        self.assertEqual([e.get("text") for e in tracks["entries"][:3]],
+                         [hidden_line, hidden_line, 'A paper glider drifted down. It reads: "hello island"'])
+        self.assertEqual(tracks["entries"][3]["thought"], "…")  # whatever the case
+        self.assertEqual(tracks["entries"][3]["needs"], "logs")
+        self.assertEqual(tracks["entries"][4]["thought"], "…")  # a deleted note's words too
+
+    def test_a_short_hidden_note_hides_no_other_words(self):
+        Note.objects.create(author=make_user("mara"), text="no", status=Note.HIDDEN)
+        t = time.time()
+        tracks = self.tracks([{"time": t, "kind": "decision", "thought": "I know where the stone is", "needs": "no logs"}],
+                             [])
+        self.assertEqual(tracks["entries"][0]["thought"], "I know where the stone is")
+        self.assertEqual(tracks["entries"][0]["needs"], "no logs")
+
+    def test_an_old_note_in_the_past_has_no_report_button(self):
+        mara = make_user("mara")
+        note = Note.objects.create(author=mara, text="hello island")
+        Note.objects.filter(pk=note.pk).update(created=timezone.now() - timedelta(hours=2))
+        tracks = self.tracks([], [{"time": time.time(), "id": 1, "kind": "note", "name": "mara", "text": "hello island",
+                                   "ref": note.pk}])
+        self.assertEqual(tracks["acts"][0]["text"], "hello island")
+        self.assertNotIn("noteId", tracks["acts"][0])  # the site takes reports for 30 minutes only
 
     def test_the_past_out_of_reach_says_so(self):
         with mock.patch("apps.screen.island.relay", return_value=PANEL_DOWN):

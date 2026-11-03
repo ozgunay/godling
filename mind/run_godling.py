@@ -181,8 +181,10 @@ def main():
             save.start()
             # The recording, packed for replays as it grows (ADR-016), in a process of its own: catching up on a long
             # recording must never hold up Godling's mind.
+            # A session of its own: Ctrl+C in a terminal reaches the world and the mind, and the packer only when
+            # the world has stopped (stop_children below), so it packs the world's last seconds too.
             packer = subprocess.Popen([sys.executable, "-m", "godling.replay", "follow", str(run)],
-                                      cwd=str(Path(__file__).resolve().parent), env=clean_env,
+                                      cwd=str(Path(__file__).resolve().parent), env=clean_env, start_new_session=True,
                                       stdout=(run / "replay.log").open("a"), stderr=subprocess.STDOUT)
         world.join()
         if args.bubble:
@@ -606,8 +608,14 @@ def prepare_world(world, run, walk_speed, sky_test_minutes=0, island=None):
 
     The copy also records which version of the world a run used."""
     copy = run / "world"
+    skip = shutil.ignore_patterns(".clawblox", ".build.lock", "node_modules")
     if not copy.exists():
-        shutil.copytree(world, copy, ignore=shutil.ignore_patterns(".clawblox", ".build.lock", "node_modules"))
+        shutil.copytree(world, copy, ignore=skip)
+    else:  # an existing run keeps its world script, but draws with today's renderer and models: a copy made before
+        # the replay player (ADR-016) would otherwise never play the past
+        for part in ("renderer", "assets"):
+            if (Path(world) / part).is_dir():
+                shutil.copytree(Path(world) / part, copy / part, dirs_exist_ok=True, ignore=skip)
     script = copy / "main.lua"
     src = script.read_text()
     src = _set_line(src, "humanoid.WalkSpeed = ", "16", f"{walk_speed:g}", "the walking pace")

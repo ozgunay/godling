@@ -577,6 +577,9 @@ export function createRenderer(ctx) {
       else if (data.type === 'godling-aim') (data.power ? aim.start(String(data.power)) : aim.stop())
       else if (data.type === 'godling-replay') replay?.command(data)
     })
+    // The screen sends the camera and the island's past only once this page can hear it (it loads after the frame's
+    // own load event).
+    tellScreen({ type: 'godling-ready' })
   }
 
   // Entities whose look changes when a model arrives are rebuilt; the runtime's replay waits for tracked loads
@@ -608,6 +611,8 @@ export function createRenderer(ctx) {
     onReset: () => stateBuffer.clear(),
     tell: tellScreen,
     assetBase: () => assetBase,
+    // Before any live entity has shown where the island serves models: beside this renderer (renderer-files/dist).
+    defaultAssetBase: new URL('../../assets/', import.meta.url).pathname,
   }) : null
   const bubbles = createBubbles(scene, models, resolveAsset)
   const instancer = createInstancer(scene)
@@ -1116,6 +1121,16 @@ export function createRenderer(ctx) {
     }
   }
 
+  // A frame of the past: drawn from the replay's frames, even before the first live state was ever drawn.
+  function drawReplay() {
+    replay.step()
+    const now = performance.now()
+    const dt = Math.min((now - lastStateMs) / 1000, 0.05)
+    lastStateMs = now
+    const obs = stateBuffer.interpolated() || latestObs
+    if (obs) draw(obs, dt)
+  }
+
   function draw(obs, dt) {
     latestObs = obs
     elapsed += dt
@@ -1164,11 +1179,7 @@ export function createRenderer(ctx) {
 
     onState(state) {
       if (replay?.active) { // the past is playing: the live stream waits (ADR-016)
-        replay.step()
-        const now = performance.now()
-        const dt = Math.min((now - lastStateMs) / 1000, 0.05)
-        lastStateMs = now
-        if (latestObs) draw(stateBuffer.interpolated() || latestObs, dt)
+        drawReplay()
         return
       }
       const captureMeta = state && typeof state === 'object' && state.__mesaCaptureMeta && typeof state.__mesaCaptureMeta === 'object'
@@ -1207,7 +1218,7 @@ export function createRenderer(ctx) {
 
     // Between states, keep animating (the sea, clouds and walk cycle) from the interpolated snapshots.
     onFrame({ dt }) {
-      replay?.step()
+      if (replay?.active) return drawReplay()
       if (!latestObs) return
       lastStateMs = performance.now()
       draw(stateBuffer.interpolated() || latestObs, Math.min(Math.max(dt, 0), 0.05))
