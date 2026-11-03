@@ -57,4 +57,5 @@ jobs:
           GODLING_DB_PASSWORD: checks-only
           GODLING_PANEL_KEY: checks-only
           DEEPSEEK_API_KEY: checks-only
+          GODLING_BACKUP_PASSWORD: checks-only
         run: docker compose -f deploy/docker-compose.yml config --quiet

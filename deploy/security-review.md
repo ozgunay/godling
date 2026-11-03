@@ -45,6 +45,6 @@ A report with each finding's severity, how to reproduce it, and a fix; then a re
 2. Set `GODLING_SECURITY_REVIEW` in `deploy/.env`: who reviewed, when, where the report is.
 3. Cloudflare in front, its ranges in `GODLING_PROXY_RANGES`, the server's ports 80 and 443 open to Cloudflare only (`deploy/README.md`).
 4. `GODLING_ALERT_EMAIL` set, and one alert seen arriving (stop the relay for two minutes).
-5. Backups of `pgdata` and `runs` running, and one restored.
+5. Backups going to a bucket (`GODLING_BACKUP_REPOSITORY`, ADR-018), and the new-server restore done once on a staging copy from it (`deploy/README.md`, Backups).
 6. Stripe's live keys and live webhook secret in `deploy/.env`, the webhook endpoint created in live mode; `docker compose up -d`.
 7. `deploy/check.sh` from outside: all checks pass.

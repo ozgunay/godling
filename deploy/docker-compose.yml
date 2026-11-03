@@ -35,6 +35,18 @@ x-site-env: &site-env
   GODLING_TURNSTILE_SITE_KEY: ${GODLING_TURNSTILE_SITE_KEY:-}
   GODLING_TURNSTILE_SECRET_KEY: ${GODLING_TURNSTILE_SECRET_KEY:-}
 
+# What the backups and their restores both need (ADR-018). Without GODLING_BACKUP_REPOSITORY the backups stay in the
+# backups volume on this server, and an alert says so until a bucket is set.
+x-backup-env: &backup-env
+  GODLING_DB_PASSWORD: ${GODLING_DB_PASSWORD}
+  GODLING_BACKUP_PASSWORD: ${GODLING_BACKUP_PASSWORD:?set GODLING_BACKUP_PASSWORD in .env, and keep it off the server too}
+  GODLING_BACKUP_REPOSITORY: ${GODLING_BACKUP_REPOSITORY:-}
+  GODLING_BACKUP_KEY_ID: ${GODLING_BACKUP_KEY_ID:-}
+  GODLING_BACKUP_SECRET: ${GODLING_BACKUP_SECRET:-}
+  GODLING_BACKUP_REGION: ${GODLING_BACKUP_REGION:-auto}
+  GODLING_BACKUP_DB_EVERY: ${GODLING_BACKUP_DB_EVERY:-3600}  # seconds
+  GODLING_BACKUP_RUN_EVERY: ${GODLING_BACKUP_RUN_EVERY:-21600}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -207,10 +219,50 @@ services:
   node-exporter:
     image: quay.io/prometheus/node-exporter:v1.9.1
     restart: unless-stopped
-    command: ["--path.rootfs=/host", "--no-collector.netdev", "--no-collector.netstat"]
+    command: ["--path.rootfs=/host", "--no-collector.netdev", "--no-collector.netstat",
+              "--collector.textfile.directory=/textfile"]
     pid: host
     volumes:
       - /:/host:ro
+      - backup_metrics:/textfile:ro  # what the backups last did (ADR-018)
+
+  # Backups (ADR-018): the database every hour and the run every six hours, as encrypted restic snapshots in
+  # GODLING_BACKUP_REPOSITORY; pruned daily, checked weekly by restoring the database into a scratch copy. The run
+  # is read-only here. What each job last did goes to Prometheus through node-exporter.
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backup
+    restart: unless-stopped
+    init: true  # stops at once between jobs
+    environment: *backup-env
+    volumes:
+      - runs:/runs:ro
+      - replay_chunks:/runs/live/replay/chunks:ro
+      - backups:/backups
+      - backup_cache:/cache
+      - backup_metrics:/metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Restores (ADR-018, deploy/README.md): never started with the rest. `docker compose run --rm restore db` or
+  # `restore run`, a snapshot's id after it for one other than the newest, with what it writes over stopped first.
+  restore:
+    profiles: ["restore"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backup
+    entrypoint: ["/usr/local/bin/backup", "restore"]
+    environment: *backup-env
+    volumes:
+      - runs:/runs
+      - replay_chunks:/runs/live/replay/chunks
+      - backups:/backups
+      - backup_cache:/cache
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
@@ -220,3 +272,6 @@ volumes:
   caddy_config:
   prometheus_data:
   alertmanager_data:
+  backups:
+  backup_cache:
+  backup_metrics:

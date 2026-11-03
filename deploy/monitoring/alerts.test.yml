@@ -147,3 +147,120 @@ tests:
             exp_annotations:
               summary: "The server's disk /dev/sdb is 5% free."
               description: The run's recordings and logs grow. Free space before the world and the database stop.
+
+  - name: backups on time, off the server
+    interval: 15m
+    input_series:
+      # Each job's last success keeps up with the clock: the database every 15 min here, the others now and then.
+      - series: 'godling_backup_started_timestamp_seconds{job="node"}'
+        values: "0x40"
+      - series: 'godling_backup_last_success_timestamp_seconds{job="node", what="db"}'
+        values: "0+900x40"
+      - series: 'godling_backup_last_success_timestamp_seconds{job="node", what="run"}'
+        values: "0+900x40"
+      - series: 'godling_backup_last_success_timestamp_seconds{job="node", what="check"}'
+        values: "0x40"
+      - series: 'godling_backup_offsite{job="node"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 10h
+        alertname: DatabaseBackupLate
+        exp_alerts: []
+      - eval_time: 10h
+        alertname: RunBackupLate
+        exp_alerts: []
+      - eval_time: 10h
+        alertname: BackupCheckLate
+        exp_alerts: []
+      - eval_time: 10h
+        alertname: BackupsOnThisServer
+        exp_alerts: []
+      - eval_time: 10h
+        alertname: BackupsNotReporting
+        exp_alerts: []
+
+  # Samples a minute apart or closer: a series is gone 5 minutes after its last sample, and an alert's `for` with it.
+  - name: the database backup stops
+    interval: 1m
+    input_series:
+      - series: 'godling_backup_started_timestamp_seconds{job="node"}'
+        values: "0x360"
+      - series: 'godling_backup_last_success_timestamp_seconds{job="node", what="db"}'
+        values: "0x360" # once, at the start, and never again
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: DatabaseBackupLate
+        exp_alerts: [] # 3 h is the limit
+      - eval_time: 5h
+        alertname: DatabaseBackupLate
+        exp_alerts:
+          - exp_labels: {severity: critical, job: node, what: db}
+            exp_annotations:
+              summary: "No database backup has finished well for 5h 0m 0s."
+              description: It is taken every hour. Look at docker compose logs backup (the bucket, its keys, or the database).
+
+  - name: no backup ever finishes, on this server
+    interval: 1m
+    input_series:
+      - series: 'godling_backup_started_timestamp_seconds{job="node"}'
+        values: "0x1200"
+      - series: 'godling_backup_offsite{job="node"}'
+        values: "0x1200"
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: BackupsOnThisServer
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node}
+            exp_annotations:
+              summary: The backups are kept on this server only.
+              description: A copy on the same disk does not survive losing the server. Set GODLING_BACKUP_REPOSITORY to a bucket (deploy/README.md, Backups).
+      - eval_time: 4h
+        alertname: DatabaseBackupLate
+        exp_alerts:
+          - exp_labels: {severity: critical, job: node}
+            exp_annotations:
+              summary: "No database backup has finished well for 4h 0m 0s."
+              description: It is taken every hour. Look at docker compose logs backup (the bucket, its keys, or the database).
+      - eval_time: 19h
+        alertname: RunBackupLate
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node}
+            exp_annotations:
+              summary: "No backup of the run has finished well for 19h 0m 0s."
+              description: It is taken every six hours. Look at docker compose logs backup.
+
+  - name: the weekly restore check fails
+    interval: 4m
+    input_series:
+      - series: 'godling_backup_started_timestamp_seconds{job="node"}'
+        values: "0x3300"
+      - series: 'godling_backup_last_success_timestamp_seconds{job="node", what="check"}'
+        values: "0x3300"
+    alert_rule_test:
+      - eval_time: 7d
+        alertname: BackupCheckLate
+        exp_alerts: []
+      - eval_time: 9d
+        alertname: BackupCheckLate
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node, what: check}
+            exp_annotations:
+              summary: "The weekly restore check has not passed for 9d 0h 0m 0s."
+              description: Reading the backups back, or restoring the newest database snapshot, fails. Run docker compose exec backup backup check to see why.
+
+  - name: the backup service silent
+    interval: 15m
+    input_series:
+      - series: 'up{job="node"}'
+        values: "1x6"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: BackupsNotReporting
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: BackupsNotReporting
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: The backup service reports nothing.
+              description: It is not running, or node-exporter cannot read what it writes. Look at docker compose ps backup node-exporter.
