@@ -110,41 +110,32 @@ groups:
           summary: "The server's CPU is {{ $value | humanizePercentage }} busy."
           description: The world's simulation shares it. Godling's own pace suffers first.
 
-  # What the backup service last did (deploy/backup.sh, through node-exporter's textfile collector; ADR-018). A job
-  # that never finished well is late from when the service started.
+  # What the backup service does (deploy/backup.sh, through node-exporter's textfile collector; ADR-018). The service
+  # writes when each job counts as late (from its intervals), and a heartbeat every minute: the file it writes stays
+  # in its volume after it stops, so only the heartbeat's age tells that it stopped.
   - name: backups
     rules:
-      - alert: BackupsNotReporting
-        expr: absent(godling_backup_started_timestamp_seconds)
-        for: 30m
+      - alert: BackupServiceDown
+        expr: absent(godling_backup_heartbeat_timestamp_seconds) or time() - godling_backup_heartbeat_timestamp_seconds > 600
+        for: 5m
         labels: {severity: critical}
         annotations:
-          summary: The backup service reports nothing.
-          description: It is not running, or node-exporter cannot read what it writes. Look at docker compose ps backup node-exporter.
+          summary: The backup service has not been heard from for over 10 minutes.
+          description: It is stopped, failing to start, or node-exporter cannot read what it writes. Look at docker compose ps backup node-exporter, and docker compose logs backup.
 
       - alert: DatabaseBackupLate
-        expr: time() - (godling_backup_last_success_timestamp_seconds{what="db"} or on() godling_backup_started_timestamp_seconds) > 3 * 3600
-        for: 15m
+        expr: time() - godling_backup_late_after_timestamp_seconds{what="db"} > 0
         labels: {severity: critical}
         annotations:
-          summary: "No database backup has finished well for {{ $value | humanizeDuration }}."
-          description: It is taken every hour. Look at docker compose logs backup (the bucket, its keys, or the database).
+          summary: "The database backup is {{ $value | humanizeDuration }} past due."
+          description: No database backup has finished well for three of its intervals. docker compose logs backup says why (the bucket, its keys, a lock, the database); docker compose exec backup backup db tries one now.
 
-      - alert: RunBackupLate
-        expr: time() - (godling_backup_last_success_timestamp_seconds{what="run"} or on() godling_backup_started_timestamp_seconds) > 18 * 3600
-        for: 15m
+      - alert: BackupLate
+        expr: time() - godling_backup_late_after_timestamp_seconds{what!="db"} > 0
         labels: {severity: warning}
         annotations:
-          summary: "No backup of the run has finished well for {{ $value | humanizeDuration }}."
-          description: It is taken every six hours. Look at docker compose logs backup.
-
-      - alert: BackupCheckLate
-        expr: time() - (godling_backup_last_success_timestamp_seconds{what="check"} or on() godling_backup_started_timestamp_seconds) > 8 * 86400
-        for: 1h
-        labels: {severity: warning}
-        annotations:
-          summary: "The weekly restore check has not passed for {{ $value | humanizeDuration }}."
-          description: Reading the backups back, or restoring the newest database snapshot, fails. Run docker compose exec backup backup check to see why.
+          summary: "The backups' {{ $labels.what }} job is {{ $value | humanizeDuration }} past due."
+          description: "It has not finished well for three of its intervals (the weekly check: a day past its week). docker compose exec backup backup {{ $labels.what }} runs it now and says why."
 
       - alert: BackupsOnThisServer
         expr: godling_backup_offsite == 0

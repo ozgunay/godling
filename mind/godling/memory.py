@@ -10,6 +10,8 @@ import re
 import time
 from pathlib import Path
 
+from .files import write_atomic
+
 
 def _words(text):
     return {w for w in re.findall(r"[a-z0-9_]+", text.lower()) if len(w) > 3}
@@ -22,8 +24,12 @@ class NativeMemory:
         self.episodes_path = self.root / "episodes.jsonl"
         self.state_path = self.root / "state.json"
         self.episodes = []
-        if self.episodes_path.exists():
-            self.episodes = [json.loads(line) for line in self.episodes_path.read_text().splitlines() if line.strip()]
+        if self.episodes_path.exists():  # a last line cut short (a crash, or a backup copied mid-write) is left out
+            for line in self.episodes_path.read_text().splitlines():
+                try:
+                    self.episodes.append(json.loads(line))
+                except ValueError:
+                    continue
         self.state = {"digest": "", "intentions": [], "structures": {}, "last_sleep": time.time(), "slept": 0}
         if self.state_path.exists():
             self.state.update(json.loads(self.state_path.read_text()))
@@ -82,7 +88,7 @@ class NativeMemory:
         for ep in self.episodes:
             if ep["id"] == episode_id:
                 ep["invalid"] = reason
-        self.episodes_path.write_text("".join(json.dumps(ep) + "\n" for ep in self.episodes))
+        write_atomic(self.episodes_path, "".join(json.dumps(ep) + "\n" for ep in self.episodes))
 
     def health(self):
         return {"episodes": len(self.episodes), "intentions": len(self.open_intentions()),
@@ -114,4 +120,4 @@ class NativeMemory:
         self.state["slept"] += 1
 
     def save(self):
-        self.state_path.write_text(json.dumps(self.state, indent=2))
+        write_atomic(self.state_path, json.dumps(self.state, indent=2))
