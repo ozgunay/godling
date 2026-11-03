@@ -522,8 +522,9 @@ def test_loops_carry_on_when_attention_interrupts(monkeypatch, tmp_path):
 
 
 def test_single_loop_ends_on_time(monkeypatch, tmp_path):
-    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [{}], agenda=False, minutes=1e-9)
-    rg.single_loop(*loop_args)
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [{}], agenda=False, minutes=1)
+    started = loop_args[7] - 3600  # (not a minute that is almost none: Windows' clock can read the same twice)
+    rg.single_loop(*loop_args[:7], started, *loop_args[8:])
     assert stats["projects"] == 0
 
 
@@ -591,6 +592,8 @@ def main_env(monkeypatch, tmp_path, world_server):
     monkeypatch.setattr(sys, "stdout", sys.stdout)
     monkeypatch.setattr(sys, "stderr", sys.stderr)
     monkeypatch.setenv("WORLD_OPERATOR_TOKEN", "tok")
+    monkeypatch.setenv("WORLD_AGENT_KEY", "agent")
+    monkeypatch.setenv("WORLD_SPECTATOR_TOKEN", "spec")
     monkeypatch.delenv("WORLD_BASE_PATH", raising=False)
     port = int(world_server.url.rsplit(":", 1)[1])
     FakeLLMClass.instances.clear()
@@ -646,6 +649,55 @@ def test_main_starts_the_world(main_env, monkeypatch, tmp_path):
     assert panel.args[-2:] == ["--view", "http://spectate"]
     assert json.loads((run / "island-save.json").read_text())["body"]["health"] == 80  # saved at the stop
     assert "the island put back (1 piece)" in (run / "console.log").read_text()
+
+
+def test_main_with_the_relay(main_env, monkeypatch, tmp_path):
+    _, port = main_env
+    run = tmp_path / "run6"
+    run.mkdir()
+    exe = tmp_path / "godling-relay"
+    exe.write_text("")
+    procs = []
+
+    def popen(args, **kw):
+        if args[1:2] == ["run"]:
+            (run / "world.log").write_text("Spectator frontend: http://spectate/?spectator_token=t\n")
+        procs.append(FakeProc(args, stdout=kw.get("stdout"), env=kw.get("env")))
+        return procs[-1]
+    monkeypatch.setattr(rg.subprocess, "Popen", popen)
+    monkeypatch.setenv("CLAWBLOX_BIN", "clawblox-test")
+    monkeypatch.setenv("RELAY_BIN", str(exe))
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--port", str(port), "--relay", "8190",
+                                      "--guest-panel", "9", "--world", str(world_dir(tmp_path)), "--no-agenda",
+                                      "--no-narration"])
+    try:
+        rg.main()
+    finally:
+        close_console()
+    world, relay, panel = procs
+    assert relay.args == [str(exe)] and relay.signals  # stopped with the run
+    assert relay.env["RELAY_LISTEN"] == "127.0.0.1:8190" and relay.env["RELAY_SPECTATOR_TOKEN"] == "spec"
+    assert relay.env["RELAY_UPSTREAM"] == f"ws://127.0.0.1:{port}/spectate/ws"
+    assert panel.args[-1] == "http://spectate/?spectator_token=t&stream_port=8190"  # the page streams from the relay
+    assert (run / "world.key").read_text() == "agent"  # for tools that join this world later
+    assert "DEEPSEEK_API_KEY" not in world.env
+
+
+def test_start_relay(monkeypatch, tmp_path):
+    exe = tmp_path / "godling-relay"
+    exe.write_text("")
+    monkeypatch.setenv("RELAY_BIN", str(exe))
+    monkeypatch.setenv("WORLD_BASE_PATH", "/island/")
+    monkeypatch.setenv("WORLD_SPECTATOR_TOKEN", "spec")
+    seen = {}
+    monkeypatch.setattr(rg.subprocess, "Popen", lambda args, **kw: seen.update(kw) or FakeProc(args, stdout=kw["stdout"]))
+    rg.start_relay(8190, 8092, tmp_path, {"PATH": "", "RELAY_LISTEN": "0.0.0.0:8082"})
+    assert seen["env"]["RELAY_LISTEN"] == "0.0.0.0:8082"  # deploy/ says where viewers connect
+    assert seen["env"]["RELAY_UPSTREAM"] == "ws://127.0.0.1:8092/island/spectate/ws"
+    assert seen["env"]["RELAY_BASE_PATH"] == "/island"
+    monkeypatch.setenv("RELAY_BIN", str(tmp_path / "missing"))
+    with pytest.raises(SystemExit, match="not built"):
+        rg.start_relay(8190, 8092, tmp_path, {"PATH": ""})
 
 
 def test_main_stops_the_world_if_starting_fails(main_env, monkeypatch, tmp_path):

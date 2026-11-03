@@ -1,12 +1,12 @@
 """The admin, as staff use it: every page opens; prices are edited in their list; grants, mutes and bans work; the
 island's logs show; staff need two-factor sign-in."""
 import tempfile
-import time
 from pathlib import Path
 
-from allauth.account.internal.flows.login import AUTHENTICATION_METHODS_SESSION_KEY
+from allauth.account.internal.flows.login import AUTHENTICATION_METHODS_SESSION_KEY, record_authentication
 from allauth.mfa.models import Authenticator
-from django.test import TestCase, override_settings
+from django.contrib.auth import SESSION_KEY
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from apps.credits import services
@@ -22,10 +22,16 @@ def two_factor(user):
 
 
 def code_entered(client, ago=0):
-    """As if this client's session had given its authenticator's code `ago` seconds ago (allauth's record of it)."""
+    """As if this client's session had given its authenticator's code `ago` seconds ago, recorded by allauth itself
+    (since 65.21 the records are tied to the signed-in user)."""
     session = client.session
-    session[AUTHENTICATION_METHODS_SESSION_KEY] = [{"method": "password", "at": time.time() - ago},
-                                                   {"method": "mfa", "at": time.time() - ago, "type": "totp"}]
+    request = RequestFactory().get("/")
+    request.session = session
+    user = User.objects.get(pk=session[SESSION_KEY])
+    record_authentication(request, user, "password")
+    record_authentication(request, user, "mfa", type="totp")
+    for record in session[AUTHENTICATION_METHODS_SESSION_KEY][-2:]:
+        record["at"] -= ago
     session.save()
 
 

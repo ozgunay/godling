@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import sys
 import threading
@@ -100,6 +101,8 @@ def test_mind_status(tmp_path, monkeypatch):
     feed = out["feed"]
     assert [f["who"] for f in feed] == ["godling", "sky", "notice", "godling"]
     assert feed[1]["glance"] == 90 and feed[2]["glance"] == 0
+    assert gp.mind_status(tmp_path) is out  # the log has not grown: not read again
+    monkeypatch.setitem(gp._mind_seen, "key", None)
     monkeypatch.setattr(gp, "LOG_TAIL_BYTES", 10)  # only the tail is read
     assert gp.mind_status(tmp_path)["feed"] == []
 
@@ -323,6 +326,9 @@ def test_panel_with_a_key(panel):
     code, reply = post(base + "/api/note", {"client": "abcdef", "name": "Ann", "text": "hi", "ref": 7},
                        headers={"X-Godling-Key": "secret"})
     assert code == 200 and reply["ok"]
+    code, reply = post(base + "/api/note", b'{"client": "abcdef"}',  # not JSON's type: a page elsewhere could send it
+                       headers={"X-Godling-Key": "secret", "Content-Type": "text/plain"})
+    assert code == 415 and reply["text"] == "Send JSON."
     s = json.loads(get(base + "/api/status")[2])
     assert s["mind"] == {} and s["view"].endswith("/")
 
@@ -357,9 +363,12 @@ def test_serve_stops_on_ctrl_c(monkeypatch):
 def test_main(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(gp, "serve", lambda *a: calls.append(a))
+    monkeypatch.setenv("WORLD_AGENT_KEY", "")
+    (tmp_path / "world.key").write_text("agent\n")
     monkeypatch.setattr(sys, "argv", ["guest_panel.py", "--run-dir", str(tmp_path), "--key", "k", "--host", "0.0.0.0"])
     gp.main()
     assert calls[0][2] == tmp_path.resolve() and calls[0][6:] == ("k", "0.0.0.0")
+    assert os.environ["WORLD_AGENT_KEY"] == "agent"  # the run's world asks for it
     monkeypatch.setattr(sys, "argv", ["guest_panel.py"])
     monkeypatch.delenv("GODLING_PANEL_KEY", raising=False)
     gp.main()

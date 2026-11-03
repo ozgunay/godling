@@ -1,5 +1,5 @@
 # Every test suite, with its coverage (TESTING.md): the mind and the tools, the site, the renderer and the viewer
-# screen, and the world script.
+# screen, the world script, and the stream relay.
 name: Tests
 
 on:
@@ -85,3 +85,26 @@ jobs:
         run: cargo build --release --locked --manifest-path world/tests/runner/Cargo.toml
       - name: Test, with coverage
         run: world/tests/runner/target/release/luau-test --lcov world-luau.lcov world/tests/test_*.luau
+
+  relay:
+    name: Stream relay (cargo test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            relay/target
+          key: relay-${{ runner.os }}-${{ hashFiles('relay/Cargo.lock') }}
+      - name: Install the coverage tools
+        run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Test, with coverage
+        run: cargo llvm-cov --locked --summary-only

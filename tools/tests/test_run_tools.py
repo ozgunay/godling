@@ -1,5 +1,6 @@
 """compare_runs.py, stack_timeline.py, god_bot.py and render_default_prompt.py: scripts, run as scripts."""
 import json
+import os
 import re
 import runpy
 import sys
@@ -115,8 +116,10 @@ def test_god_bot(tmp_path, monkeypatch, capsys):
     assert lines[-1]["result"] == "SkyFailed:World:down"
 
 
-def test_god_bot_without_a_log(monkeypatch, capsys):
+def test_god_bot_without_a_log(monkeypatch, capsys, tmp_path):
     import guest_panel
+    (tmp_path / "world.key").write_text("agent\n")
+    monkeypatch.setenv("WORLD_AGENT_KEY", "")
 
     class FakeSky:
         def __init__(self, world):
@@ -129,10 +132,12 @@ def test_god_bot_without_a_log(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "time", types.SimpleNamespace(
         time=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s), strftime=lambda f: "x"))
     try:
-        run_script("god_bot.py", monkeypatch, "--first", "0", "--every", "10-20", "--hours", "0.5")
+        run_script("god_bot.py", monkeypatch, "--first", "0", "--every", "10-20", "--hours", "0.5",
+                   "--run-dir", str(tmp_path))
     finally:
         monkeypatch.delitem(sys.modules, "time")
     assert capsys.readouterr().out.count("GOD  ") >= 1
+    assert os.environ["WORLD_AGENT_KEY"] == "agent"  # the run's world.key, to join with
 
 
 # ---- render_default_prompt -----------------------------------------------------------------------------------------------

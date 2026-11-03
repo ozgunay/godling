@@ -4,12 +4,13 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from apps.credits import services as credits
 from apps.credits.models import Entry, PowerCall
 from apps.notes.models import Note
-from apps.screen import views
+from apps.screen import island
 from apps.users.models import User
 
 
@@ -52,7 +53,7 @@ class RelayTests(TestCase):
 
     def relay(self, *args, key=""):
         with override_settings(GODLING_PANEL_URL=self.panel.url, GODLING_PANEL_KEY=key):
-            return views.relay(*args)
+            return island.relay(*args)
 
     def test_answers_and_the_key(self):
         self.panel.answer = (200, b'{"ok": true, "text": "done"}')
@@ -68,13 +69,13 @@ class RelayTests(TestCase):
         self.panel.answer = (403, b'{"ok": false, "text": "no key"}')
         self.assertEqual(self.relay("POST", "/api/note", {}), {"ok": False, "text": "no key"})
         self.panel.answer = (500, b"")
-        self.assertIs(self.relay("GET", "/api/status"), views.PANEL_DOWN)
+        self.assertIs(self.relay("GET", "/api/status"), island.PANEL_DOWN)
         self.panel.answer = (500, b"<html>broken</html>")
-        self.assertIs(self.relay("GET", "/api/status"), views.PANEL_DOWN)
+        self.assertIs(self.relay("GET", "/api/status"), island.PANEL_DOWN)
         self.panel.answer = (200, b"not json")
-        self.assertIs(self.relay("GET", "/api/status"), views.PANEL_DOWN)
+        self.assertIs(self.relay("GET", "/api/status"), island.PANEL_DOWN)
         with override_settings(GODLING_PANEL_URL="http://127.0.0.1:9", GODLING_PANEL_KEY=""):
-            self.assertIs(views.relay("GET", "/api/status"), views.PANEL_DOWN)
+            self.assertIs(island.relay("GET", "/api/status"), island.PANEL_DOWN)
 
 
 def make_user(name):
@@ -83,14 +84,15 @@ def make_user(name):
 
 class ScreenEdgeTests(TestCase):
     def setUp(self):
+        cache.clear()  # the shared news (island.shared)
         self.status = {"world": True, "popups": []}
         self.answer = {"ok": True, "text": "done"}
 
-        def fake_relay(method, path, body=None):
+        def fake_relay(method, path, body=None, timeout=15):
             if path.startswith("/api/status"):
                 return self.status
             return dict(self.answer)
-        patcher = mock.patch("apps.screen.views.relay", side_effect=fake_relay)
+        patcher = mock.patch("apps.screen.island.relay", side_effect=fake_relay)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -104,7 +106,7 @@ class ScreenEdgeTests(TestCase):
         self.assertEqual(self.post("/api/report", [1, 2]).status_code, 404)
 
     def test_a_panel_that_is_down_shows_an_island_that_is_not_there(self):
-        self.status = views.PANEL_DOWN
+        self.status = island.PANEL_DOWN
         self.assertFalse(self.client.get("/api/status").json()["world"])
 
     def test_pop_ups_that_are_not_notes_stay_beside_hidden_notes(self):

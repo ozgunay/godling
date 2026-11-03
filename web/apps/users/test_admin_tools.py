@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
 from apps.credits import services
+from apps.notes.tests import code_entered, two_factor
 from apps.users import admin as users_admin
 from apps.users import validators
 from apps.users.models import DisposableDomain, User
@@ -20,7 +21,8 @@ class ViewerAdminTests(TestCase):
     def setUp(self):
         self.staff = User.objects.create_superuser(username="keeper", email="keeper@example.org",
                                                    password="an-island-test-pass-4127")
-        self.client.force_login(self.staff)
+        self.client.force_login(two_factor(self.staff))
+        code_entered(self.client)
         self.viewer = User.objects.create_user(username="tomv", email="tomv@example.org", password="x-test-pass-0001")
 
     def act(self, action):
@@ -45,7 +47,8 @@ class ViewerAdminTests(TestCase):
         clerk = User.objects.create_user(username="clerk", email="clerk@example.org", password="x-test-pass-0003",
                                          is_staff=True)
         clerk.user_permissions.add(Permission.objects.get(codename="view_user"))
-        self.client.force_login(clerk)
+        self.client.force_login(two_factor(clerk))
+        code_entered(self.client)
         response = self.client.get(f"/admin/users/user/{self.viewer.pk}/credits/")
         self.assertRedirects(response, "/admin/", fetch_redirect_response=False)
 
@@ -55,7 +58,8 @@ class DomainToolsTests(TestCase):
         cache.clear()
         staff = User.objects.create_superuser(username="keeper", email="keeper@example.org",
                                               password="an-island-test-pass-4127")
-        self.client.force_login(staff)
+        self.client.force_login(two_factor(staff))
+        code_entered(self.client)
 
     def test_parsing_a_list(self):
         found = users_admin._parse_domain_text("# a comment\n\n.Spam.Example\nnot a domain\nok.io\nx.c\n")
@@ -113,7 +117,8 @@ class LogViewerTests(TestCase):
     def setUp(self):
         staff = User.objects.create_superuser(username="keeper", email="keeper@example.org",
                                               password="an-island-test-pass-4127")
-        self.client.force_login(staff)
+        self.client.force_login(two_factor(staff))
+        code_entered(self.client)
 
     def logs(self, which):
         return self.client.get(f"/admin/logs/?log={which}", HTTP_X_REQUESTED_WITH="XMLHttpRequest").json()["content"]

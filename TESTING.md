@@ -1,6 +1,6 @@
 # Tests
 
-Four suites, each with its own runner and its coverage. CI runs all four (`.github/workflows/tests.yml`). Run them
+Five suites, each with its own runner and its coverage. CI runs all five (`.github/workflows/tests.yml`). Run them
 from the repository's root unless a step says otherwise.
 
 | Suite | Where | Runner |
@@ -9,6 +9,7 @@ from the repository's root unless a step says otherwise.
 | The site | `web/apps/*/test*.py`, `web/godling_web/test_settings.py` | Django's `manage.py test` |
 | The renderer and the viewer screen | `world/renderer/test` | vitest (`world/renderer/vitest.config.js`) |
 | The world script | `world/tests/test_*.luau` | `world/tests/runner`, a small Rust program with Luau inside |
+| The stream relay | `relay/src/*.rs` (unit), `relay/tests/relay.rs` (a fake world and real sockets) | `cargo test` |
 
 ## The mind and the tools
 
@@ -58,3 +59,29 @@ world/tests/runner/target/release/luau-test world/tests/test_*.luau
   It adds `return { ... }` after the last line, so tests can reach the script's top-level locals; no line number
   changes. `patch` swaps a constant on its own line (`SKY_TEST_EVERY`, `SUPPLY_FROM_SKY`, an island save) for one boot.
 - Randomness is the test's: `table.insert(e.randoms, 0.9)` sets the next `math.random()`.
+
+## The stream relay
+
+```bash
+cd relay && cargo test --locked
+```
+
+For its coverage, with LLVM's tools (`rustup component add llvm-tools-preview`, `cargo install cargo-llvm-cov`):
+
+```bash
+cd relay && cargo llvm-cov --locked --summary-only
+```
+
+- `tests/relay.rs` runs a stand-in world and the relay on free ports, with viewers connecting as the page does. The
+  relay's timings (`Config::ping_every`, `silent_for`, `send_within`, `world_quiet`) are shortened there, so a
+  silent viewer or a quiet world takes milliseconds.
+- `tests/program.rs` starts the `godling-relay` program itself, with its settings in the environment. Measure on
+  Linux, as CI does: on Windows a program that exits early, or that is ended rather than stopped, writes no coverage,
+  so its own lines show as missed there.
+
+## The site's admin and two-factor sign-in
+
+Staff open the admin only after a two-factor code in that session (`apps/users/middleware.py`). Admin tests sign in
+with `two_factor(user)` and `code_entered(client)` from `web/apps/notes/tests.py`, which records the sign-in through
+allauth itself. django-allauth 65.21 (Python 3.11 and newer) ties those records to the user; the releases before it,
+the last for Python 3.10, do not. The middleware reads them either way.

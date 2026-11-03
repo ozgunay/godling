@@ -34,8 +34,17 @@ function panelStatus(more = {}) {
 const account = (more = {}) => ({ enabled: true, signedIn: true, username: 'ann', credits: 30, free: false, notesMuted: false,
   signIn: '/accounts/login/', signUp: '/accounts/signup/', signOut: '/accounts/logout/', creditsPage: '/credits/', ...more })
 
+// Each test's screen is a page of its own: the window listeners it adds go when the test ends, as they would with its
+// page (jsdom keeps one window for every test, and an old screen's keys would reach the frame of a page long gone).
+const pageListeners = []
+
 async function boot({ statuses = [panelStatus()], answers = {}, phone = false, coarse = false, stored = {} } = {}) {
   vi.resetModules()
+  const listen = globalThis.addEventListener.bind(globalThis)
+  vi.spyOn(globalThis, 'addEventListener').mockImplementation((type, fn, options) => {
+    pageListeners.push([type, fn, options])
+    listen(type, fn, options)
+  })
   vi.useFakeTimers()
   vi.setSystemTime(NOW * 1000)
   document.body.innerHTML = '<main id="stage"></main>'
@@ -52,6 +61,11 @@ async function boot({ statuses = [panelStatus()], answers = {}, phone = false, c
       const s = queue.length > 1 ? queue.shift() : queue[0]
       if (s instanceof Error) throw s
       return { json: async () => structuredClone(s) }
+    }
+    if (init.body === undefined) { // asking how a queued power went: answers[path] gives { status, body }, or throws
+      const a = answers[path]
+      const { status = 200, body = {} } = (typeof a === 'function' ? a() : a) || {}
+      return { status, ok: status < 400, json: async () => body }
     }
     const body = JSON.parse(init.body)
     posts.push({ path, body, headers: init.headers })
@@ -80,6 +94,7 @@ const key = (type, code, extra = {}) => new KeyboardEvent(type, { code, key: ext
 
 describe('the viewer screen', () => {
   afterEach(() => {
+    for (const [type, fn, options] of pageListeners.splice(0)) removeEventListener(type, fn, options)
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -136,6 +151,8 @@ describe('the viewer screen', () => {
     expect(follow.getAttribute('aria-pressed')).toBe('true')
     view.dispatchEvent(new Event('load'))
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-camera', mode: 'follow' })
+    // to the island's own origin only, never to whatever page the frame was sent to instead
+    expect(view.contentWindow.postMessage).toHaveBeenLastCalledWith(told.at(-1), 'http://island')
     free.click()
     expect(free.getAttribute('aria-pressed')).toBe('true')
     expect(localStorage.getItem('godling.camera')).toBe('free')
@@ -205,6 +222,71 @@ describe('the viewer screen', () => {
     expect($('.b-say').textContent).toBe('The island is out of reach. Try again in a moment.')
     await tick(6000)
     expect($('.b-say').className).toBe('b-say')
+  })
+
+  it('behind the site, asks after a queued power until the island has answered', async () => {
+    const asked = []
+    const answers = {
+      'api/power': { ok: true, pending: 12, text: 'Stone: on its way to the island…', credits: 25 },
+      'api/power/12': () => {
+        asked.push(Date.now())
+        if (asked.length === 1) throw new Error('a blip')
+        return asked.length < 3 ? { body: { ok: true, pending: 12 } }
+          : { body: { ok: true, id: 98, time: NOW, kind: 'power', name: 'ann', power: 'Stone', credits: 25 } }
+      },
+    }
+    const { stage, slot, $, tick } = await boot({ statuses: [panelStatus({ account: account() })], answers })
+    slot('Stone').click()
+    $('.b-aim .get').click()
+    await tick(0)
+    expect(slot('Stone').classList.contains('calling')).toBe(true) // on its way
+    await tick(1500)
+    expect(asked).toHaveLength(3) // every half second, through a blip
+    expect(stage.querySelector('.b-pop .head').textContent).toContain('ann')
+    expect(slot('Stone').classList.contains('calling')).toBe(false)
+    expect($('.b-purse').textContent).toContain('25')
+  })
+
+  it('a queued power whose viewer was signed out, that is gone, or that the island is slow to take', async () => {
+    const answers = { 'api/power': { ok: true, pending: 5 }, 'api/power/5': { status: 401 } }
+    const { slot, $, tick } = await boot({ statuses: [panelStatus({ account: account() })], answers })
+    const callStone = async () => {
+      slot('Stone').click()
+      $('.b-aim .get').click()
+      await tick(0)
+    }
+    await callStone()
+    await tick(500)
+    expect($('.b-say').textContent).toBe('You were signed out; sign in again to see how your power went.')
+    expect($('.b-account').classList.contains('nudge')).toBe(true)
+    answers['api/power/5'] = { status: 404 }
+    await callStone()
+    await tick(500)
+    expect($('.b-say').textContent).toBe('That power is no longer on its way.')
+    let asked = 0
+    answers['api/power/5'] = () => { asked += 1; return { status: 503 } } // the site busy: asked again and again
+    await callStone()
+    await tick(12_000)
+    expect(asked).toBe(21) // every half second for ten seconds, then every two
+    vi.setSystemTime(Date.now() + 4.5 * 60 * 1000) // until the site has surely given the call up
+    await tick(2000)
+    expect($('.b-say').textContent).toBe('The island is slow to answer; your power is still on its way.')
+  })
+
+  it('the island frame\'s own stream decides the Live badge', async () => {
+    const { $, fromIsland } = await boot()
+    expect($('.b-live .word').textContent).toBe('Live') // until the frame says anything, the panel's word
+    fromIsland({ type: 'godling-stream', state: 'reconnecting', world: 'up' })
+    expect($('.b-live .word').textContent).toBe('Reconnecting')
+    expect($('.b-live').classList.contains('down')).toBe(true)
+    expect($('.b-live').getAttribute('aria-label')).toBe('Reconnecting')
+    fromIsland({ type: 'godling-stream', state: 'live', world: 'down' })
+    expect($('.b-live .word').textContent).toBe('Restarting')
+    fromIsland({ type: 'godling-stream', state: 'odd' })
+    expect($('.b-live .word').textContent).toBe('Offline')
+    fromIsland({ type: 'godling-stream', state: 'live' })
+    expect($('.b-live .word').textContent).toBe('Live')
+    expect($('.b-live').getAttribute('aria-label')).toBe('Live, 1284 watching')
   })
 
   it('aims a power on the island, or lets the sky choose', async () => {
@@ -304,7 +386,7 @@ describe('the viewer screen', () => {
   it('behind the accounts site: the account, its credits, the site\'s prices, and reports', async () => {
     const powers = {
       Stone: { label: 'Stone', price: 4, kind: 'Gift', harms: false, does: 'drops', rule: '', did: '', after: '' },
-      Meteor: { label: 'Meteor', price: 300, kind: 'Disaster', harms: true, does: 'blasts', rule: 'one a minute', did: 'sent a meteor', after: 'boom' },
+      Meteor: { label: 'Meteor', price: 300, kind: 'Disaster', harms: true, does: 'blasts <img src=x>', rule: 'one a minute', did: 'sent a meteor', after: 'boom' },
     }
     const signedIn = panelStatus({ account: account(), powers, notes: { limit: 100, every: 120, queue: 0, wait: 0 } })
     const answers = { 'api/report': { ok: true, text: 'Reported. Thank you.' }, 'api/note': { ok: false, signIn: true, text: 'Sign in.' } }
@@ -321,6 +403,9 @@ describe('the viewer screen', () => {
     slot('Meteor').dispatchEvent(new MouseEvent('mouseenter'))
     expect($('.b-tip').textContent).toContain('one a minute')
     expect($('.b-tip').textContent).not.toContain('free while testing')
+    // what the admin typed is shown as words, never as markup (the screen shares the admin's origin)
+    expect($('.b-tip p').textContent).toBe('blasts <img src=x>')
+    expect($('.b-tip img')).toBeNull()
     const report = $('.b-pop.note .report')
     report.click()
     await tick(0)

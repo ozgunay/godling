@@ -2,6 +2,7 @@
 from django.test import TestCase
 
 from apps.notes.models import Note, Report
+from apps.notes.tests import code_entered, two_factor
 from apps.users.models import User
 
 
@@ -9,7 +10,8 @@ class NoteAdminTests(TestCase):
     def setUp(self):
         self.staff = User.objects.create_superuser(username="keeper", email="keeper@example.org",
                                                    password="an-island-test-pass-4127")
-        self.client.force_login(self.staff)
+        self.client.force_login(two_factor(self.staff))
+        code_entered(self.client)
         self.author = User.objects.create_user(username="tomv", email="tomv@example.org", password="x-test-pass-0001")
         self.reader = User.objects.create_user(username="mara", email="mara@example.org", password="x-test-pass-0002")
         self.note = Note.objects.create(author=self.author, text="hello island")

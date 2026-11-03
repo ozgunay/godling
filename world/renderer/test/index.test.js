@@ -38,12 +38,13 @@ files['/assets/stone.glb'] = prop
 files['/assets/godling.glb'] = body
 
 function runtime() {
-  const buffer = {
-    latest: null,
+  const buffer = { // as the runtime's (createSnapshotBuffer), keeping only the last state
+    last: null,
     cleared: 0,
-    push(obs) { this.latest = obs },
-    interpolated() { return this.latest },
-    clear() { this.cleared += 1; this.latest = null },
+    push(obs) { this.last = obs },
+    latest() { return this.last },
+    interpolated() { return this.last },
+    clear() { this.cleared += 1; this.last = null },
   }
   const cameraModes = { api: { name: 'camera api' }, update: vi.fn(), dispose: vi.fn(), spectator: { state: { attach: null } } }
   const ctx = {
@@ -139,7 +140,9 @@ describe('the renderer', () => {
     expect(renders.count).toBe(0)
     r.onState(island(0))
     await flush() // the models arrive
-    for (let t = 1; t <= 12; t++) r.onState(island(t * 0.3))
+    // After the whole island, the stream sends what changed (patches/v1: the state then carries __spectatorDelta).
+    const delta = (state) => ({ ...state, __spectatorDelta: { changedEntityIds: [], removedEntityIds: [], addedEntityIds: [] } })
+    for (let t = 1; t <= 12; t++) r.onState(delta(island(t * 0.3)))
     for (let k = 0; k < 40; k++) r.onFrame({ dt: 0.02 })
     expect(renders.count).toBeGreaterThan(40)
     expect(warn).toHaveBeenCalled() // the part without its colour is drawn magenta, and said so
@@ -161,16 +164,17 @@ describe('the renderer', () => {
     changed.entities.find((e) => e.id === 25).render.primitive = 'cylinder'
     changed.selected_player_id = 'p1'
     cameraModes.spectator.state.attach = { playerId: 'p1' }
-    r.onState(changed)
+    r.onState(delta(changed))
     expect(cameraModes.update).toHaveBeenCalledWith(expect.objectContaining({ mode: 'follow' }))
+    expect(buffer.cleared).toBe(0) // each change is eased in from the state before it
     const gone = { players: [], entities: [] }
-    r.onState(gone)
+    r.onState(gone) // a whole island again (a reconnect, or a new world): not eased in from before the gap
+    expect(buffer.cleared).toBe(1)
     r.onState({}) // nothing at all: the camera looks at where it looked
     r.unmount()
     expect(ctx.runtime.internal.remove).toHaveBeenCalledWith('camera')
     expect(cameraModes.dispose).toHaveBeenCalled()
     expect(globalThis.__godlingRenderer).toBeUndefined()
-    expect(buffer.cleared).toBe(0)
   })
 
   it('takes the capture\'s frames as it times them, on the low tier', () => {
@@ -183,7 +187,7 @@ describe('the renderer', () => {
     expect(buffer.cleared).toBe(1)
     r.onState({ ...obs, __mesaCaptureMeta: { push: false, dt: -1 } })
     r.onState({ ...obs, __mesaCaptureMeta: {} })
-    buffer.latest = null
+    buffer.last = null
     r.onFrame({ dt: 1 }) // the buffer had nothing: the last observation
     expect(globalThis.__godlingRenderer.tier.name).toBe('low')
     expect(renders.count).toBe(4)
@@ -223,6 +227,13 @@ describe('the renderer', () => {
     say({ source: 'godling-viewer', type: 'godling-aim', power: 'Stone' })
     say({ source: 'godling-viewer', type: 'godling-aim' })
     say({ source: 'godling-viewer', type: 'other' })
+    // The page's stream, for the screen's Live badge (patches/v3).
+    r.onConnection({ state: 'live', world: 'down' })
+    expect(screen.postMessage).toHaveBeenLastCalledWith(
+      { source: 'godling-renderer', type: 'godling-stream', state: 'live', world: 'down' }, '*')
+    r.onConnection()
+    expect(screen.postMessage).toHaveBeenLastCalledWith(
+      { source: 'godling-renderer', type: 'godling-stream', state: '', world: 'up' }, '*')
     expect(screen.postMessage.mock.calls.every(([msg]) => msg.source === 'godling-renderer')).toBe(true)
     r.unmount()
   })
@@ -255,6 +266,7 @@ describe('the renderer', () => {
     const r = createRenderer(ctx)
     r.onResize({ width: 10, height: 0, dpr: NaN })
     r.onState({ entities: [part(1, 'PickupObject', [0, 1, 0], [1, 1, 1])] })
+    r.onConnection({ state: 'live' }) // not inside the screen: nobody to tell
     r.unmount()
   })
 })

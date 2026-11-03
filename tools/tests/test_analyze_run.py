@@ -48,6 +48,11 @@ def test_zstd_decoders(monkeypatch):
     monkeypatch.setitem(sys.modules, "zstandard", fake_zstandard)
     monkeypatch.setattr(builtins, "__import__", without("compression"))
     assert ar.zstd_decoder()(b"x") == b"z:x"
+    fake_compression = types.ModuleType("compression")  # Python 3.14's own, here on any Python
+    fake_compression.zstd = types.SimpleNamespace(decompress=lambda blob: b"c:" + blob)
+    monkeypatch.setitem(sys.modules, "compression", fake_compression)
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    assert ar.zstd_decoder()(b"x") == b"c:x"
 
 
 def test_recording_and_motion(tmp_path, monkeypatch):

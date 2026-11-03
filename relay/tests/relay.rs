@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use godling_relay::island::Island;
 use godling_relay::{run, Config};
 use serde_json::{json, Value};
@@ -103,6 +103,10 @@ async fn start_relay(world_port: u16, tweak: impl FnOnce(&mut Config)) -> u16 {
         buffer: 64,
         resume_frames: 50,
         status_every: Duration::from_secs(3600),
+        ping_every: Duration::from_secs(20),
+        silent_for: Duration::from_secs(60),
+        send_within: Duration::from_secs(10),
+        world_quiet: Duration::from_secs(10),
     };
     tweak(&mut config);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -309,10 +313,264 @@ async fn the_status_counts_viewers_and_says_when_the_world_will_not_stream() {
     assert_eq!((status["world"].as_str(), status["viewers"].as_u64()), (Some("up"), Some(2)));
     assert_eq!((status["tick"].as_u64(), status["entities"].as_u64()), (Some(7), Some(2)));
 
+    // Every few seconds, everyone hears how many watch (here every 50 ms).
+    let ticking = start_relay(world_port, |config| config.status_every = Duration::from_millis(50)).await;
+    let mut d = viewer(ticking, "").await;
+    whole(&mut d).await;
+    let mut heard = 0;
+    while heard < 3 {
+        let news = next(&mut d).await;
+        if news["type"] == "relay" && news["viewers"] == 1 {
+            heard += 1;
+        }
+    }
+
     let wrong = start_relay(world_port, |config| config.token = "guessed".into()).await;
     let mut c = viewer(wrong, "").await;
     let news = next(&mut c).await;
     assert_eq!((news["type"].as_str(), news["world"].as_str()), (Some("relay"), Some("down")));
     assert!(tokio::time::timeout(Duration::from_millis(1500), whole(&mut c)).await.is_err(), "no island without the token");
     assert_eq!(relay_status(wrong).await["world"], "down");
+}
+
+/// What a scripted world does with one of the relay's connections.
+#[derive(Clone, Copy, Debug)]
+enum Visit {
+    /// The whole island, then nothing more, the socket held open.
+    Island,
+    /// Things that are no island (a binary frame, a ping, words, a list), then the world's own error.
+    Error,
+    /// A close, before any island.
+    CloseAtOnce,
+    /// The connection dropped, with no close.
+    Reset,
+}
+
+/// A world that answers the relay's connections in turn as `visits` says, and after them with the island for good.
+async fn start_scripted_world(first: Value, visits: Vec<Visit>) -> (u16, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counted = connections.clone();
+    tokio::spawn(async move {
+        let mut visits = visits.into_iter();
+        loop {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let visit = visits.next().unwrap_or(Visit::Island);
+            counted.fetch_add(1, Ordering::SeqCst);
+            let first = first.to_string();
+            tokio::spawn(async move {
+                let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                match visit {
+                    Visit::Island => {
+                        let _ = ws.send(WsMessage::Text(first.into())).await;
+                        while let Some(Ok(_)) = ws.next().await {}
+                    }
+                    Visit::Error => {
+                        let error = json!({"error": "World ended"}).to_string();
+                        for message in [WsMessage::Binary(vec![1, 2].into()), WsMessage::Ping(vec![].into()),
+                                        WsMessage::Text("not json".into()), WsMessage::Text("[1]".into()),
+                                        WsMessage::Text(error.into())] {
+                            let _ = ws.send(message).await;
+                        }
+                        while let Some(Ok(_)) = ws.next().await {}
+                    }
+                    Visit::CloseAtOnce => {
+                        let _ = ws.close(None).await;
+                    }
+                    Visit::Reset => drop(ws),
+                }
+            });
+        }
+    });
+    (port, connections)
+}
+
+/// The next message within `within`, or None when the stream has ended (or nothing came).
+async fn next_within(viewer: &mut Viewer, within: Duration) -> Option<Value> {
+    let until = tokio::time::Instant::now() + within;
+    loop {
+        match tokio::time::timeout_at(until, viewer.next()).await {
+            Ok(Some(Ok(WsMessage::Text(text)))) => return Some(serde_json::from_str(text.as_str()).unwrap()),
+            Ok(Some(Ok(WsMessage::Close(_)))) | Ok(Some(Err(_))) | Ok(None) | Err(_) => return None,
+            Ok(Some(Ok(_))) => {}
+        }
+    }
+}
+
+/// Whether the relay ends this viewer's stream within `within` (whatever it still sends before).
+async fn let_go(viewer: &mut Viewer, within: Duration) -> bool {
+    tokio::time::timeout(within, async {
+        loop {
+            match viewer.next().await {
+                None | Some(Err(_)) | Some(Ok(WsMessage::Close(_))) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn a_world_that_fails_every_way_is_followed_until_it_streams() {
+    let visits = vec![Visit::Error, Visit::CloseAtOnce, Visit::Reset];
+    let (world_port, connections) = start_scripted_world(island(3, &[1, 2]), visits).await;
+    let relay = start_relay(world_port, |_| {}).await;
+    let mut watching = viewer(relay, "").await;
+    let island = loop {
+        let message = next_within(&mut watching, Duration::from_secs(15)).await.expect("the island, in the end");
+        if message.get("type").is_none() {
+            break message;
+        }
+    };
+    assert_eq!(island["tick"], 3, "none of what came before was taken for an island");
+    assert_eq!(connections.load(Ordering::SeqCst), 4, "it came back after each failure");
+}
+
+#[tokio::test]
+async fn a_world_gone_quiet_is_down_and_is_followed_again() {
+    let (world_port, connections) = start_scripted_world(island(1, &[1]), vec![]).await;
+    let relay = start_relay(world_port, |config| config.world_quiet = Duration::from_millis(300)).await;
+    let mut watching = viewer(relay, "").await;
+    let first = whole(&mut watching).await;
+    loop {
+        let news = next(&mut watching).await;
+        if news["type"] == "relay" && news["world"] == "down" {
+            break; // the world said nothing for 300 ms
+        }
+    }
+    let again = whole(&mut watching).await;
+    assert!(again["relay_epoch"].as_u64() > first["relay_epoch"].as_u64());
+    assert!(connections.load(Ordering::SeqCst) >= 2);
+}
+
+#[tokio::test]
+async fn a_token_that_cannot_be_a_header_never_reaches_the_world() {
+    let (world_port, world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| config.token = "watch\nonly".into()).await;
+    let mut watching = viewer(relay, "").await;
+    let news = next(&mut watching).await;
+    assert_eq!((news["type"].as_str(), news["world"].as_str()), (Some("relay"), Some("down")));
+    tokio::time::sleep(Duration::from_millis(700)).await; // a retry or two
+    assert_eq!(world.connections.load(Ordering::SeqCst), 0);
+    // With no token at all, it asks without one, and this world refuses.
+    let none = start_relay(world_port, |config| config.token = String::new()).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(relay_status(none).await["world"], "down");
+}
+
+#[tokio::test]
+async fn a_viewer_is_pinged_and_let_go_once_it_stops_answering() {
+    let (world_port, _world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| {
+        config.ping_every = Duration::from_millis(50);
+        config.silent_for = Duration::from_millis(300);
+    })
+    .await;
+    let mut watching = viewer(relay, "").await;
+    whole(&mut watching).await;
+    watching.send(WsMessage::Text("still here".into())).await.unwrap(); // only read to know it is there
+    // Reading, the viewer answers each ping (the library does), so it stays well past 300 ms.
+    let (mut pings, until) = (0, tokio::time::Instant::now() + Duration::from_millis(800));
+    while let Ok(Some(message)) = tokio::time::timeout_at(until, watching.next()).await {
+        if let Ok(WsMessage::Ping(_)) = message {
+            pings += 1;
+        }
+    }
+    assert!(pings >= 5, "pinged every 50 ms, and kept: {pings} pings");
+    // Not reading, it answers nothing.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(let_go(&mut watching, Duration::from_secs(5)).await, "let go once it stopped answering");
+    assert_eq!(relay_status(relay).await["viewers"], 0);
+}
+
+#[tokio::test]
+async fn a_viewer_that_falls_behind_is_handed_the_island_again_until_it_cannot_keep_up() {
+    let (world_port, world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| config.buffer = 2).await;
+    let mut slow = viewer(relay, "").await;
+    whole(&mut slow).await;
+    let pad = "x".repeat(512 * 1024);
+    let (mut handed_again, mut ended, mut last_seq) = (0, false, 0);
+    for _ in 0..12 {
+        // Not reading while the world says a lot: its socket fills, and the stream runs on without it.
+        for _ in 0..64 {
+            world.push(json!({"type": "chat_message", "content": pad}));
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        // Reading again: what its socket held, then the whole island, and the stream on from there.
+        loop {
+            match tokio::time::timeout(Duration::from_secs(1), slow.next()).await {
+                Err(_) => break, // read up: the next round
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    let message: Value = serde_json::from_str(text.as_str()).unwrap();
+                    if message["type"] == "relay" {
+                        continue;
+                    }
+                    let whole = message.get("type").is_none();
+                    assert!(seq(&message) > last_seq || whole, "nothing twice, nothing back in time");
+                    last_seq = seq(&message);
+                    handed_again += usize::from(whole);
+                }
+                Ok(Some(Ok(_))) => {}
+                Ok(_) => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        if ended {
+            break;
+        }
+    }
+    assert!(handed_again >= 1, "handed the whole island again");
+    assert!(ended, "let go in the end: it cannot keep up");
+    assert_eq!(relay_status(relay).await["resyncs"], 3, "three times handed the island, the fourth time let go");
+}
+
+#[tokio::test]
+async fn a_viewer_that_cannot_take_the_island_it_is_handed_again_is_let_go() {
+    // A big island (12 MB), so handing it again needs the viewer to read.
+    let big = json!({"tick": 1, "entities": [{"id": 1, "pad": "x".repeat(12 * 1024 * 1024)}]});
+    let (world_port, world) = start_world(big).await;
+    let relay = start_relay(world_port, |config| {
+        config.buffer = 2;
+        config.send_within = Duration::from_secs(1);
+    })
+    .await;
+    let mut slow = viewer(relay, "").await;
+    whole(&mut slow).await;
+    let pad = "x".repeat(1024 * 1024);
+    for _ in 0..40 {
+        world.push(json!({"type": "chat_message", "content": pad})); // its socket fills; the stream runs on
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    next(&mut slow).await; // one message read: room for the send that was stuck, so it falls behind...
+    tokio::time::sleep(Duration::from_millis(2000)).await; // ...and is handed the island, which it does not read
+    assert_eq!(relay_status(relay).await["viewers"], 0);
+}
+
+#[tokio::test]
+async fn a_viewer_too_slow_to_take_a_send_is_let_go() {
+    let (world_port, world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| config.send_within = Duration::from_millis(200)).await;
+    let mut reading = viewer(relay, "").await;
+    let first = whole(&mut reading).await;
+    let (epoch, start) = (first["relay_epoch"].as_u64().unwrap(), seq(&first));
+    let pad = "x".repeat(1024 * 1024);
+    for _ in 0..48 {
+        world.push(json!({"type": "chat_message", "content": pad}));
+        next_world(&mut reading).await;
+    }
+    // Back from a gap, a viewer is handed what it missed first: here 48 MB, too much for one that never reads.
+    let _stuck = viewer(relay, &format!("?epoch={epoch}&since={start}")).await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(relay_status(relay).await["viewers"], 1, "only the one that reads");
+    // And the one that read, once it stops: a send of the stream's own takes too long.
+    for _ in 0..48 {
+        world.push(json!({"type": "chat_message", "content": pad}));
+    }
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(relay_status(relay).await["viewers"], 0, "let go when a send took too long");
 }
