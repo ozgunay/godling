@@ -1,5 +1,6 @@
 # Dependabot proposes dependency updates as pull requests every week (ADR-017); Checks and the dependency audit run on
-# each. Minor and patch updates come grouped, one pull request per ecosystem; major ones each on their own.
+# each. Minor and patch updates come grouped, one pull request per ecosystem; major ones each on their own, except
+# packages that must move in step (vitest and its plugins pin each other's exact version).
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -13,7 +14,9 @@ updates:
   - package-ecosystem: npm
     directory: /world/renderer
     schedule: {interval: weekly}
-    groups: {minor-and-patch: {update-types: [minor, patch]}}
+    groups: # a dependency goes in the first group it matches
+      vitest: {patterns: [vitest, "@vitest/*"]}
+      minor-and-patch: {update-types: [minor, patch]}
   - package-ecosystem: docker # the base images in deploy/Dockerfile.*
     directory: /deploy
     schedule: {interval: weekly}
