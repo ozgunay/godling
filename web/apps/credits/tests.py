@@ -115,7 +115,7 @@ class NoPaymentsTests(TestCase):
 @override_settings(GODLING_STRIPE_SECRET_KEY="sk_test_x", GODLING_STRIPE_WEBHOOK_SECRET="whsec_x")
 class StripeTests(TestCase):
     """Stripe stands in here as it behaves: it keeps the charge and the dispute as they are now (what retrieve gives),
-    and an event carries a copy of one, which may be older."""
+    and an event carries a copy of one, which may be older. Both come as stripe-python's own objects, not dicts."""
 
     events = 0
 
@@ -125,8 +125,10 @@ class StripeTests(TestCase):
         self.charge_now = {"object": "charge", "id": "ch_1", "payment_intent": "pi_1", "amount": 500,
                            "amount_refunded": 0}
         self.disputes = {}
-        for target, now in (("stripe.Charge.retrieve", lambda charge_id, **kw: dict(self.charge_now)),
-                            ("stripe.Dispute.retrieve", lambda dispute_id, **kw: dict(self.disputes[dispute_id]))):
+        for target, now in (
+                ("stripe.Charge.retrieve", lambda charge_id, **kw: stripe.Charge.construct_from(self.charge_now, "k")),
+                ("stripe.Dispute.retrieve",
+                 lambda dispute_id, **kw: stripe.Dispute.construct_from(self.disputes[dispute_id], "k"))):
             patcher = mock.patch(target, side_effect=now)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -138,7 +140,7 @@ class StripeTests(TestCase):
         return response, create
 
     def webhook(self, event):
-        with mock.patch("stripe.Webhook.construct_event", return_value=event):
+        with mock.patch("stripe.Webhook.construct_event", return_value=stripe.Event.construct_from(event, "k")):
             return self.client.post(reverse("credits_stripe_webhook"), b"{}", content_type="application/json",
                                     HTTP_STRIPE_SIGNATURE="t=1,v1=x")
 
@@ -452,9 +454,9 @@ class StripeTests(TestCase):
         """Only the event's own record counts as 'seen': another failure is a 500, and Stripe sends it again."""
         self.paid()
         strict = Client(raise_request_exception=False)
-        with mock.patch("stripe.Webhook.construct_event",
-                        return_value={"id": "evt_boom", "type": "charge.refunded", "livemode": False,
-                                      "data": {"object": dict(self.charge_now, amount_refunded=500)}}), \
+        boom = {"id": "evt_boom", "type": "charge.refunded", "livemode": False,
+                "data": {"object": dict(self.charge_now, amount_refunded=500)}}
+        with mock.patch("stripe.Webhook.construct_event", return_value=stripe.Event.construct_from(boom, "k")), \
                 mock.patch("apps.credits.services.refunded", side_effect=IntegrityError("something else")):
             response = strict.post(reverse("credits_stripe_webhook"), b"{}", content_type="application/json",
                                    HTTP_STRIPE_SIGNATURE="t=1,v1=x")
@@ -481,7 +483,7 @@ WEBHOOK_SECRET = "whsec_test_signed"
 @override_settings(GODLING_STRIPE_SECRET_KEY="", GODLING_STRIPE_WEBHOOK_SECRET=WEBHOOK_SECRET)
 class SignedWebhookTests(TestCase):
     """Real signed bodies through stripe-python's own construct_event, nothing mocked: the shapes the views read are
-    the shapes the installed library hands them (the other tests mock it with plain dicts)."""
+    the shapes the installed library hands them (the other tests mock it, with objects the library makes)."""
 
     def post(self, event, signed_at=None):
         body = json.dumps(event)

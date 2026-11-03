@@ -1,6 +1,6 @@
 Django>=6.1.2,<7  # 5.2 LTS: the WSL machine runs Python 3.10 (AgentOp is on Django 6)
 django-allauth[mfa]>=65.21.1,<66  # mfa: two-factor sign-in, which staff need for the admin
-stripe>=12.5,<13  # pins Stripe's API version 2025-08-27.basil, the one the credits code is tested against
+stripe>=16.1.0,<17  # pins Stripe's API version 2026-10-28.endive, the one the credits code is tested against
 whitenoise>=6.12.0
 gunicorn>=26.2.0
 psycopg[binary]>=3.2
