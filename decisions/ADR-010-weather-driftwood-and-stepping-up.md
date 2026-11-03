@@ -111,3 +111,33 @@ Fixed:
 Tested live, in rain:
 - **A log across two 2-block stacks:** "too low … out in the rain … and cold".
 - **A log across two 3-block stacks** (laid from a step): the body walked under it, and both the walk and the wait reported "under a roof with walls round you, out of the rain and the cold".
+
+### Fire, fishing and reaching up (also after n8)
+In n8 the mind never made fire or fished, and laying a third layer from the ground failed about half the time.
+- **A `rub` move.** Striking a log with the spear was the only way to rub it, and nothing told the mind so.
+  - `rub` works what the hands hold against a thing, over and over, for up to 30 rubs (about half a minute), until something comes of it.
+  - The world takes it as a `Rub` input. The fire rules are unchanged: the spear against a log heats it, and a coconut within 3 is still the only tinder. Anything else rubbed comes to nothing.
+  - Its reports: "the wood grew warm, no more", "grew hot and smoked, but nothing beside it caught", or "a flame caught: Fire_1 burns on Log_3".
+  - The mind is still not told about the tinder.
+- **What `strike` is for.** Its description now says what each tool does with it: an axe fells a palm or carves a log, a hammer breaks stone off the quarry, a spear takes a fish.
+- **A spear reaches further.** Fish swim 6–8 off the sand, but from the beach an arm's strike reaches only about 5.4 out, so a fish was almost never in reach.
+  - A spear (4.5 long) thrust at a fish now reaches 2.5 further than an arm, in the world and in the body's planning.
+- **Stepping up to reach.** From the floor it stands on, the body's hands reach a third layer but not a fourth (8.75).
+  - When `place_at` finds no spot to reach from, and the target is more than the body's height above its floor, the body looks for something one block high near the target. It steps up onto it, places the piece, and steps back down.
+  - Its report says "you stood on Block_6 to reach that high". If there is nothing to step on, it says "it is above your reach from there, and nothing one block high stands near it to step up onto".
+  - The final walk before placing now closes in when the body stops a little short, instead of letting the world reject the place as out of range.
+- **The mind is told:** its hands set pieces at most three blocks above the floor it stands on; higher, it steps up onto something a block high beside the spot.
+
+Tested live:
+
+| Check | Result |
+|---|---|
+| Rub a log, no coconut near | 30 rubs in 27 s: "hot and smoked, but nothing beside it caught" |
+| Rub a standing palm | "does nothing" |
+| Rub a log, a coconut beside it | a flame after 24 rubs (21 s) |
+| Spear fish from the shore (before) | 0 of 4: "too far out in the water" |
+| Spear fish from the shore (after) | 3 caught in 8 strikes: 2 misses (the 60% chance), and one fish stayed too far out |
+| Third layer from the ground | placed |
+| Fourth layer, nothing to step on | refused, with the reason |
+| Fourth layer, a block beside the stack (either side) | stepped up, placed at 8.75, stepped back down |
+| Roof log across two 3-block stacks, from the ground, in rain | stepped up and laid it; the body then sheltered under it |

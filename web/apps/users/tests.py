@@ -94,7 +94,7 @@ TEST_SECRET = "1x0000000000000000000000000000000AA"
 
 @override_settings(GODLING_TURNSTILE_SITE_KEY=TEST_SITE_KEY, GODLING_TURNSTILE_SECRET_KEY=TEST_SECRET)
 class TurnstileTests(TestCase):
-    """Cloudflare Turnstile on sign-up (apps.users.turnstile, ADR-016), with Cloudflare's answer stood in for."""
+    """Cloudflare Turnstile on sign-up (apps.users.turnstile, ADR-017), with Cloudflare's answer stood in for."""
 
     def setUp(self):
         cache.clear()

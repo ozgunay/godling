@@ -3,6 +3,7 @@
 // site (web/, ADR-012) does, in front of the panel: then powers and notes need a signed-in account, and the status
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
+import { createReplayUI } from './replay.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
 const POLL_MS = 1500
@@ -51,6 +52,7 @@ let camera = store.get('godling.camera') === 'free' ? 'free' : 'follow'
 const seen = new Set() // pop-ups already shown
 const cooling = {} // power id -> when the world lets it be called again (ms)
 let noteReadyAt = 0
+let past = null // the island's past, once the screen is built (replay.js)
 
 function el(tag, cls, html) {
   const e = document.createElement(tag)
@@ -93,7 +95,10 @@ function tellView(message) {
   if (!viewSrc) return
   view.contentWindow?.postMessage({ source: 'godling-viewer', ...message }, new URL(viewSrc, location.href).origin)
 }
-view.addEventListener('load', () => tellView({ type: 'godling-camera', mode: camera }))
+view.addEventListener('load', () => {
+  tellView({ type: 'godling-camera', mode: camera })
+  past?.reloading() // the island's page says when it can hear the screen (godling-ready)
+})
 
 // ---- top: live and watching, the clock, the camera ----------------------------------------
 
@@ -360,6 +365,13 @@ async function post(path, body) {
   }
 }
 
+// Watching the past (ADR-016 D6): nothing can be changed there; the powers wait for live.
+function inThePast() {
+  if (!past?.on) return false
+  tell('You are watching the past. Go live to call powers and send notes.')
+  return true
+}
+
 // Behind the site a power is queued for the island and the answer is `pending` (its call's id): ask how it went, every
 // half second at first and then every two, until the world has answered. The panel on its own answers at once.
 const PENDING_DEADLINE_MS = 4.5 * 60 * 1000 // the site gives a call up after 3 minutes (4 once sent), so this ends
@@ -381,7 +393,7 @@ async function settled(answer) {
 }
 
 async function call(p, s, at = null) {
-  if (s.classList.contains('calling')) return
+  if (inThePast() || s.classList.contains('calling')) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   s.classList.add('calling')
   const answer = await settled(await post('api/power', { power: p.id, ...(at ? { at } : {}) }))
@@ -422,6 +434,7 @@ function aimHint(p, spot) {
 
 function toggleAim(p) {
   if (aiming?.id === p.id) return endAim()
+  if (inThePast()) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   toggleNote(false)
   unpick() // the slot's focus opened its tip before the click; the aim bar takes that place
@@ -457,6 +470,10 @@ addEventListener('message', (event) => {
     endAim()
     call(p, slots[POWERS.indexOf(p)], [Number(data.x), Number(data.z)])
   } else if (data.type === 'godling-aim-cancel') endAim()
+  else if (data.type === 'godling-ready') { // the island's page can hear the screen now: its camera, and the past
+    tellView({ type: 'godling-camera', mode: camera })
+    past?.heard(data)
+  } else if (String(data.type).startsWith('godling-replay')) past?.heard(data)
   else if (data.type === 'godling-stream') {
     islandStream = { state: String(data.state), world: data.world === 'down' ? 'down' : 'up' }
     drawLive(status?.watching || 0, status?.world)
@@ -464,6 +481,7 @@ addEventListener('message', (event) => {
 })
 
 function toggleNote(open = composer.hidden) {
+  if (open && inThePast()) return
   if (open && aiming) endAim()
   composer.hidden = !open
   slots[POWERS.findIndex((p) => p.note)].classList.toggle('open', open)
@@ -551,10 +569,13 @@ function drawLive(n, panelUp) {
     : s.state === 'live' ? (s.world === 'down' ? 'Restarting' : 'Live')
     : STREAM_WORDS[s.state] || 'Offline'
   const up = word === 'Live'
-  live.classList.toggle('down', !up)
-  live.querySelector('.word').textContent = word
+  const replaying = Boolean(past?.on)
+  live.classList.toggle('down', !up && !replaying)
+  live.classList.toggle('past', replaying)
+  live.querySelector('.word').textContent = replaying ? 'Replay' : word
   live.querySelector('.n').textContent = n.toLocaleString('en')
-  live.setAttribute('aria-label', up ? `Live, ${n} watching` : word)
+  live.setAttribute('aria-label', replaying ? `Replay of the island's past; ${n} watching it live`
+    : up ? `Live, ${n} watching` : word)
 }
 
 // ---- keys: numbers pick a slot; in the free camera, W A S D Q E fly it ---------------------
@@ -697,6 +718,33 @@ function takeNoteLimit(notes) {
   noteCount.textContent = `${[...noteText.value].length}/${limit}`
 }
 
+// ---- the island's past (ADR-016): a timeline, speeds and markers; the island's page plays it -----------------------
+
+past = createReplayUI({
+  stage, dock, rewindIn: statusBar, el, text, icon, tellView, tell,
+  show(s) {
+    if (s.act) return popup(s.act)
+    drawClock(s.clock, true)
+    drawBody(s.godling)
+    drawMind(s.mind, s.clock?.hour, s.now)
+  },
+  onChange(on) {
+    if (on) {
+      endAim()
+      toggleNote(false)
+    }
+    drawLive(status?.watching || 0, status?.world)
+    if (!on && status) {
+      drawClock(status.clock, status.world)
+      drawMind(status.mind, status.clock?.hour, status.now || Date.now() / 1000)
+      drawBody(status.godling)
+    }
+  },
+})
+// A shared link to a moment (?t=…): into the past once the island's page has come up live.
+const sharedMoment = Date.parse(new URLSearchParams(location.search).get('t') || '')
+if (Number.isFinite(sharedMoment)) past.start(sharedMoment) // opens once the island's page can hear the screen
+
 let first = true
 async function poll() {
   try {
@@ -712,10 +760,12 @@ async function poll() {
   takeNoteLimit(status.notes)
   if (status.account) drawPurse(account)
   drawLive(status.watching || 0, status.world)
-  drawClock(status.clock, status.world)
-  drawMind(status.mind, status.clock?.hour, now)
-  drawBody(status.godling)
-  for (const p of status.popups || []) popup(p, !first && now - p.time < POPUP_MS / 1000 || first && now - p.time < 4)
+  if (!past.on) { // in the past, the replay fills these (replay.js)
+    drawClock(status.clock, status.world)
+    drawMind(status.mind, status.clock?.hour, now)
+    drawBody(status.godling)
+  }
+  for (const p of status.popups || []) popup(p, !past.on && (!first && now - p.time < POPUP_MS / 1000 || first && now - p.time < 4))
   if (status.notes?.wait) noteReadyAt = Math.max(noteReadyAt, Date.now() + status.notes.wait * 1000)
   first = false
   setTimeout(poll, POLL_MS)

@@ -8,6 +8,7 @@ urlpatterns = [
     path("api/power/<int:call>", views.api_power_result),
     path("api/note", views.api_note),
     path("api/report", views.api_report),
+    path("api/replay/<str:what>", views.api_replay),
     path("", views.screen),
     re_path(r"^(?P<path>(?!api/|accounts/|admin/|credits/).+)$", views.screen),
 ]

@@ -55,7 +55,9 @@ The relay's own job: send the same message to N viewers 15 times a second for 15
 - **Returning viewers** (`?epoch=&since=`) get only what they missed, from the last 300 updates (ten seconds). Another epoch, or a place no longer held: the whole island.
 - **A world restart** reaches viewers on the socket they hold: `{"type":"relay","world":"down"}`, then the new island with a new epoch.
 - **Slow viewers**: a viewer 256 frames behind gets the whole island again; after three, it is let go to reconnect.
-- **Limits**: viewers in all (5,000) and per address (8; behind Caddy, from its X-Forwarded-For), an Origin list, a 4 KB cap on what a viewer sends, pings and a 60 s silence limit, a 10 s send limit.
+- **Limits**: viewers in all (5,000) and per address (behind Caddy, from its X-Forwarded-For), an Origin list (any case), a 4 KB cap on what a viewer sends, pings and a 60 s silence limit, a 10 s send limit.
+  - Per address, after the PR #20 review: 64 sockets, not 8, since a phone network puts many people behind one address; an IPv6 address counts by its /64, or one home would be countless addresses.
+  - New sockets per address: a burst of 64, then 60 a minute. Each new socket is handed the whole island (about 276 KB), so opening and closing them in a loop would make the relay send that over and over. A page back from a gap mostly resumes instead.
 - **`/relay/status`**: the world, epoch, place, tick, entities, viewers (an honest watcher count), resumes, resyncs.
 
 ### The page (`patches/v3-stream-reconnect.patch`, Clawblox's `main.js`)
@@ -71,7 +73,8 @@ The relay's own job: send the same message to N viewers 15 times a second for 15
 
 ### Running it
 - Locally: `run_godling.py --relay 8082` starts the relay with the world's token and points the screen's island at it.
-- Deployed: the island image builds the relay and applies v3; `island-start` runs it on 8082. Caddy sends `/island/spectate/ws` to the relay and adds the token to the page's other requests; `/island/spectate` (a whole island per call, which the page never asks for) is closed. The public link is `https://<island domain>/island`.
+- Deployed: the island image applies v3, and the relay is a Compose service of its own (`deploy/Dockerfile.relay`: one binary, its own user, its own container). Caddy sends `/island/spectate/ws` to the relay and adds the token to the page's other requests; `/island/spectate` (a whole island per call, which the page never asks for) is closed. The public link is `https://<island domain>/island`.
+  - Its own container since the PR #20 review: the relay is the part of the island the whole internet talks to. In the island's container it ran as the same user as the world and the mind, and could have read their keys (the agent key, the operator token, the DeepSeek key) from `/proc`. Now it holds the spectator token and nothing else.
 - The admin's log viewer shows `relay.log`.
 
 ## Tests

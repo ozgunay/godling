@@ -11,17 +11,16 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::hub::{Counters, Hub};
 
-/// The world sends at least every fifth tick (about 165 ms) even when nothing moves: this long silent, it is gone.
-const QUIET: Duration = Duration::from_secs(10);
 const RETRY_FIRST: Duration = Duration::from_millis(500);
 const RETRY_MOST: Duration = Duration::from_secs(10);
 
 /// Follow the world's stream at `url` for good: connect, hand everything to the hub, and on any end tell the hub the
-/// world is down and connect again, waiting longer each time (with jitter), up to RETRY_MOST.
-pub async fn follow(hub: Arc<Hub>, url: String, token: String) {
+/// world is down and connect again, waiting longer each time (with jitter), up to RETRY_MOST. A world silent for
+/// `quiet` (Config::world_quiet) is gone.
+pub async fn follow(hub: Arc<Hub>, url: String, token: String, quiet: Duration) {
     let mut wait = RETRY_FIRST;
     loop {
-        match watch(&hub, &url, &token).await {
+        match watch(&hub, &url, &token, quiet).await {
             Ok(true) => wait = RETRY_FIRST, // it brought an island: a later drop starts the waits over
             Ok(false) => {}
             Err(err) => eprintln!("[relay] the world's stream: {err}"),
@@ -33,7 +32,7 @@ pub async fn follow(hub: Arc<Hub>, url: String, token: String) {
 }
 
 /// One connection, until it ends: Ok(true) if it brought an island.
-async fn watch(hub: &Hub, url: &str, token: &str) -> Result<bool, String> {
+async fn watch(hub: &Hub, url: &str, token: &str, quiet: Duration) -> Result<bool, String> {
     let mut request = url.into_client_request().map_err(|err| err.to_string())?;
     if !token.is_empty() {
         // In a header, not the address: it stays out of the world's request logs.
@@ -43,7 +42,7 @@ async fn watch(hub: &Hub, url: &str, token: &str) -> Result<bool, String> {
     let (mut stream, _) = tokio_tungstenite::connect_async(request).await.map_err(|err| err.to_string())?;
     let mut seen = false;
     loop {
-        let message = match tokio::time::timeout(QUIET, stream.next()).await {
+        let message = match tokio::time::timeout(quiet, stream.next()).await {
             Err(_) => return Err("the world went quiet".into()),
             Ok(None) => return Ok(seen),
             Ok(Some(Err(err))) => return Err(err.to_string()),

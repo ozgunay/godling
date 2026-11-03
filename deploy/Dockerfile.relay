@@ -1,0 +1,14 @@
+# The island's stream relay (relay/, ADR-015) on its own: the one part of the island every viewer's socket reaches.
+# A small image with one binary, run as a user of its own, in a container of its own: it holds the spectator token and
+# nothing else, so nothing it could be made to do reaches Godling's keys (the agent key, the operator token, the
+# DeepSeek key), which live in the island's container. Build context: the repo root.
+FROM rust:1-bookworm AS build
+COPY relay/ /relay/
+RUN cargo install --path /relay --locked --root /out
+
+FROM debian:bookworm-slim
+COPY --from=build /out/bin/godling-relay /usr/local/bin/godling-relay
+RUN useradd --no-create-home --shell /usr/sbin/nologin relay
+USER relay
+EXPOSE 8082
+CMD ["godling-relay"]

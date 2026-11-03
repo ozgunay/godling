@@ -1,4 +1,4 @@
-# Prometheus for the island (ADR-016): it reads the stream relay, Caddy and the server every 15 s, keeps 30 days, and
+# Prometheus for the island (ADR-017): it reads the stream relay, Caddy and the server every 15 s, keeps 30 days, and
 # hands what deploy/monitoring/alerts.yml finds wrong to Alertmanager, which emails it.
 # Its page is not public: http://localhost:9090 on the server (an SSH tunnel: deploy/README.md).
 global:
@@ -16,7 +16,7 @@ rule_files:
 scrape_configs:
   - job_name: relay # viewers, refusals, resyncs, bytes sent (relay/src/hub.rs metrics)
     static_configs:
-      - targets: ["island:8082"]
+      - targets: ["relay:8082"]
   - job_name: caddy # requests, errors and response sizes per host (Caddyfile :2020)
     static_configs:
       - targets: ["caddy:2020"]

@@ -8,7 +8,8 @@ However many watch, the world works out its changes once.
 cd relay && cargo build --release && cargo test
 ```
 The binary is `target/release/godling-relay`. `mind/run_godling.py --relay 8082` starts it with the run's world (it
-finds it there, on the PATH, or at `RELAY_BIN`); the island image builds it (`deploy/Dockerfile.island`).
+finds it there, on the PATH, or at `RELAY_BIN`). Deployed, it is a Compose service of its own (`deploy/Dockerfile.relay`):
+the part of the island the whole internet talks to holds the spectator token and none of Godling's keys.
 
 ## Settings (environment)
 | Variable | Default | |
@@ -17,12 +18,10 @@ finds it there, on the PATH, or at `RELAY_BIN`); the island image builds it (`de
 | `RELAY_UPSTREAM` | `ws://127.0.0.1:8080/spectate/ws` | The world's spectator stream. |
 | `RELAY_SPECTATOR_TOKEN` | `WORLD_SPECTATOR_TOKEN` | The world's token, sent in a header. Only the relay holds it. |
 | `RELAY_BASE_PATH` | none | Served under this path, as the world is (`/island` when deployed). |
-| `RELAY_ORIGINS` | any | Page origins a viewer's socket may come from, comma-separated. |
+| `RELAY_ORIGINS` | any | Page origins a viewer's socket may come from, comma-separated (any case). |
 | `RELAY_MAX_VIEWERS` | 5000 | Viewers at once. |
-| `RELAY_MAX_PER_IP` | 8 | Viewers from one address. An IPv6 address counts by its /64, the block one subscriber holds. |
-| `RELAY_CONNECT_BURST` | 10 | New connections from one address at once… |
-| `RELAY_CONNECTS_PER_MINUTE` | 20 | …and then this many a minute. Refused with 429 and `Retry-After`. |
-| `RELAY_ALL_CONNECTS_PER_SECOND` | 200 | New connections from everyone together, in bursts of twice that. Pages that reconnect wait longer each time, so a relay coming back is spread out. |
+| `RELAY_MAX_PER_IP` | 64 | Viewers from one address (a phone network puts many behind one); an IPv6 /64 counts as one. Also the burst of new sockets one address may open at once. |
+| `RELAY_CONNECTS_PER_MINUTE` | 60 | New sockets one address may open a minute after that burst: each is handed the whole island. |
 | `RELAY_TRUSTED_PROXIES` | 0 | Proxies of ours in front (Caddy: 1); the viewer's address is then read from their X-Forwarded-For. |
 | `RELAY_BUFFER` | 256 | Frames a viewer may fall behind before it is handed the whole island again. |
 | `RELAY_RESUME_FRAMES` | 300 | Updates kept for viewers coming back (ten seconds of the stream). |

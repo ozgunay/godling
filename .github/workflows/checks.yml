@@ -1,5 +1,5 @@
-# Every pull request and every push to main: the relay's tests and lints, the site's tests, and the deployment's
-# configs as their own tools read them (Caddy, Prometheus, Compose). ADR-016.
+# Every pull request and every push to main: the relay's lints, and the deployment's configs as their own tools read
+# them (Caddy, Prometheus, Alertmanager, Compose). ADR-017. The test suites themselves are in tests.yml.
 name: Checks
 
 on:
@@ -12,32 +12,18 @@ permissions:
 
 jobs:
   relay:
+    name: Stream relay (clippy)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: relay
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Tests
-        run: cargo test --locked
       - name: Lints, warnings as errors
         run: cargo clippy --locked --all-targets -- -D warnings
 
-  site:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: web/requirements.txt
-      - run: pip install -r web/requirements.txt
-      - name: Tests
-        working-directory: web
-        run: python manage.py test
-
   deploy:
+    name: Deployment configs
     runs-on: ubuntu-latest
     env:
       GODLING_DOMAIN: godling.example.com

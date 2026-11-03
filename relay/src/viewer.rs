@@ -1,9 +1,5 @@
 //! One viewer's socket: what it is missing first, then the shared stream. Viewers only watch: what they send is
 //! read only to know they are still there, and anything over a few kilobytes closes the socket.
-//!
-//! Who may connect (`Admission`): a few sockets per address and a cap in all, and new connections paced per address
-//! and in all, so a script that connects again and again cannot make the relay send the island over and over. An
-//! IPv6 address counts by its /64, the block one subscriber holds: otherwise one person has billions of addresses.
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,14 +18,10 @@ use crate::hub::{Counters, Frame, Kind};
 use crate::App;
 
 const MAX_IN: usize = 4 * 1024; // a viewer has nothing to say: pongs, and a close
-const PING_EVERY: Duration = Duration::from_secs(20);
-const SILENT_FOR: Duration = Duration::from_secs(60); // three pings unanswered: the phone is gone
-const SEND_WITHIN: Duration = Duration::from_secs(10); // a send this slow means its buffers are full
 const RESYNCS_KEPT: u32 = 3; // a viewer that falls behind this often cannot keep up: let it reconnect later
-const PACE_KEPT: usize = 100_000; // address blocks remembered for pacing; past that, the ones back to full go
 
 /// `?epoch=&since=`: where a returning viewer left off (the last `relay_epoch` and `relay_seq` it saw). `gz=1`: it
-/// can take a whole island gzipped.
+/// can take a whole island gzipped (ADR-017).
 #[derive(Deserialize)]
 pub struct Resume {
     epoch: Option<u64>,
@@ -47,21 +39,23 @@ pub async fn stream(
 ) -> Response {
     let counters = &app.hub.counters;
     if !app.config.origins.is_empty() {
-        // Browsers always send the page's origin: another site cannot show our stream as its own.
+        // Browsers always send the page's origin: another site cannot show our stream as its own. A host name has no
+        // case, so neither does the match (a domain written with capitals in .env still matches the browser's).
         let origin = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()).unwrap_or("");
-        if !app.config.origins.iter().any(|allowed| allowed == origin) {
+        if !app.config.origins.iter().any(|allowed| allowed.eq_ignore_ascii_case(origin)) {
             Counters::add(&counters.refused_origin, 1);
             return (StatusCode::FORBIDDEN, "This stream is watched from the island's own page.").into_response();
         }
     }
-    let block = block_of(client_ip(&headers, peer, app.config.trusted_proxies));
-    let seat = match app.admission.take(block, Instant::now()) {
+    let ip = client_ip(&headers, peer, app.config.trusted_proxies);
+    let seat = match app.seats.take(ip, Instant::now()) {
         Ok(seat) => seat,
         Err(refusal) => {
             let (counter, code, words) = match refusal {
-                Refusal::Rate => (&counters.refused_rate, StatusCode::TOO_MANY_REQUESTS, "Connecting too often: wait a moment."),
+                Refusal::Busy => (&counters.refused_busy, StatusCode::SERVICE_UNAVAILABLE,
+                                  "Too many viewers right now: try again in a moment."),
                 Refusal::Address => (&counters.refused_address, StatusCode::TOO_MANY_REQUESTS, "Too many sockets from here."),
-                Refusal::Busy => (&counters.refused_busy, StatusCode::SERVICE_UNAVAILABLE, "Too many viewers right now: try again in a moment."),
+                Refusal::Rate => (&counters.refused_rate, StatusCode::TOO_MANY_REQUESTS, "Connecting too often: wait a moment."),
             };
             Counters::add(counter, 1);
             return (code, [(header::RETRY_AFTER, "10")], words).into_response();
@@ -80,12 +74,13 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
     let counters = &app.hub.counters;
     let (joined, _watching) = app.hub.join(resume);
     let (mut rx, mut seq) = (joined.rx, joined.seq);
+    let (ping_every, silent_for, within) = (app.config.ping_every, app.config.silent_for, app.config.send_within);
     for frame in joined.first {
-        if !send(&mut socket, &frame, gz, counters).await {
+        if !send(&mut socket, &frame, gz, within, counters).await {
             return;
         }
     }
-    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + PING_EVERY, PING_EVERY);
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + ping_every, ping_every);
     let mut heard = Instant::now();
     let mut resyncs = 0;
     loop {
@@ -98,7 +93,7 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                         }
                         seq = frame.seq;
                     }
-                    if !send(&mut socket, &frame, gz, counters).await {
+                    if !send(&mut socket, &frame, gz, within, counters).await {
                         return;
                     }
                 }
@@ -111,7 +106,7 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                     let (whole, at) = app.hub.resync();
                     seq = at;
                     if let Some(whole) = whole {
-                        if !send(&mut socket, &whole, gz, counters).await {
+                        if !send(&mut socket, &whole, gz, within, counters).await {
                             return;
                         }
                     }
@@ -123,11 +118,11 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                 Some(Ok(_)) => heard = Instant::now(),
             },
             _ = ping.tick() => {
-                if heard.elapsed() > SILENT_FOR {
+                if heard.elapsed() > silent_for {
                     Counters::add(&counters.dropped_silent, 1);
                     return;
                 }
-                if !matches!(tokio::time::timeout(SEND_WITHIN, socket.send(Message::Ping(Bytes::new()))).await, Ok(Ok(()))) {
+                if !matches!(tokio::time::timeout(within, socket.send(Message::Ping(Bytes::new()))).await, Ok(Ok(()))) {
                     Counters::add(&counters.dropped_send, 1);
                     return;
                 }
@@ -136,13 +131,14 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
     }
 }
 
-/// A frame to one viewer: a whole island gzipped if the page asked for it, everything else as text.
-async fn send(socket: &mut WebSocket, frame: &Frame, gz: bool, counters: &Counters) -> bool {
+/// A frame to one viewer: a whole island gzipped if the page asked for it, everything else as text. Counted for the
+/// monitoring; a send that does not finish within `within` lets the viewer go.
+async fn send(socket: &mut WebSocket, frame: &Frame, gz: bool, within: Duration, counters: &Counters) -> bool {
     let (message, bytes) = match (&frame.gz, gz) {
         (Some(packed), true) => (Message::Binary(packed.clone()), packed.len()),
         _ => (Message::Text(frame.text.clone()), frame.text.len()),
     };
-    let sent = matches!(tokio::time::timeout(SEND_WITHIN, socket.send(message)).await, Ok(Ok(())));
+    let sent = matches!(tokio::time::timeout(within, socket.send(message)).await, Ok(Ok(())));
     if sent {
         Counters::add(&counters.sent_frames, 1);
         Counters::add(&counters.sent_bytes, bytes as u64);
@@ -167,8 +163,9 @@ fn client_ip(headers: &HeaderMap, peer: SocketAddr, trusted: usize) -> IpAddr {
     peer.ip()
 }
 
-/// The block an address counts as: itself for IPv4 (and IPv4 inside IPv6), its /64 for IPv6.
-fn block_of(ip: IpAddr) -> IpAddr {
+/// The address a limit counts by. An IPv6 address counts by its /64: one home or one server holds a whole /64, and
+/// would otherwise be countless addresses. An IPv4 address written as IPv6 counts as the IPv4 address it is.
+fn bucket(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V4(_) => ip,
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -181,116 +178,88 @@ fn block_of(ip: IpAddr) -> IpAddr {
     }
 }
 
-/// A token bucket: `burst` at once, then `per_second`.
-#[derive(Clone, Copy)]
-struct Pace {
-    tokens: f64,
+/// How many may watch at once, in all and from one address, and how fast one address may open sockets. Every new
+/// socket is handed the whole island (hundreds of kilobytes), so opening and closing them in a loop would make the
+/// relay send that over and over: each address has a bucket of `most_per_ip` openings, refilled at
+/// `connects_per_minute`. A page that comes back from a gap mostly resumes, and spends one.
+pub struct Seats {
+    book: Mutex<HashMap<IpAddr, Address>>,
+    taken: AtomicUsize,
+    most: usize,
+    most_per_ip: usize,
+    refill_per_sec: f64,
+}
+
+/// One address: its sockets now, and the openings it has left (refilled as time passes).
+struct Address {
+    seats: usize,
+    openings: f64,
     at: Instant,
 }
 
-impl Pace {
-    fn full(burst: f64, now: Instant) -> Pace {
-        Pace { tokens: burst, at: now }
-    }
-
-    fn refill(&mut self, now: Instant, burst: f64, per_second: f64) {
-        self.tokens = (self.tokens + now.saturating_duration_since(self.at).as_secs_f64() * per_second).min(burst);
-        self.at = now;
-    }
-
-    fn take(&mut self, now: Instant, burst: f64, per_second: f64) -> bool {
-        self.refill(now, burst, per_second);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-}
-
+/// Why a viewer is not let in: every seat taken, its address holding its share, or opening sockets too fast. Each has
+/// its own counter in `/metrics` and its own words.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
-    Rate,
-    Address,
     Busy,
+    Address,
+    Rate,
 }
 
-/// Limits on who may watch (see the module's comment). Set from `Config`.
-pub struct Limits {
-    pub most: usize,
-    pub most_per_block: usize,
-    pub connect_burst: f64,         // per block
-    pub connects_per_second: f64,   // per block
-    pub all_connect_burst: f64,     // everyone together
-    pub all_connects_per_second: f64,
-}
-
-pub struct Admission {
-    limits: Limits,
-    seats: Mutex<HashMap<IpAddr, usize>>,
-    taken: AtomicUsize,
-    paces: Mutex<HashMap<IpAddr, Pace>>,
-    all: Mutex<Pace>,
-}
+/// Addresses remembered before the idle ones (no socket, bucket full again) are forgotten.
+const ADDRESSES_KEPT: usize = 4096;
 
 /// One viewer's place, given back when its socket ends.
 pub struct Seat {
-    admission: Arc<Admission>,
-    block: IpAddr,
+    seats: Arc<Seats>,
+    ip: IpAddr,
 }
 
-impl Admission {
-    pub fn new(limits: Limits) -> Admission {
-        let all = Pace::full(limits.all_connect_burst, Instant::now());
-        Admission { limits, seats: Mutex::new(HashMap::new()), taken: AtomicUsize::new(0), paces: Mutex::new(HashMap::new()),
-                    all: Mutex::new(all) }
+impl Seats {
+    pub fn new(most: usize, most_per_ip: usize, connects_per_minute: usize) -> Seats {
+        Seats {
+            book: Mutex::new(HashMap::new()),
+            taken: AtomicUsize::new(0),
+            most,
+            most_per_ip,
+            refill_per_sec: connects_per_minute as f64 / 60.0,
+        }
     }
 
-    /// A seat for a viewer from `block`, or why not. Every try spends from the pace, refused or not: hammering is
-    /// what the pace is for.
-    fn take(self: &Arc<Self>, block: IpAddr, now: Instant) -> Result<Seat, Refusal> {
-        let l = &self.limits;
-        {
-            let mut paces = self.paces.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if paces.len() >= PACE_KEPT {
-                paces.retain(|_, pace| {
-                    pace.refill(now, l.connect_burst, l.connects_per_second);
-                    pace.tokens < l.connect_burst // a block back to full is the same as one never seen
-                });
-            }
-            let pace = paces.entry(block).or_insert_with(|| Pace::full(l.connect_burst, now));
-            if !pace.take(now, l.connect_burst, l.connects_per_second) {
-                return Err(Refusal::Rate);
-            }
-        }
-        if !self.all.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take(now, l.all_connect_burst, l.all_connects_per_second) {
-            return Err(Refusal::Rate);
-        }
-        let mut seats = self.seats.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.taken.load(Ordering::Relaxed) >= l.most {
+    fn take(self: &Arc<Self>, ip: IpAddr, now: Instant) -> Result<Seat, Refusal> {
+        let ip = bucket(ip);
+        let burst = self.most_per_ip.max(1) as f64;
+        let mut book = self.book.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.taken.load(Ordering::Relaxed) >= self.most {
             return Err(Refusal::Busy);
         }
-        let here = seats.entry(block).or_insert(0);
-        if *here >= l.most_per_block {
+        if book.len() >= ADDRESSES_KEPT {
+            let refill = self.refill_per_sec;
+            book.retain(|_, a| a.seats > 0 || a.openings + now.duration_since(a.at).as_secs_f64() * refill < burst);
+        }
+        let here = book.entry(ip).or_insert(Address { seats: 0, openings: burst, at: now });
+        here.openings = (here.openings + now.duration_since(here.at).as_secs_f64() * self.refill_per_sec).min(burst);
+        here.at = now;
+        if here.seats >= self.most_per_ip {
             return Err(Refusal::Address);
         }
-        *here += 1;
+        if here.openings < 1.0 {
+            return Err(Refusal::Rate);
+        }
+        here.openings -= 1.0;
+        here.seats += 1;
         self.taken.fetch_add(1, Ordering::Relaxed);
-        Ok(Seat { admission: self.clone(), block })
+        Ok(Seat { seats: self.clone(), ip })
     }
 }
 
 impl Drop for Seat {
     fn drop(&mut self) {
-        let mut seats = self.admission.seats.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(here) = seats.get_mut(&self.block) {
-            *here -= 1;
-            if *here == 0 {
-                seats.remove(&self.block);
-            }
+        let mut book = self.seats.book.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(here) = book.get_mut(&self.ip) {
+            here.seats = here.seats.saturating_sub(1); // kept with its bucket: closing does not refill it
         }
-        self.admission.taken.fetch_sub(1, Ordering::Relaxed);
+        self.seats.taken.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -298,15 +267,6 @@ impl Drop for Seat {
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
-
-    fn limits(most: usize, most_per_block: usize, burst: f64, per_second: f64) -> Limits {
-        Limits { most, most_per_block, connect_burst: burst, connects_per_second: per_second, all_connect_burst: 1000.0,
-                 all_connects_per_second: 1000.0 }
-    }
-
-    fn ip(text: &str) -> IpAddr {
-        text.parse().unwrap()
-    }
 
     #[test]
     fn the_address_behind_our_proxy() {
@@ -316,54 +276,76 @@ mod tests {
         headers.insert("x-forwarded-for", HeaderValue::from_static("6.6.6.6, 81.2.3.4"));
         assert_eq!(client_ip(&headers, peer, 1).to_string(), "81.2.3.4", "the hop Caddy added, not one a client sent");
         assert_eq!(client_ip(&headers, peer, 0), peer.ip(), "no proxy trusted: the header is ignored");
+        assert_eq!(client_ip(&headers, peer, 3), peer.ip(), "fewer hops than proxies of ours: not ours");
+        headers.insert("x-forwarded-for", HeaderValue::from_static("81.2.3.4, unknown"));
+        assert_eq!(client_ip(&headers, peer, 1), peer.ip(), "a hop that is no address");
     }
 
     #[test]
-    fn an_ipv6_address_counts_by_its_64() {
-        assert_eq!(block_of(ip("2001:db8:1:2:aaaa:bbbb:cccc:dddd")), ip("2001:db8:1:2::"));
-        assert_eq!(block_of(ip("2001:db8:1:2::1")), block_of(ip("2001:db8:1:2:ffff::9")), "one subscriber's block");
-        assert_ne!(block_of(ip("2001:db8:1:2::1")), block_of(ip("2001:db8:1:3::1")), "the next block is someone else");
-        assert_eq!(block_of(ip("::ffff:81.2.3.4")), ip("81.2.3.4"), "IPv4 inside IPv6 is that IPv4 address");
-        assert_eq!(block_of(ip("81.2.3.4")), ip("81.2.3.4"));
+    fn a_panic_elsewhere_does_not_lock_the_seats_up() {
+        let seats = Arc::new(Seats::new(10, 2, 60));
+        let held = seats.clone();
+        let _ = std::thread::spawn(move || {
+            let _book = held.book.lock().unwrap();
+            panic!("a task died holding the seats (this panic is the test's)");
+        })
+        .join();
+        assert!(seats.book.is_poisoned());
+        let seat = seats.take("1.1.1.1".parse().unwrap(), Instant::now()).expect("seats are still given");
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 1);
+        drop(seat);
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 0, "and given back");
     }
 
     #[test]
-    fn seats_in_all_and_per_block() {
-        let admission = Arc::new(Admission::new(limits(3, 2, 100.0, 100.0)));
+    fn idle_addresses_are_forgotten_once_many_are_kept() {
+        let seats = Arc::new(Seats::new(usize::MAX, 2, 60));
         let now = Instant::now();
-        let (a, b) = (block_of(ip("2001:db8::1")), block_of(ip("2001:db8::2")));
-        let first = admission.take(a, now).unwrap();
-        let _second = admission.take(b, now).unwrap();
-        assert_eq!(admission.take(a, now).err(), Some(Refusal::Address), "two addresses of one /64 share its seats");
-        let _third = admission.take(ip("1.1.1.1"), now).unwrap();
-        assert_eq!(admission.take(ip("2.2.2.2"), now).err(), Some(Refusal::Busy));
-        drop(first);
-        assert!(admission.take(a, now).is_ok(), "a seat given back is free again");
-    }
-
-    #[test]
-    fn connecting_again_and_again_is_paced() {
-        let admission = Arc::new(Admission::new(limits(1000, 1000, 3.0, 0.5)));
-        let start = Instant::now();
-        let mut held = Vec::new();
-        for _ in 0..3 {
-            held.push(admission.take(ip("9.9.9.9"), start).unwrap());
+        for i in 0..ADDRESSES_KEPT as u32 - 1 {
+            drop(seats.take(IpAddr::V4(i.into()), now).unwrap()); // came and went
         }
-        assert_eq!(admission.take(ip("9.9.9.9"), start).err(), Some(Refusal::Rate), "the burst spent");
-        assert!(admission.take(ip("8.8.8.8"), start).is_ok(), "another address has its own");
-        assert_eq!(admission.take(ip("9.9.9.9"), start + Duration::from_millis(1500)).err(), Some(Refusal::Rate));
-        assert!(admission.take(ip("9.9.9.9"), start + Duration::from_secs(3)).is_ok(), "one more after two seconds");
+        let _watching = seats.take("10.9.9.9".parse().unwrap(), now).unwrap();
+        assert_eq!(seats.book.lock().unwrap().len(), ADDRESSES_KEPT);
+        let _new = seats.take("10.8.8.8".parse().unwrap(), now + Duration::from_secs(120)).unwrap();
+        assert_eq!(seats.book.lock().unwrap().len(), 2, "the idle ones, their buckets full again, are forgotten");
     }
 
     #[test]
-    fn everyone_together_is_paced_too() {
-        let mut l = limits(1000, 1000, 100.0, 100.0);
-        l.all_connect_burst = 2.0;
-        l.all_connects_per_second = 1.0;
-        let admission = Arc::new(Admission::new(l));
+    fn seats_in_all_and_per_address() {
+        let seats = Arc::new(Seats::new(3, 2, 6000));
         let now = Instant::now();
-        let _a = admission.take(ip("1.0.0.1"), now).unwrap();
-        let _b = admission.take(ip("1.0.0.2"), now).unwrap();
-        assert_eq!(admission.take(ip("1.0.0.3"), now).err(), Some(Refusal::Rate), "a crowd from many addresses");
+        let (a, b): (IpAddr, IpAddr) = ("1.1.1.1".parse().unwrap(), "2.2.2.2".parse().unwrap());
+        let first = seats.take(a, now).unwrap();
+        let _second = seats.take(a, now).unwrap();
+        assert_eq!(seats.take(a, now).err(), Some(Refusal::Address));
+        let _third = seats.take(b, now).unwrap();
+        assert_eq!(seats.take(b, now).err(), Some(Refusal::Busy));
+        drop(first);
+        assert!(seats.take(a, now + Duration::from_secs(1)).is_ok(), "a seat given back is free again");
+    }
+
+    #[test]
+    fn one_address_cannot_open_sockets_in_a_loop() {
+        let seats = Arc::new(Seats::new(100, 4, 60)); // a burst of 4, then one a second
+        let ip: IpAddr = "3.3.3.3".parse().unwrap();
+        let now = Instant::now();
+        for _ in 0..4 {
+            drop(seats.take(ip, now).unwrap()); // opened and closed at once, as a loop would
+        }
+        assert_eq!(seats.take(ip, now).err(), Some(Refusal::Rate), "the burst is spent");
+        assert!(seats.take(ip, now + Duration::from_millis(1100)).is_ok(), "one more a second later");
+        assert_eq!(seats.take(ip, now + Duration::from_millis(1200)).err(), Some(Refusal::Rate));
+    }
+
+    #[test]
+    fn an_ipv6_home_is_one_address() {
+        let seats = Arc::new(Seats::new(100, 2, 6000));
+        let now = Instant::now();
+        let _one = seats.take("2001:db8:1:2::1".parse().unwrap(), now).unwrap();
+        let _two = seats.take("2001:db8:1:2:ffff::9".parse().unwrap(), now).unwrap();
+        let third = seats.take("2001:db8:1:2:abcd:1234:5678:9abc".parse().unwrap(), now);
+        assert_eq!(third.err(), Some(Refusal::Address), "the same /64");
+        assert!(seats.take("2001:db8:1:3::1".parse().unwrap(), now).is_ok(), "another /64");
+        assert_eq!(bucket("::ffff:81.2.3.4".parse().unwrap()), "81.2.3.4".parse::<IpAddr>().unwrap());
     }
 }

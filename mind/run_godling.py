@@ -137,7 +137,7 @@ def main():
     local_world = f"http://localhost:{args.port}" + os.environ.get("WORLD_BASE_PATH", "").rstrip("/")
     save = IslandSave(run, local_world, log)
     island = save.load()  # what the island was when the run last stopped: the world puts it back (main.lua)
-    server = hindsight = panel = relay = None
+    server = hindsight = panel = relay = packer = None
     try:
         if not args.attach:
             world_dir = prepare_world(args.world, run, args.walk_speed, args.sky_test_minutes, island)
@@ -179,6 +179,13 @@ def main():
             print(f"World is up{f', the island put back ({restored})' if restored else ''}. "
                   f"Watch it here: {spectator or local_world + '/'}", flush=True)
             save.start()
+            # The recording, packed for replays as it grows (ADR-016), in a process of its own: catching up on a long
+            # recording must never hold up Godling's mind.
+            # A session of its own: Ctrl+C in a terminal reaches the world and the mind, and the packer only when
+            # the world has stopped (stop_children below), so it packs the world's last seconds too.
+            packer = subprocess.Popen([sys.executable, "-m", "godling.replay", "follow", str(run)],
+                                      cwd=str(Path(__file__).resolve().parent), env=clean_env, start_new_session=True,
+                                      stdout=(run / "replay.log").open("a"), stderr=subprocess.STDOUT)
         world.join()
         if args.bubble:
             bubble = Bubble(world, llm, log=log).start()
@@ -215,6 +222,7 @@ def main():
         except Exception as err:
             log(kind="error", message=f"structures at the end: {err!r}"[:200])
         stop_children(panel, relay, server, hindsight)
+        stop_children(packer)  # after the world: the last seconds it recorded are packed too
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,
@@ -600,8 +608,14 @@ def prepare_world(world, run, walk_speed, sky_test_minutes=0, island=None):
 
     The copy also records which version of the world a run used."""
     copy = run / "world"
+    skip = shutil.ignore_patterns(".clawblox", ".build.lock", "node_modules")
     if not copy.exists():
-        shutil.copytree(world, copy, ignore=shutil.ignore_patterns(".clawblox", ".build.lock", "node_modules"))
+        shutil.copytree(world, copy, ignore=skip)
+    else:  # an existing run keeps its world script, but draws with today's renderer and models: a copy made before
+        # the replay player (ADR-016) would otherwise never play the past
+        for part in ("renderer", "assets"):
+            if (Path(world) / part).is_dir():
+                shutil.copytree(Path(world) / part, copy / part, dirs_exist_ok=True, ignore=skip)
     script = copy / "main.lua"
     src = script.read_text()
     src = _set_line(src, "humanoid.WalkSpeed = ", "16", f"{walk_speed:g}", "the walking pace")

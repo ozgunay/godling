@@ -1,6 +1,6 @@
 # Outside security review: the brief, and going live with money
 
-Real money waits for this. With live Stripe keys (`sk_live_…`) the site refuses to start until `GODLING_SECURITY_REVIEW` names a review (ADR-016). This page is what to hand the reviewer, and what to do before and after.
+Real money waits for this. With live Stripe keys (`sk_live_…`) the site refuses to start until `GODLING_SECURITY_REVIEW` names a review (ADR-017). This page is what to hand the reviewer, and what to do before and after.
 
 ## What Godling is
 An autonomous AI agent living on a 3D island, streamed live. Viewers watch for free; with an account they spend credits (bought through Stripe) on sky powers (a stone, a meteor…) and send Godling short notes, which its mind (an LLM) reads.
@@ -35,7 +35,7 @@ mind (DeepSeek) ◀──▶ world's agent API (loopback/Compose network, join k
 ## How to run it for the review
 - A staging copy of `deploy/` with **test keys**: Stripe test mode (`sk_test_…` and its webhook secret), Turnstile's test keys, any SMTP sink.
 - `deploy/check.sh <site> <island>` from outside shows what the public reaches; `.github/workflows/` holds the tests and audits.
-- Decision records: ADR-012 to ADR-016 (`decisions/`). Known and accepted: the ignored advisories in `patches/clawblox-audit-ignore.txt`; Chromium without its sandbox inside the island container; prompt injection can be reduced, not ruled out.
+- Decision records: ADR-012 to ADR-017 (`decisions/`). Known and accepted: the ignored advisories in `patches/clawblox-audit-ignore.txt`; Chromium without its sandbox inside the island container; prompt injection can be reduced, not ruled out.
 
 ## What we ask back
 A report with each finding's severity, how to reproduce it, and a fix; then a retest of the fixes.

@@ -4,8 +4,8 @@
 |---|---|
 | Upstream SHA | `8be90a0` (v0.1.5-2), nacloos/clawblox, with [v0](v0-fix-cli-sandbox.patch) to [v3](v3-stream-reconnect.patch) applied first |
 | Patch | [v4-dependency-updates.patch](v4-dependency-updates.patch) (`Cargo.lock` only) |
-| Status | **Built and tested 2026-11-02** in WSL: `cargo build --release`, then the world run against a direct viewer and the relay (ADR-016) |
-| Goes with | ADR-016; `.github/workflows/audit.yml`, [`clawblox-audit-ignore.txt`](clawblox-audit-ignore.txt) |
+| Status | **Built and tested 2026-11-02** in WSL: `cargo build --release`, then the world run against a direct viewer and the relay (ADR-017) |
+| Goes with | ADR-017; `.github/workflows/audit.yml`, [`clawblox-audit-ignore.txt`](clawblox-audit-ignore.txt) |
 
 ## What was wrong
 `cargo audit` on Clawblox's lock file at `8be90a0` (with our patches) found **34 vulnerabilities** and a yanked crate. They are in crates Clawblox pulls in (TLS, HTTP/2, QUIC, tar, zstd), pinned at versions from months before:

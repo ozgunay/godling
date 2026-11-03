@@ -19,6 +19,10 @@
 {% block content %}
 <h1>Credits</h1>
 <p class="balance"><b>{{ balance }}</b> credits</p>
+{% if owed %}
+  <p class="test">You owe {{ owed }} credits: a payment of yours was refunded or disputed after its credits were spent.
+    They come out of the next credits you get.</p>
+{% endif %}
 <p>Credits call sky powers on Godling's island: a stone or a log costs 4, a meteor 300. Notes are free.</p>
 {% if mode == "test" %}
   <p class="test">Development: no payment provider is set up, so this is a test checkout. No money moves.</p>

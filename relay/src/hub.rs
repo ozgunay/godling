@@ -381,6 +381,47 @@ mod tests {
     }
 
     #[test]
+    fn a_viewer_that_fell_behind_is_handed_the_island_where_the_stream_is() {
+        let hub = Arc::new(Hub::new(16, 8));
+        assert_eq!(hub.resync().0.map(|frame| frame.kind), None, "no island yet: nothing to hand");
+        seen(&hub);
+        let (text, fields) = delta(2);
+        hub.update(&text, Some(&fields));
+        let now = hub.lock().seq;
+        let (whole, at) = hub.resync();
+        let whole = whole.expect("the island as it is now");
+        assert_eq!((whole.kind, whole.seq, at), (Kind::Whole, now, now));
+        let parsed: Value = serde_json::from_str(whole.text.as_str()).unwrap();
+        assert_eq!(parsed["entities"][0]["position"], json!([2, 0, 0]));
+        assert_eq!(hub.report()["resyncs"], 2);
+    }
+
+    #[test]
+    fn a_panic_elsewhere_does_not_lock_the_hub_up() {
+        let hub = Arc::new(Hub::new(16, 8));
+        let held = hub.clone();
+        let _ = std::thread::spawn(move || {
+            let _inner = held.inner.lock().unwrap();
+            panic!("a task died holding the hub (this panic is the test's)");
+        })
+        .join();
+        assert!(hub.inner.is_poisoned());
+        seen(&hub);
+        assert_eq!(hub.report()["world"], "up", "the island is still kept, and told");
+    }
+
+    #[test]
+    fn everyone_hears_how_many_watch() {
+        let hub = Arc::new(Hub::new(16, 8));
+        let (mut joined, _w) = hub.join(None);
+        hub.tell_status();
+        let news = joined.rx.try_recv().expect("the news");
+        assert_eq!(news.kind, Kind::Status);
+        let news: Value = serde_json::from_str(news.text.as_str()).unwrap();
+        assert_eq!((news["type"].as_str(), news["viewers"].as_u64()), (Some("relay"), Some(1)));
+    }
+
+    #[test]
     fn watchers_are_counted_while_they_watch() {
         let hub = Arc::new(Hub::new(16, 8));
         let (_j1, w1) = hub.join(None);

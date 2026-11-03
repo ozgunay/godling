@@ -1,0 +1,9 @@
+[package]
+name = "luau-test"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runs the world's Luau tests with Luau's own line coverage (TESTING.md)"
+
+[dependencies]
+mlua = { version = "0.11", features = ["luau"] }

@@ -1,4 +1,4 @@
-# Alertmanager (ADR-016): every alert by email, through the site's own SMTP (GODLING_EMAIL_*), to GODLING_ALERT_EMAIL.
+# Alertmanager (ADR-017): every alert by email, through the site's own SMTP (GODLING_EMAIL_*), to GODLING_ALERT_EMAIL.
 # start.sh fills in the __PLACEHOLDERS__ from the environment when the container starts.
 global:
   smtp_smarthost: '__SMTP_HOST__:__SMTP_PORT__'

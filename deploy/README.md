@@ -1,20 +1,22 @@
 # Running Godling on one server
 
-Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-016). Six services, and three for the monitoring:
+Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015, ADR-017). Seven services, and three for the monitoring:
 - **`postgres`:** the site's database.
 - **`redis`:** the shared cache (sign-in rate limits, the island's news, who is watching) and the worker's queue. It keeps nothing that matters across a restart.
 - **`site`:** accounts, credits, moderation, the admin and the viewer screen (gunicorn with threads, whitenoise for the admin's files).
 - **`worker`:** the site's Celery worker. It takes powers to the island one at a time, so no web request waits on the island.
 - **`island`:** the world (Clawblox, built from source with `patches/`), Godling's mind and the guest panel, started by `mind/run_godling.py`. The run lives in a volume, so it continues across restarts: Godling's memory, and the island itself. Every five minutes and when the container stops, the launcher saves what stands (`island-save.json`); on the next start the world puts it back (ADR-013).
-- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world, watching side only, and its stream to the relay (ADR-015), which runs inside `island`.
+- **`relay`:** the island's stream relay (`relay/`, `Dockerfile.relay`), which every viewer's socket reaches: one connection to the world, the same updates to everyone. A container of its own, holding the spectator token and nothing else, so the part of the island the whole internet talks to is kept apart from Godling's keys (the agent key, the operator token, the DeepSeek key).
+- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world (watching side only), its stream to the relay, and its replay chunks (`/replay/chunks/…`) to files in their own volume (`replay_chunks`, mounted inside the island's run), the only part of the run Caddy can read.
 - **`prometheus`, `alertmanager`, `node-exporter`:** the monitoring (below): what the relay, Caddy and the server report, and an email when something is wrong.
 
 ## What the public can reach
 - **The site**, at `https://<domain>/`.
 - **The island's spectator page**, on its own origin: `https://<island domain>/island`. Only the site may frame it (`frame-ancestors`), and nothing on it can reach the site's cookies.
-  - Caddy passes only what watching needs: the page, its files and chat to the world, and the stream to the relay (port 8082, ADR-015). The world's agent API (`join`, `input`, `observe`, `reset`, `chat`, `snapshot`…) and its whole-island `/spectate` answer 404 from outside.
-  - The stream relay is the world's one spectator: every viewer's socket is the relay's, from the island's own page only, a few per address. However many watch, the world works out its changes once.
+  - Caddy passes only what watching needs: the page, its files and chat to the world, and the stream to the relay (ADR-015). The world's agent API (`join`, `input`, `observe`, `reset`, `chat`, `snapshot`…) and its whole-island `/spectate` answer 404 from outside.
+  - The stream relay is the world's one spectator: every viewer's socket is the relay's, from the island's own page only. From one address it takes at most 64 sockets (an IPv6 /64 counts as one address; a phone network puts many people behind one), and new ones at a steady pace after a first burst, since each is handed the whole island. However many watch, the world works out its changes once.
   - Inside Compose's network the world still asks for its keys: joining takes the agent key the launcher makes at every start, and the snapshot takes the operator token (`patches/v2`, ADR-014). The spectator token stays on the server: Caddy adds it to the page's requests, and the relay holds its own.
+- **The island's past** (ADR-016): the replay chunks at `https://<island domain>/replay/chunks/…`, or at the bucket's public address when one is set. They hold only the world as spectators see it.
 - **Nothing else.** The guest panel (8081) is reachable only from the site and its worker, inside Compose's network, and only with `GODLING_PANEL_KEY`. Postgres and Redis are not published. The monitoring's pages listen on the server's loopback only.
 - **Check it from another machine** with `deploy/check.sh <domain> <island domain>`: HTTPS and the certificates, every path that must answer and every one that must not, the stream's door, and the open ports. It exits with the number of failures.
 
@@ -37,8 +39,14 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-016). Six services, and t
    ```
    Then sign in at `https://<domain>/accounts/login/`: confirm your email from the message that arrives, and set up two-factor sign-in with an authenticator app at `https://<domain>/accounts/2fa/`. Save the recovery codes. The admin, `https://<domain>/admin/`, opens only with two-factor sign-in, and its sign-in is the site's own.
 6. **Stripe:**
-   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`.
-   - A refund takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
+   - In the Dashboard, add a webhook endpoint `https://<domain>/credits/stripe/webhook/` for these events:
+     - `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`;
+     - `charge.refunded`, `charge.refund.updated`, and `refund.updated` and `refund.failed` where the Dashboard lists them;
+     - `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`.
+   - A refund takes back its share of the pack's credits, and a refund that fails gives it back. A dispute holds back all of them until the bank decides; a lost one takes back the disputed share. Credits already spent are owed, and come out of whatever the viewer gets next.
+   - Events may arrive in any order or twice: each is applied once, refunds and disputes are read from Stripe as they are now, and only the difference moves credits. If Stripe cannot be reached, the site answers 503 and Stripe sends the event again.
+   - A checkout Stripe charged less for than the pack, or in another currency, is **held**: no credits until staff let it stand (Payments in the admin, action "Let held payments stand") or refund it in Stripe. The admin's Stripe events list notes held payments and any paid checkout that matched no payment.
+   - Test and live keys stay apart: events from the other mode are ignored.
    - Put its signing secret in `GODLING_STRIPE_WEBHOOK_SECRET`.
    - Start with test keys (`sk_test_…`) and Stripe's test cards, then switch to live keys.
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.
@@ -47,7 +55,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-016). Six services, and t
 10. **Real money** waits for an outside security review: [`security-review.md`](security-review.md). With live Stripe keys the site does not start until `GODLING_SECURITY_REVIEW` names one.
 
 ## Cloudflare in front
-Why (ADR-016): one server cannot absorb a flood, and its address should not be public. Cloudflare's free plan takes the floods, hides the server, passes the stream's WebSockets through, does not bill traffic, and gives Turnstile for the sign-up form. Godling's own limits (the relay's, allauth's, the site's pace and credits) still do the rest: Cloudflare is the outer wall, not the only one.
+Why (ADR-017): one server cannot absorb a flood, and its address should not be public. Cloudflare's free plan takes the floods, hides the server, passes the stream's WebSockets through, does not bill traffic, and gives Turnstile for the sign-up form. Godling's own limits (the relay's, allauth's, the site's pace and credits) still do the rest: Cloudflare is the outer wall, not the only one.
 1. **Add the domain** to Cloudflare and set both names' DNS records to **Proxied** (the orange cloud).
 2. **SSL/TLS mode: Full (strict).** Caddy keeps its own Let's Encrypt certificates; leave Cloudflare's "Always Use HTTPS" off, since Caddy redirects to HTTPS itself.
 3. **Tell Caddy whom to believe.** Put Cloudflare's ranges in `.env`, then `docker compose up -d caddy`:
@@ -66,11 +74,13 @@ Why (ADR-016): one server cannot absorb a flood, and its address should not be p
 - **Their pages** are on the server's loopback only. From your machine: `ssh -L 9090:127.0.0.1:9090 -L 9093:127.0.0.1:9093 <server>`, then http://localhost:9090 (Prometheus: graphs, Status → Targets, Alerts) and http://localhost:9093 (Alertmanager: silencing an alert during work).
 
 ## Day to day
-- **Logs:** `docker compose logs -f site worker island`, or the admin's Logs page: the world's, the mind's and the panel's (`world.log`, `console.log` and `panel.log` in the run folder).
+- **Logs:** `docker compose logs -f site worker island relay`, or the admin's Logs page: the world's, the mind's, the panel's and the replay packer's (`world.log`, `console.log`, `panel.log` and `replay.log` in the run folder). The relay's are in `docker compose logs relay`; how many watch, in its `/relay/status` (inside Compose's network: `docker compose exec site python -c "import urllib.request; print(urllib.request.urlopen('http://relay:8082/island/relay/status').read().decode())"`).
+- **Replays and disk** (ADR-016): the world records about 5 GB a day. The packer keeps raw recordings `GODLING_REPLAY_RAW_DAYS` days (3): older recordings are deleted once packed, and the one being written is trimmed of its older rows once an hour. It writes a warning to `replay.log` when the disk is 80% full. Replay chunks take about 0.2 GB a day; with a bucket set, they go there too (it needs a CORS rule allowing GET and HEAD from any origin, which the packer sets if its key may), and a day stays on the server until it is all uploaded and two days old.
+- **Updates and the renderer:** a run keeps its frozen copy of the world script, but each start copies in today's renderer and models, so the island's page always has the current replay player.
 - **Prices, credit packs, viewers, notes and reports:** in the admin.
 - **Updates:** `git pull && docker compose up -d --build`. The site migrates its database on start.
   - A run keeps the copy of the world script it started with (`/runs/live/world`). For a new world script, remove that copy before restarting: `docker compose exec island rm -rf /runs/live/world`. The island save is kept beside it, so the new script puts the same island back.
-- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory and the island's save).
+- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory, the island's save and the replays' tracks and markers).
 
 ## Tested so far
 - **Tested without Docker** (in WSL), the same pieces as the images run:

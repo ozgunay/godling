@@ -1,4 +1,4 @@
-# ADR-016: The public edge: limits that hold, Cloudflare in front, monitoring with alerts, dependency audits, and a review before real money
+# ADR-017: The public edge: limits that hold, Cloudflare in front, monitoring with alerts, dependency audits, and a review before real money
 
 Date: 2026-11-02. Status: built; tested locally end to end (the deployment's images under Docker, with TLS, routes, the stream, alerts by email). Not yet run on a real server.
 
@@ -16,7 +16,7 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 ## What was built
 ### The relay (`relay/`)
 - **Address blocks**: an IPv6 address counts by its /64; IPv4 inside IPv6 counts as that IPv4 address.
-- **Pacing**: token buckets per block (10 at once, then 20 a minute) and for everyone (200 a second, bursts of 400); refused with 429 and `Retry-After`. Pages back off on their own, so a relay coming back is spread out.
+- **Pacing**: per block, at most 64 sockets at once (`RELAY_MAX_PER_IP`: a household or an office behind one address) and new sockets from a bucket of 64 that refills at 60 a minute (`RELAY_CONNECTS_PER_MINUTE`); 5000 viewers in all (`RELAY_MAX_VIEWERS`). Refused with 429 (or 503 when full) and `Retry-After`, and counted by reason. A page coming back from a gap mostly resumes, and pages back off on their own, so a relay coming back is spread out. Floods from many addresses are Cloudflare's to stop.
 - **Gzipped islands**: a page that asks (`?gz=1`) gets the whole island as one gzipped binary message, made once for everyone: 276 KB becomes about 17. Updates stay text.
 - **`/metrics`** in Prometheus' format: viewers and the cap, the world up or down, connections, refusals by reason (origin, busy, address, rate), viewers let go by reason, resumes, resyncs, bytes and messages sent. Not reachable from outside.
 
@@ -36,7 +36,7 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 - Their pages listen on the server's loopback only (an SSH tunnel).
 
 ### Dependencies (`.github/`, `patches/v4`)
-- **Checks** on every pull request: the relay's tests and clippy, the site's tests, and the deployment's configs as their own tools read them (Caddy, promtool, amtool, Compose). Actions pinned to commits.
+- **Checks** on every pull request, beside the test suites (`tests.yml`): the relay's clippy, and the deployment's configs as their own tools read them (Caddy, promtool, amtool, Compose). Every workflow's actions pinned to commits.
 - **A dependency audit** every Monday and when a dependency changes: `cargo audit` on the relay and on the world as the image builds it, `pip-audit` on the site, `npm audit` on the renderer. **Dependabot** proposes updates weekly, grouped.
 - The first audit found **34 known vulnerabilities in Clawblox's lock file** (TLS, HTTP/2, QUIC, tar, zstd; pinned months ago). `patches/v4` updates only those crates within what Clawblox allows: 29 gone; the 5 left do not reach the island and are ignored by name with their reasons (`patches/clawblox-audit-ignore.txt`, `patches/DEPS-001`).
 

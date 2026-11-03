@@ -1,4 +1,4 @@
-# Advisories in Clawblox's lock file (8be90a0 + v0..v4) that do not reach the island, reviewed 2026-11-02 (ADR-016).
+# Advisories in Clawblox's lock file (8be90a0 + v0..v4) that do not reach the island, reviewed 2026-11-02 (ADR-017).
 # The dependency audit (.github/workflows/audit.yml) passes these to cargo audit as --ignore. One ID a line, then why.
 # Look again when Clawblox moves on, or when one of these crates turns up in something Godling uses.
 RUSTSEC-2025-0020  # pyo3: only in Clawblox's Python bindings crate, not in the clawblox binary (cargo tree -i pyo3)

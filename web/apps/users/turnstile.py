@@ -1,4 +1,4 @@
-"""Cloudflare Turnstile on sign-up (ADR-016): a check that a person, not a script, is signing up, with no puzzle to
+"""Cloudflare Turnstile on sign-up (ADR-017): a check that a person, not a script, is signing up, with no puzzle to
 solve. On only when the site has both keys (GODLING_TURNSTILE_SITE_KEY, GODLING_TURNSTILE_SECRET_KEY); Cloudflare
 answers whether the browser passed. Fake accounts are what spam notes and farm welcome credits, so this sits at the
 door they come through."""

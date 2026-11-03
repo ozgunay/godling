@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks a running deployment from outside, as anyone on the internet sees it (ADR-016): HTTPS and its certificates,
+# Checks a running deployment from outside, as anyone on the internet sees it (ADR-017): HTTPS and its certificates,
 # which paths answer and which must not, the stream's door, and which ports are open. Run it from another machine.
 #
 #   deploy/check.sh <site domain> <island domain>
@@ -7,6 +7,7 @@
 #   CHECK_CA=root.crt deploy/check.sh …        trust this CA too (a local run's Caddy CA: its *.localhost certificates)
 #   CHECK_CERT_DAYS=0 deploy/check.sh …        days a certificate must still be good for (default 14; a local Caddy CA
 #                                              signs for 12 hours at a time, Let's Encrypt for 90 days)
+#   CHECK_PER_ADDRESS=64 deploy/check.sh …     the relay's RELAY_MAX_PER_IP (default 64): that many sockets are held
 #
 # Needs curl and openssl. Prints PASS or FAIL per check and exits with the number of failures.
 set -u
@@ -100,22 +101,26 @@ ws() { # Origin, then extra curl options: the handshake's status
 expect 101 "$(ws "https://$ISLAND" --max-time 3)" "the island's page opens the stream"
 expect 403 "$(ws "https://elsewhere.example")" "another site's page may not"
 expect 403 "$(ws "")" "nor a script that sends no Origin"
-# Each socket claims another address (X-Forwarded-For, CF-Connecting-IP); the relay must count them all as ours.
+# Each socket claims another address (X-Forwarded-For, CF-Connecting-IP); the relay must count them all as ours, so
+# one more than its per-address limit is refused, for holding too many or for opening them too fast (either way, ours).
+most=${CHECK_PER_ADDRESS:-64}
+claimed() { printf '198.51.%d.%d' $(($1 / 250)) $(($1 % 250 + 1)); }
 held=()
-for i in 1 2 3 4 5 6 7 8; do
+for ((i = 1; i <= most; i++)); do
   "${CURL[@]}" --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
-    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" -H "X-Forwarded-For: 198.51.100.$i" \
-    -H "CF-Connecting-IP: 198.51.100.$i" --max-time 8 "https://$ISLAND/island/spectate/ws" &
+    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" -H "X-Forwarded-For: $(claimed "$i")" \
+    -H "CF-Connecting-IP: $(claimed "$i")" --max-time $((8 + most / 20)) "https://$ISLAND/island/spectate/ws" &
   held+=($!)
 done
-sleep 2
-ninth=$("${BASE[@]}" -w ' %{http_code}' --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" \
+sleep $((2 + most / 20))
+extra=$("${BASE[@]}" -w ' %{http_code}' --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" \
-  -H "X-Forwarded-For: 198.51.100.99" -H "CF-Connecting-IP: 198.51.100.99" --max-time 3 "https://$ISLAND/island/spectate/ws")
+  -H "X-Forwarded-For: 203.0.113.99" -H "CF-Connecting-IP: 203.0.113.99" --max-time 3 "https://$ISLAND/island/spectate/ws")
 kill "${held[@]}" 2>/dev/null; wait "${held[@]}" 2>/dev/null
-if [[ "$ninth" == *"Too many sockets from here."*429 ]]; then pass "claimed addresses are not believed: a 9th socket from here is refused"
-elif [[ "$ninth" == *429 ]]; then pass "a 9th socket from here is refused (paced: run the check less often)"
-else fail "a 9th socket with yet another claimed address got through: ${ninth: -3}"; fi
+if [[ "$extra" == *"Too many sockets from here."*429 ]]; then pass "claimed addresses are not believed: socket $((most + 1)) from here is refused"
+elif [[ "$extra" == *"Connecting too often"*429 ]]; then pass "claimed addresses are not believed: socket $((most + 1)) is refused for its pace"
+elif [[ "$extra" == *429 ]]; then pass "socket $((most + 1)) from here is refused (${extra: -3})"
+else fail "socket $((most + 1)), with yet another claimed address, got through: ${extra: -3} (is CHECK_PER_ADDRESS the relay's limit?)"; fi
 
 echo "== Ports on $TARGET (from outside, only 80 and 443)"
 for port in 80 443; do

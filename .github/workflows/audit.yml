@@ -1,4 +1,4 @@
-# Known vulnerabilities in what Godling ships (ADR-016): the relay's crates, the world's (Clawblox as the island image
+# Known vulnerabilities in what Godling ships (ADR-017): the relay's crates, the world's (Clawblox as the island image
 # builds it), the site's Python packages and the renderer's npm packages. Every Monday, when a dependency changes, and
 # by hand. Dependabot (.github/dependabot.yml) proposes the updates.
 name: Dependency audit

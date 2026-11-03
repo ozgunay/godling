@@ -53,7 +53,7 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
     - a power is queued, its price taken;
     - the worker relays it once and settles it;
     - the screen asks `api/power/<id>` every half second.
-  - A call nobody took in 3 minutes is given up and refunded (long enough for a burst: the island takes about one power a second). The worker skips such a call, so nothing is called after its refund.
+  - A call nobody took in 3 minutes is given up and refunded (long enough for a burst: the island takes about one power a second). The worker's clock (`--beat`) does this every minute, whether or not the viewer's page is still open, so a closed page or a message lost with Redis still gets its credits back. A worker that meets such a call gives it up too, and calls nothing.
   - A queue out of reach refunds at once.
   - Notes, which the panel only queues, get 5 s.
 - **B5:**
@@ -62,15 +62,32 @@ A security review of the project and of the accounts site (ADR-012, ADR-013) fou
   - A report counts toward hiding only from an account at least a day old (`report_min_age_hours`), and one inbox counts once.
   - Reports come only from a viewer watching now, only on notes from the last 30 minutes, and at most 10 an hour (`reports_per_hour`). These are new site rules in the admin.
   - Hiding and the author's pause stay as you chose them (ADR-013).
-- **B6:**
-  - `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed` are handled.
-  - A payment keeps its PaymentIntent. An older payment is found through Stripe.
-  - `Purse.owed` holds what could not be taken back. A `clawback` ledger entry records each taking.
+- **B6, and the money review after it:**
+  - **The order first:** `buy` makes the payment before Stripe's checkout session. The session carries the payment's id in its metadata (checked against the viewer), and the same idempotency key on retries. A paid checkout therefore always finds its payment, even if the server stopped before saving the session's id. A paid checkout that matches nothing is logged and noted for staff (`StripeEvent.note`).
+  - **What Stripe charged is checked** against the pack, once, when the checkout is first reported paid. Less, or another currency, and the payment is **held** (`Payment.review`): no credits until staff let it stand (`services.release_review`, an admin action) or refund it in Stripe.
+  - **Refunds and disputes as they are now:** the webhook fetches the charge or the dispute from Stripe, as Stripe advises, instead of trusting the event's copy, which may be older. A refund that fails gives its credits back. `charge.refunded`, the refund events (`charge.refund.updated`, `refund.*`) and every `charge.dispute.*` are handled.
+  - **Stripe's facts, then the difference:**
+    - each event records Stripe's facts on the payment: paid and for how much (`amount_paid`), the refunded total, the dispute's state and amount;
+    - `services.reconcile` works out what the pack should give now, and moves only the difference from what it gives (`Payment.granted`);
+    - a refund that comes before the checkout's own event is kept, and the credits granted later leave its share out;
+    - a dispute that was won or lost stays decided: a repeated or late "created" does not reopen it;
+    - shares are of what Stripe charged, and a lost dispute takes back only the disputed share.
+  - **Each event once:** `StripeEvent` records its id in the same transaction that applies it. Only that record counts as "seen": any other database error inside is a 500, and Stripe sends the event again.
+  - **Stripe out of reach:** when a fetch or lookup fails, the webhook answers 503 and applies nothing.
+  - **Modes stay apart:** with live keys, test-mode events are ignored (and the other way round).
+  - A payment keeps its PaymentIntent. An older payment is found through Stripe, and a payment's own intent is never overwritten.
+  - `Purse.owed` holds what could not be taken back. A `clawback` ledger entry records each taking. The credits page and the return page say what is owed, held, refunded or disputed.
+  - **Elsewhere:**
+    - spending credits on a power and keeping its call are one transaction;
+    - packs cost at least 50 cents (Stripe's smallest charge) and give at least one credit;
+    - a deleted account keeps its inbox's welcome used;
+    - `stripe>=12.5` pins the API version tested (2025-08-27.basil).
 - **B7:**
   - `GODLING_DEBUG` defaults to off.
   - HSTS lasts a year, subdomains included.
   - **Two-factor sign-in** (allauth MFA, an authenticator app and recovery codes):
     - staff must set it up before the admin opens;
+    - the admin checks this session, not the account: the session must have given a code in the last 12 hours (allauth's record of how it signed in). A session that signed in with a password alone is asked for a code, even after the account sets up an authenticator elsewhere;
     - the admin's sign-in is the site's own, with its rate limits and the code;
     - viewers may turn it on for themselves.
   - The site's container runs as a user, not root.

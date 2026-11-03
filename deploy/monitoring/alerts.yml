@@ -1,4 +1,4 @@
-# What is worth an email (ADR-016). Tested by alerts.test.yml (promtool test rules). The thresholds are a start for one
+# What is worth an email (ADR-017). Tested by alerts.test.yml (promtool test rules). The thresholds are a start for one
 # server; StreamTrafficDaily belongs to the hosting plan's traffic allowance.
 groups:
   - name: stream

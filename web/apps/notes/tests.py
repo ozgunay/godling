@@ -3,8 +3,10 @@ island's logs show; staff need two-factor sign-in."""
 import tempfile
 from pathlib import Path
 
+from allauth.account.internal.flows.login import AUTHENTICATION_METHODS_SESSION_KEY, record_authentication
 from allauth.mfa.models import Authenticator
-from django.test import TestCase, override_settings
+from django.contrib.auth import SESSION_KEY
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from apps.credits import services
@@ -19,17 +21,33 @@ def two_factor(user):
     return user
 
 
+def code_entered(client, ago=0):
+    """As if this client's session had given its authenticator's code `ago` seconds ago, recorded by allauth itself
+    (since 65.21 the records are tied to the signed-in user)."""
+    session = client.session
+    request = RequestFactory().get("/")
+    request.session = session
+    user = User.objects.get(pk=session[SESSION_KEY])
+    record_authentication(request, user, "password")
+    record_authentication(request, user, "mfa", type="totp")
+    for record in session[AUTHENTICATION_METHODS_SESSION_KEY][-2:]:
+        record["at"] -= ago
+    session.save()
+
+
 class AdminTests(TestCase):
     def setUp(self):
         self.staff = two_factor(User.objects.create_superuser(username="keeper", email="keeper@example.org",
                                                               password="an-island-test-pass-4127"))
         self.client.force_login(self.staff)
+        code_entered(self.client)
         self.viewer = User.objects.create_user(username="tomv", email="tomv@example.org",
                                                password="an-island-test-pass-4127")
 
     def test_every_list_opens(self):
         for model in ("users/user", "users/disposabledomain", "credits/power", "credits/creditpack", "credits/purse",
-                      "credits/entry", "credits/powercall", "credits/payment", "notes/note", "notes/report",
+                      "credits/entry", "credits/powercall", "credits/payment", "credits/stripeevent", "notes/note",
+                      "notes/report",
                       "rules/blockedword"):
             self.assertEqual(self.client.get(f"/admin/{model}/").status_code, 200, model)
         page = self.client.get(f"/admin/users/user/{self.viewer.pk}/change/")
@@ -114,6 +132,35 @@ class AdminTests(TestCase):
             self.assertRedirects(self.client.get(page), reverse("mfa_activate_totp"), fetch_redirect_response=False)
         self.assertEqual(self.client.get("/").status_code, 200)  # the screen itself asks nothing of them
         two_factor(newcomer)
+        code_entered(self.client)
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+
+    def test_a_password_only_session_is_asked_for_a_code(self):
+        """The reviewer's case: signed in with a password on one device, an authenticator set up on another. This
+        session never gave a code, so the admin asks it for one; a code given 13 hours ago no longer counts."""
+        self.client.logout()
+        self.client.force_login(self.staff)  # a fresh session: a password, no code
+        ask = f"{reverse('mfa_reauthenticate')}?next=%2Fadmin%2Fcredits%2Fpower%2F"
+        self.assertRedirects(self.client.get("/admin/credits/power/"), ask, fetch_redirect_response=False)
+        code_entered(self.client, ago=13 * 3600)
+        self.assertRedirects(self.client.get("/admin/credits/power/"), ask, fetch_redirect_response=False)
+        code_entered(self.client)
+        self.assertEqual(self.client.get("/admin/credits/power/").status_code, 200)
+
+    def test_a_real_code_on_allauths_screen_opens_the_admin(self):
+        """End to end, with a real authenticator: the code typed on allauth's screen is what the admin then sees."""
+        from allauth.mfa.totp.internal.auth import (TOTP, format_hotp_value, generate_totp_secret, hotp_value,
+                                                     yield_hotp_counters_from_time)
+
+        keeper = User.objects.create_user(username="keeper2", email="keeper2@example.org",
+                                          password="an-island-test-pass-4127", is_staff=True, is_superuser=True)
+        secret = generate_totp_secret()
+        TOTP.activate(keeper, secret)
+        self.client.logout()
+        self.client.force_login(keeper)
+        self.assertEqual(self.client.get("/admin/").status_code, 302)
+        code = format_hotp_value(hotp_value(secret, next(yield_hotp_counters_from_time())))
+        self.client.post(reverse("mfa_reauthenticate"), {"code": code})
         self.assertEqual(self.client.get("/admin/").status_code, 200)
 
     def test_the_admin_signs_in_through_the_site(self):
@@ -136,6 +183,7 @@ class AdminTests(TestCase):
         looker.user_permissions.add(*Permission.objects.filter(codename__in=(
             "view_disposabledomain", "view_user", "view_note")))
         self.client.force_login(looker)
+        code_entered(self.client)
         page = self.client.get("/admin/users/disposabledomain/")
         self.assertEqual(page.status_code, 200)
         self.assertNotContains(page, "Add Domains")  # no import forms for someone who may not add

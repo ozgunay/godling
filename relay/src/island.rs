@@ -203,6 +203,17 @@ mod tests {
     }
 
     #[test]
+    fn only_an_object_is_an_island_and_its_game_status_follows_the_deltas() {
+        assert!(Island::from_snapshot(json!([1, 2, 3])).is_none());
+        assert_eq!(Island::from_snapshot(json!({"tick": 1, "entities": "none"})).unwrap().entity_count(), 0);
+        let mut island = island();
+        island.apply(&delta(json!({"type": "spectator_delta", "game_status": "ended", "entities": []})));
+        assert_eq!(parsed(&island)["game_status"], "ended");
+        island.apply(&delta(json!({"type": "spectator_delta", "game_status": 3})));
+        assert_eq!(parsed(&island)["game_status"], "ended", "only a word is a status");
+    }
+
+    #[test]
     fn the_whole_island_says_where_it_stands() {
         let whole = parsed(&island());
         assert_eq!(whole["relay_epoch"], 7);

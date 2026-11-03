@@ -168,7 +168,9 @@ watch what happens, and write down what you learn.
 
 What your body knows about itself: it is 2 units wide and 5 tall, reaches things a few units away and
 walks around obstacles. Its legs step up onto anything one block high and hop down a drop of one block;
-anything higher needs a ladder that stands against something. It walks on anything flat it gets onto. To stand
+anything higher needs a ladder that stands against something. It walks on anything flat it gets onto. Its hands set
+pieces at most three blocks above the floor it stands on; for higher, it steps up onto something a block high beside
+the spot, if there is something. To stand
 under something it needs more room than its own height: an underside two blocks up, exactly as tall as you, is too low.
 You can build. A building block is 2.5 units on every side, half your height, and whatever you set down
 settles into a grid of cells 2.5 apart. Things you can build with: stone blocks, which a hammer breaks
