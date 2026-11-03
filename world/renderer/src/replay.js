@@ -5,7 +5,7 @@
 // coming meanwhile: going live again is instant.
 
 const FORMAT = 1 // the newest chunk format this renderer can draw
-const AHEAD = 3 // chunks fetched ahead of the playhead
+const AHEAD = 3 // chunks fetched ahead of the playhead, once the playhead's own is in
 const TELL_MS = 250 // how often the screen hears where the playhead is
 const RETRY_MS = 2000 // a chunk that did not come is asked for again after this…
 const TRIES = 4 // …this many times, before its 10 s are skipped as lost
@@ -170,6 +170,9 @@ export function createReplay({ onFrame, onReset, tell, assetBase, defaultAssetBa
     for (let k = 0; k <= AHEAD; k++) {
       const t = t0 + k * chunkMs
       if (t <= edge() && recorded(t)) load(t) // never past what the index says is written: not yet there
+      // The playhead's own chunk first: on a slow line the ones ahead would share it, and a seek would wait for all
+      // four (ADR-016, "Load and phone").
+      if (k === 0 && chunks.get(t0)?.loading) break
     }
     for (const key of [...chunks.keys()]) if (key < t0 - chunkMs || key > t0 + (AHEAD + 1) * chunkMs) forget(key)
     const here = chunks.get(t0)
