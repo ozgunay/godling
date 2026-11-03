@@ -4,5 +4,5 @@ stripe>=16.1.0,<17  # pins Stripe's API version 2026-10-28.endive, the one the c
 whitenoise>=6.12.0
 gunicorn>=26.2.0
 psycopg[binary]>=3.3.6
-celery[redis]>=5.4,<6  # the worker that relays powers to the island (apps.screen.tasks)
+celery[redis]>=5.6.3,<6  # the worker that relays powers to the island (apps.screen.tasks)
 redis>=8.1.0,<9  # the shared cache and Celery's broker (deploy/: the redis service)
