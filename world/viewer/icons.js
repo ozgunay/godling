@@ -244,6 +244,57 @@ const DRAW = {
   fire() {
     return outline(rows(['...o...', '..oo...', '..ooo.o', '.ooyoo.', '.oyyyo.', '.OoyoO.', '..bbb..']))
   },
+  bottle() { // a viewer's feedback, corked in sea glass and drifting off to the makers
+    const g = grid(16, 16)
+    rect(g, 2, 5, 9, 4, 'c'); rect(g, 3, 4, 7, 1, 'c'); rect(g, 2, 8, 9, 1, 'C'); rect(g, 3, 9, 7, 1, 'C')
+    rect(g, 11, 5, 1, 4, 'C'); rect(g, 12, 6, 1, 2, 'c')
+    rect(g, 13, 6, 2, 2, 'b'); dots(g, [[13, 7], [14, 7]], 'B')
+    rect(g, 3, 5, 5, 1, 'w')
+    rect(g, 4, 6, 5, 2, 'y'); dots(g, [[4, 6], [4, 7], [8, 7]], 't')
+    dots(g, [[1, 12], [2, 11], [3, 11], [4, 12], [9, 12], [10, 11], [11, 11], [12, 12]], 'u')
+    return outline(g)
+  },
+  bug() {
+    const g = grid(11, 12)
+    dots(g, [[2, 0], [8, 0], [3, 1], [7, 1]], 'n')
+    rect(g, 4, 2, 3, 2, 'n')
+    disc(g, 5, 7, 3.6, 'M')
+    disc(g, 3.6, 6, 1.2, 'm'); disc(g, 6.4, 6, 1.2, 'm')
+    rect(g, 5, 4, 1, 7, 'n')
+    dots(g, [[0, 5], [0, 8], [10, 5], [10, 8]], 'n')
+    return outline(g)
+  },
+  question() {
+    return outline(rows([
+      '.wwwwwwwwww.',
+      'wwwwkkkkwwww',
+      'wwwkkwwkkwww',
+      'wwwwwwwkkwww',
+      'wwwwwkkkwwww',
+      'wwwwwkkwwwww',
+      'wwwwwwwwwwww',
+      'wwwwwkkwwwww',
+      '.WWWWWWWWWW.',
+      '..WWW.......',
+      '..WW........',
+      '..W.........',
+    ]))
+  },
+  idea() {
+    const g = grid(12, 13)
+    disc(g, 5.5, 4.5, 4.2, 'g')
+    dots(g, [[8, 3], [9, 4], [9, 5], [8, 6], [7, 7], [8, 7]], 'G')
+    dots(g, [[3, 2], [4, 1], [2, 3], [2, 4]], 'y')
+    dots(g, [[5, 5], [6, 5], [5, 6], [6, 6]], 'o')
+    rect(g, 4, 9, 4, 1, 's'); rect(g, 4, 10, 4, 1, 'S'); rect(g, 5, 11, 2, 1, 'd')
+    return outline(g)
+  },
+  close() {
+    return outline(rows(['ww...ww', 'www.www', '.wwwww.', '..www..', '.wwwww.', 'www.www', 'ww...ww']))
+  },
+  tick() {
+    return outline(rows(['......w', '.....ww', 'w...ww.', 'ww.ww..', '.www...', '..w....']))
+  },
   glider() { // a viewer's note, folded into a paper glider
     return outline(rows([
       '................',

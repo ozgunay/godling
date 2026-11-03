@@ -91,12 +91,14 @@ class AdminTests(TestCase):
 
     def test_the_rules_are_edited_on_one_page(self):
         from apps.rules.models import Rules
-        reports = {"reports_to_hide": "4", "report_min_age_hours": "48", "reports_per_hour": "5"}
+        reports = {"reports_to_hide": "4", "report_min_age_hours": "48", "reports_per_hour": "5",
+                   "feedback_per_hour": "3", "feedback_email": "makers@example.org"}
         self.client.post("/admin/rules/rules/1/change/", {"welcome_credits": "30", "power_every": "5",
                                                           "note_every": "120", "note_limit": "100", **reports})
         rules = Rules.get()
         self.assertEqual((rules.welcome_credits, rules.free_powers, rules.note_limit), (30, False, 100))
         self.assertEqual((rules.report_min_age_hours, rules.reports_per_hour), (48, 5))
+        self.assertEqual((rules.feedback_per_hour, rules.feedback_email), (3, "makers@example.org"))
         self.assertEqual(self.client.post("/admin/rules/rules/1/change/", {
             "welcome_credits": "30", "power_every": "5", "note_every": "120", "note_limit": "200",
             **reports}).status_code, 200)  # over 140: the form refuses it

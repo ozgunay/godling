@@ -40,8 +40,11 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 /* The stage: the island fills it; the HUD floats over it and lets drags through to the camera */
 .stage { position: relative; width: 100vw; height: 100dvh; overflow: hidden; font-family: 'Tiny5', sans-serif; letter-spacing: 0.02em; }
 .island { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #0b0e10; }
+/* A part placed straight on the stage passes every click to the island, its own included: the first rule outranks the
+   second there. Only what sits inside a part takes clicks back, so anything clickable goes inside one. */
 .stage > :not(.island) { pointer-events: none; }
-.stage button, .stage input, .stage textarea, .stage a, .b-pop, .b-note, .b-account, .tip { pointer-events: auto; }
+.stage button, .stage input, .stage textarea, .stage a, .b-pop, .b-note, .b-account, .b-bottle { pointer-events: auto; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* Island materials */
 .block {
@@ -270,9 +273,93 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .r-mark .px { width: 1.2rem; height: auto; }
 .r-tip { position: absolute; padding: 0.35rem 0.55rem; font: 400 0.95rem/1 'Tiny5', sans-serif; white-space: nowrap; pointer-events: none; }
 
+/* ---- The bottle (beta): a bug, a question or an idea, corked and sent off the island to its makers ---- */
+.beta { font: 400 max(8px, 0.6rem)/1 'Silkscreen', monospace; font-style: normal; padding: 0.25rem 0.4rem; background: #2c3335; color: var(--mist); text-shadow: none; }
+/* One corner holds the panel above its opener, by layout, so the two never run into each other. Closed, it passes
+   under the pop-ups (a toast is brief, the bottle stays) and the dock; open, it is above everything. */
+.b-bottle-corner {
+  --bottle-at: 1.1rem; /* its bottom edge: the dock's, or just above the dock when the dock reaches the corner */
+  position: absolute; z-index: 0; top: 1.5rem; right: 1.5rem; bottom: var(--bottle-at);
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; gap: 0.7rem;
+}
+.b-bottle-corner.raised { --bottle-at: calc(var(--dock-h, 13rem) + 1.7rem); }
+.bottle-open .b-bottle-corner { z-index: 6; }
+.b-popups { z-index: 1; }
+.b-dock { z-index: 2; }
+.b-bottle-open { flex: none; transition: transform 160ms var(--ease-out); }
+.b-bottle-open .px { animation: bob 2.4s steps(2, jump-none) infinite; }
+.b-bottle-open:hover, .b-bottle-open:focus-visible, .b-bottle-open[aria-expanded='true'] { transform: translateY(-0.25rem); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
+.b-bottle-open:active { transform: translateY(0.1rem); }
+.b-bottle-open[aria-expanded='true'] .px { animation: none; }
+@keyframes bob { 50% { transform: translateY(-0.125rem); } }
+
+.b-bottle {
+  flex: 0 1 auto; min-height: 0; width: 31rem; overflow-y: auto; /* as tall as the corner lets it, then it scrolls */
+  padding: 0.8rem 0.9rem 0.9rem; text-shadow: var(--pixel-shadow); scrollbar-width: thin; scrollbar-color: var(--stone) transparent;
+}
+.b-bottle:focus { outline: none; }
+.b-bottle:not([hidden]) { animation: rise 240ms var(--ease-out); }
+@keyframes rise { from { opacity: 0; transform: translateY(0.6rem); } }
+.bt-head { display: flex; align-items: center; gap: 0.6rem; }
+.bt-head h2 { margin: 0; font: 400 1.4rem/1 'Tiny5', sans-serif; color: var(--gold); }
+.bt-close { display: grid; place-items: center; margin-left: auto; padding: 0.45rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); }
+.bt-close:hover { background: rgba(14, 17, 18, 0.95); }
+.bt-lede { margin: 0.6rem 0 0.8rem; font: 400 1.05rem/1.3 'Tiny5', sans-serif; color: var(--mist); }
+.bt-kinds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin: 0 0 0.75rem; padding: 0.3rem 0 0; border: 0; }
+.bt-kind {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.35rem;
+  min-height: 4.3rem; padding: 0.7rem 0.3rem 0.4rem; cursor: pointer; filter: saturate(0.6) brightness(0.85);
+  font: 400 1.05rem/1 'Tiny5', sans-serif; transition: transform 160ms var(--ease-out);
+}
+.bt-kind input { position: absolute; opacity: 0; pointer-events: none; }
+.bt-kind:hover { filter: none; }
+.bt-kind.on { filter: none; transform: translateY(-0.25rem); outline: 0.25rem solid var(--gold); outline-offset: 0.06rem; }
+.bt-kind:has(input:focus-visible) { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+.b-bottle textarea {
+  display: block; width: 100%; min-height: 6.5rem; max-height: 15rem; field-sizing: content; margin: 0; padding: 0.55rem 0.65rem; resize: none;
+  background: var(--paper); color: var(--paper-ink); caret-color: var(--moss-deep);
+  border: var(--bevel) solid var(--ink); box-shadow: inset var(--bevel) var(--bevel) 0 #d9d3bf;
+  font: 400 1.15rem/1.35 'Tiny5', sans-serif; text-shadow: none;
+}
+.b-bottle textarea::placeholder { color: #6e6858; }
+.b-bottle textarea::selection { background: var(--gold); color: var(--gold-ink); }
+.bt-meta { display: flex; align-items: flex-start; gap: 0.8rem; margin: 0.6rem 0 0.75rem; }
+.bt-attach { display: flex; align-items: flex-start; gap: 0.55rem; min-width: 0; cursor: pointer; font: 400 1rem/1.2 'Tiny5', sans-serif; }
+.bt-attach input { position: absolute; opacity: 0; pointer-events: none; }
+.bt-attach .box { display: grid; place-items: center; flex: none; width: 1.45rem; height: 1.45rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); }
+.bt-attach .box .px { visibility: hidden; width: 0.95rem; height: auto; }
+.bt-attach input:checked + .box { background: var(--gold); box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.45); }
+.bt-attach input:checked + .box .px { visibility: visible; }
+.bt-attach input:focus-visible + .box { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+.bt-attach .words { padding-top: 0.2rem; }
+.bt-attach .facts { display: block; margin-top: 0.35rem; font: 400 max(8px, 0.62rem)/1.5 'Silkscreen', monospace; color: var(--fog); overflow-wrap: anywhere; }
+.bt-attach input:not(:checked) ~ .words .facts { text-decoration: line-through; opacity: 0.6; }
+.b-bottle .count { margin-left: auto; padding-top: 0.35rem; font: 400 0.7rem/1 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.b-bottle .count.full { color: var(--heart); }
+.bt-foot { display: flex; align-items: center; gap: 0.7rem; }
+.bt-foot .get { margin-left: auto; flex: none; text-decoration: none; }
+.bt-hint { margin: 0; font: 400 0.95rem/1.25 'Tiny5', sans-serif; color: var(--mist); }
+.bt-hint.no { color: #ffd0d1; }
+
+/* Sent: the bottle drifts off on a strip of sea, out of the slab */
+.bt-sea {
+  position: relative; height: 5rem; margin: 0.8rem 0 0.75rem; overflow: hidden; border: var(--bevel) solid var(--ink);
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='8' shape-rendering='crispEdges'><rect y='3' width='16' height='5' fill='%232b6fc9'/><rect x='1' y='2' width='6' height='2' fill='%235aaef5'/><rect x='9' y='3' width='6' height='1' fill='%235aaef5'/><rect x='2' y='1' width='3' height='1' fill='%23fff'/><rect x='11' y='2' width='2' height='1' fill='%23fff'/><rect y='6' width='16' height='2' fill='%231d4f9a'/></svg>") 0 100% / 4rem 2rem repeat-x, rgba(14, 17, 18, 0.7);
+  animation: swell 2.4s steps(8) infinite;
+}
+@keyframes swell { to { background-position-x: -4rem; } }
+.bt-drift { position: absolute; left: -3.5rem; bottom: 0.75rem; animation: drift 5.5s linear forwards; }
+.bt-drift .px { animation: bob 1.2s steps(2, jump-none) infinite; }
+@keyframes drift { 12% { left: 18%; } to { left: calc(100% + 1rem); } }
+.bt-done { margin: 0; font: 400 1.4rem/1.1 'Tiny5', sans-serif; color: var(--teal); }
+.bt-thanks { margin: 0.4rem 0 0.9rem; font: 400 1.05rem/1.3 'Tiny5', sans-serif; color: var(--mist); }
+
 @media (prefers-reduced-motion: reduce) {
   .b-live .dot, .slot.calling .px, .b-account.nudge, .b-purse.nudge { animation: none; }
   .b-pop, .b-pop.out, .b-say, .b-camhint, .slot { transition-duration: 1ms; filter: none; }
+  .b-bottle-open .px, .b-bottle:not([hidden]), .bt-sea, .bt-drift .px { animation: none; }
+  .bt-drift { animation: none; left: 60%; }
+  .b-bottle-open, .bt-kind { transition-duration: 1ms; }
 }
 
 /* ---- Phones: the island stays in the middle; the HUD hugs the top and bottom edges ---- */
@@ -338,4 +425,34 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .r-spans { justify-content: center; }
   .r-span { flex: 1; }
   .replaying .b-hotbar, .replaying .b-purse { display: none; }
+  /* The bottle: an icon at the right edge, just above the dock; open, a sheet over the dock */
+  .b-bottle-corner { top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.6rem); right: 0; bottom: 0; left: 0; gap: 0; }
+  .b-bottle-open { margin: 0 0.75rem calc(var(--dock-h, 13rem) + max(0.6rem, env(safe-area-inset-bottom)) + 0.5rem); }
+  .b-bottle-open .beta { display: none; } /* the word goes as the camera buttons' words do */
+  .bottle-open .b-bottle-open { display: none; }
+  /* A compact sheet: the kinds one short row, the paper growing with the words */
+  .b-bottle {
+    align-self: stretch; width: auto;
+    padding: 0.55rem 0.7rem max(0.65rem, env(safe-area-inset-bottom)); border-bottom: 0;
+    background: var(--speckle) 0 0 / 1.5rem, #2c3133; /* opaque: the hotbar it covers never shows through */
+  }
+  .bottle-open .b-dock { visibility: hidden; }
+  .bt-head { gap: 0.45rem; }
+  .bt-head > .px { width: 2rem; height: auto; }
+  .bt-head h2 { font-size: 1.2rem; }
+  .bt-close { padding: 0.35rem; }
+  .bt-lede { margin: 0.35rem 0 0.5rem; font-size: 0.95rem; }
+  .bt-lede .long { display: none; }
+  .bt-kinds { gap: 0.35rem; margin-bottom: 0.5rem; padding-top: 0.25rem; }
+  .bt-kind { flex-direction: row; gap: 0.35rem; min-height: 0; height: 2.9rem; padding: 0.55rem 0.3rem 0.1rem; font-size: 0.95rem; }
+  .b-bottle textarea { min-height: 4.6rem; max-height: 9.5rem; padding: 0.4rem 0.55rem; font-size: 16px; } /* under 16px, iOS zooms the page on focus */
+  .bt-meta { margin: 0.45rem 0 0.5rem; gap: 0.5rem; }
+  .bt-attach { flex: 1; gap: 0.45rem; font-size: 0.92rem; }
+  .bt-attach .box { width: 1.3rem; height: 1.3rem; }
+  .bt-attach .words { min-width: 0; padding-top: 0.1rem; }
+  .bt-attach .facts { margin-top: 0.2rem; } /* every fact readable, so it may take two lines */
+  .bt-hint:not(.no) { display: none; } /* the button says what it does; only a refusal needs words here */
+  .bt-hint.no { flex: 1; font-size: 0.9rem; }
+  .bt-sea { height: 3.6rem; margin: 0.5rem 0; }
+  .bt-thanks { margin-bottom: 0.6rem; font-size: 0.95rem; }
 }

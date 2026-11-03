@@ -16,5 +16,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("allauth.urls")),
     path("credits/", include("apps.credits.urls")),
+    path("", include("apps.feedback.urls")),
     path("", include("apps.screen.urls")),
 ]

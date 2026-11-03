@@ -12,6 +12,7 @@ class RulesAdmin(admin.ModelAdmin):
         ("Credits", {"fields": ["welcome_credits", "free_powers"]}),
         ("Pace", {"fields": ["power_every", "note_every"]}),
         ("Notes", {"fields": ["note_limit", "reports_to_hide", "report_min_age_hours", "reports_per_hour"]}),
+        ("Feedback", {"fields": ["feedback_per_hour", "feedback_email"]}),
     ]
 
     def changelist_view(self, request, extra_context=None):

@@ -4,6 +4,7 @@
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
 import { createReplayUI } from './replay.js'
+import { browserOf, createFeedback, systemOf } from './feedback.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
 const POLL_MS = 1500
@@ -53,6 +54,7 @@ const seen = new Set() // pop-ups already shown
 const cooling = {} // power id -> when the world lets it be called again (ms)
 let noteReadyAt = 0
 let past = null // the island's past, once the screen is built (replay.js)
+let bottle = null // the feedback bottle, once the screen is built (feedback.js)
 
 function el(tag, cls, html) {
   const e = document.createElement(tag)
@@ -437,6 +439,7 @@ function toggleAim(p) {
   if (inThePast()) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   toggleNote(false)
+  bottle?.close({ focus: false })
   unpick() // the slot's focus opened its tip before the click; the aim bar takes that place
   aiming = p
   slots.forEach((s, i) => s.classList.toggle('aiming', POWERS[i] === p))
@@ -483,6 +486,7 @@ addEventListener('message', (event) => {
 function toggleNote(open = composer.hidden) {
   if (open && inThePast()) return
   if (open && aiming) endAim()
+  if (open) bottle?.close({ focus: false })
   composer.hidden = !open
   slots[POWERS.findIndex((p) => p.note)].classList.toggle('open', open)
   if (open) noteText.focus()
@@ -563,11 +567,17 @@ function drawClock(c, up) {
 let islandStream = null
 const STREAM_WORDS = { connecting: 'Connecting', reconnecting: 'Reconnecting', paused: 'Paused' }
 
-function drawLive(n, panelUp) {
+// The badge's word: the island's stream as the frame said it, or the panel's word until it has. A bug report takes the
+// same word (screenFacts), so it never says live where the screen said otherwise.
+function liveWord(panelUp) {
   const s = islandStream
-  const word = !s ? (panelUp ? 'Live' : 'Offline')
+  return !s ? (panelUp ? 'Live' : 'Offline')
     : s.state === 'live' ? (s.world === 'down' ? 'Restarting' : 'Live')
     : STREAM_WORDS[s.state] || 'Offline'
+}
+
+function drawLive(n, panelUp) {
+  const word = liveWord(panelUp)
   const up = word === 'Live'
   const replaying = Boolean(past?.on)
   live.classList.toggle('down', !up && !replaying)
@@ -584,7 +594,8 @@ function typing(target) {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
 }
 addEventListener('keydown', (e) => {
-  if (typing(e.target)) {
+  if (e.key === 'Escape' && bottle?.open) return bottle.close() // the topmost thing open closes first
+  if (typing(e.target) || e.target.closest?.('.b-bottle')) { // the bottle is a dialog: its keys stay its own
     if (e.key === 'Escape') toggleNote(false)
     return
   }
@@ -741,6 +752,36 @@ past = createReplayUI({
     }
   },
 })
+// ---- the bottle (behind the accounts site): a bug, a question or an idea for the makers -------------------------
+
+// What the screen shows, for a bug report the viewer chooses to attach it to (web/apps/feedback/views.py FACTS): the
+// badge's word, and the clock as drawClock shows it (whole minutes; none while it says "Out of reach").
+function screenFacts() {
+  const facts = {
+    view: past?.on ? 'replay' : 'live',
+    camera,
+    stream: liveWord(status?.world).toLowerCase(),
+    size: `${innerWidth}x${innerHeight}`,
+    pixels: Math.round((devicePixelRatio || 1) * 100) / 100,
+  }
+  const browser = browserOf(navigator.userAgent), system = systemOf(navigator.userAgent)
+  if (browser) facts.browser = browser
+  if (system) facts.system = system
+  if (matchMedia('(pointer: coarse)').matches) facts.touch = true
+  if (past?.on) {
+    if (past.at > 0) facts.moment = Math.round(past.at)
+  } else if (status?.world && Number.isFinite(status.clock?.hour)) {
+    facts.day = status.clock.day || 1
+    facts.minute = Math.floor((((status.clock.hour % 24) + 24) % 24) * 60) // as clockText reads it
+  }
+  return facts
+}
+bottle = createFeedback({ stage, dock, el, icon, post, store, facts: screenFacts, phone: PHONE,
+  onOpen() { // the bottle takes the place of the aim and the note, as they take each other's
+    if (aiming) endAim()
+    toggleNote(false)
+  } })
+
 // A shared link to a moment (?t=…): into the past once the island's page has come up live.
 const sharedMoment = Date.parse(new URLSearchParams(location.search).get('t') || '')
 if (Number.isFinite(sharedMoment)) past.start(sharedMoment) // opens once the island's page can hear the screen
@@ -756,6 +797,7 @@ async function poll() {
   const now = status.now || Date.now() / 1000
   showView(status.view)
   drawAccount(status.account)
+  bottle.draw(account)
   takePowers(status.powers)
   takeNoteLimit(status.notes)
   if (status.account) drawPurse(account)

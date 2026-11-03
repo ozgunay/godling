@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.rules",
     "apps.credits",
     "apps.notes",
+    "apps.feedback",
     "apps.screen",
 ]
 
@@ -117,6 +118,9 @@ CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 # The worker's own clock (deploy/: `worker --beat`): powers nobody will take are given up and refunded on the server,
 # not only when their viewer's page asks (apps.screen.tasks.expire_stale_powers).
 CELERY_BEAT_SCHEDULE = {"expire-stale-powers": {"task": "apps.screen.tasks.expire_stale_powers", "schedule": 60.0}}
+# Feedback emails have a queue and a worker of their own (deploy/: `mailer`), so a slow mail server never holds back the
+# powers, which the `worker` takes one at a time from the default queue (apps.feedback.tasks).
+CELERY_TASK_ROUTES = {"apps.feedback.tasks.tell_staff": {"queue": "mail"}}
 
 AUTH_USER_MODEL = "users.User"
 AUTH_PASSWORD_VALIDATORS = [
