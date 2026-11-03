@@ -137,8 +137,15 @@ Smaller fixes from the same review:
 | The unit tests | The packer and the memory files after a restore (5 tests, `mind/tests/test_replay_restore.py`), and `reconcile_stripe` (4 tests, `web/apps/credits/test_reconcile.py`) |
 | CI's checks | `docker compose config` with `GODLING_BACKUP_PASSWORD`, `promtool check config` and the rule tests, and shellcheck on `backup.sh` |
 
+## Postgres 18 (3 November)
+Dependabot moved the database to `postgres:18-alpine` alone. The 18 image refuses a volume at `/var/lib/postgresql/data` (it keeps its data in a folder per major version, `18/docker`), so a fresh server's database did not start; and the backup image's Postgres 16 `pg_dump` refuses a newer server. No server held data yet, so the move cost nothing:
+- the volume mounts at `/var/lib/postgresql`, and the backup image is on `postgres:18-alpine`;
+- Dependabot no longer proposes Postgres majors: the server and the backups' client move together, by hand, with `pg_upgrade` once there is data.
+
+Tested on the production server (Hetzner CAX21, Arm) against the real R2 bucket: Postgres 18.6 started fresh in `/var/lib/postgresql/18/docker`, the site migrated (27 tables), the backup service made the repository, took the first database and run snapshots, and the weekly check restored the database snapshot (27 tables). `pg_dump` in the backup image is 18.6.
+
 ## Left
-- **A real bucket**, and the new-server restore done once from it on a staging copy (going live, step 5).
+- **A real bucket**, and the new-server restore done once from it on a staging copy (going live, step 5). The bucket is set up (R2, `godling-backups`); the restore drill on a staging copy is still to do.
 - **Whether the server may delete its own backups** (review finding 15): a bucket lock or a second copy. This is for the outside review.
 - **The mind's logs** are read whole by every run snapshot. Rotating them would keep that small.
 - **The backup password and `.env` in a password manager**: yours.
