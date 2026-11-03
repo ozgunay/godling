@@ -11,8 +11,9 @@ and no longer keeps (KEEP_RAW_DAYS), a few thousand at a time.
 Under <run>/replay/:
     index.json                               the segments (one per world start) and the gaps between them
     chunks/<YYYY-MM-DD>/<HH>/<t0>.json.gz    10 s each, named by their start in UTC milliseconds
-    tracks/<YYYY-MM-DD>/<HH>.jsonl           the mind's log entries the screen shows (decision, bubble, project, event,
-                                             glance), as the guest panel reads them live
+    tracks/<YYYY-MM-DD>/<HH>.jsonl           the mind's log entries the screen shows (TRACKED: decision, bubble,
+                                             project, thinking, learn, sleep, event, glance…), as the guest panel
+                                             reads them live
     marks/<YYYY-MM-DD>.jsonl                 markers for the timeline
     sky/<YYYY-MM-DD>.jsonl                   once a minute: the island's hour, day, rain and fog, to shade the timeline
     acts/<YYYY-MM-DD>.jsonl                  what viewers did, written by the guest panel
@@ -57,7 +58,9 @@ FRAME_MS = 1000 // RATE
 SKY_EVERY_MS = 60_000
 MARK_APART = 20_000  # markers of one kind with no event of their own to tell them apart, closer than this, are one
 FEED_KEPT = 8  # lines of Godling's feed the screen gets, live (the guest panel) and in replay
+WORLD_KEPT = FEED_KEPT // 2  # of them the world's at most (notices, the sky's doings), so Godling's own lines stay
 LEAD_HOURS = 48  # how far back to look for what the screen showed when a replay starts
+LEAD_MOST = 300  # entries of the lead since the last decision at most (a mind that has not decided for hours)
 KEEP_RAW_DAYS = _env_float("GODLING_REPLAY_RAW_DAYS", 3)  # ADR-016 D4: raw recordings, for debugging
 KEEP_EVERY = 600  # seconds between keeping jobs
 TRIM_BATCH = 5000  # rows deleted from the live recording at once: a few milliseconds of the world's write lock
@@ -67,7 +70,8 @@ GIVE_UP_AFTER = 5  # failed passes in a row before an old recording that will no
 DISK_WARN = 0.8  # warn when the disk is this full
 ROWS_AT_ONCE = 1800  # recording rows read per step: about 30 s of the world
 TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"),
-           "project": ("phase", "goal", "intention"), "event": ("text", "sky", "sky_stage", "sky_id"),
+           "project": ("phase", "goal", "intention", "ok"), "thinking": (), "plan_discarded": (),
+           "learn": ("name", "does"), "sleep": ("dream",), "event": ("text", "sky", "sky_stage", "sky_id"),
            "glance": ("text", "degrees", "turned")}
 CHUNK_REL = re.compile(r"chunks/\d{4}-\d\d-\d\d/\d\d/\d{13}\.json\.gz")
 ASSET_URL = re.compile(r"^(?:[^?#]*/)?assets/([^/?#]+)$")  # /assets/x.glb, /island/assets/x.glb, …
@@ -818,10 +822,12 @@ class Packer:
             t = int(t * 1000)
             kind = e.get("kind")
             fields = TRACKED.get(kind)
-            if fields and (kind != "project" or e.get("phase") == "start") and (kind != "bubble" or e.get("ok")):
+            if fields is not None and (kind != "bubble" or e.get("ok")):
                 day, hour = day_hour(t)
-                hours.setdefault(f"tracks/{day}/{hour}.jsonl", []).append(
-                    {"time": round(t / 1000, 3), "kind": kind, **{k: e[k] for k in fields if k in e}})
+                kept = {"time": round(t / 1000, 3), "kind": kind, **{k: e[k] for k in fields if k in e}}
+                if kind == "decision":
+                    kept["agenda"] = agenda_of(e)
+                hours.setdefault(f"tracks/{day}/{hour}.jsonl", []).append(kept)
             for mark, about in marks_of(e, self.state["best"]):
                 key = about or mark
                 if about is not None and key in self.marked or \
@@ -935,22 +941,34 @@ def read_index(run):
 
 def read_tracks(run, t_from, t_to):
     """The screen's tracks from `t_from` to `t_to` (ms): `entries` in that span, and `lead`, the entries before it that
-    say what the screen showed at `t_from` (the last thought, bubble and intention, and the feed)."""
+    say what the screen showed at `t_from`: all of them since the last decision (what Godling was doing, and how far
+    into its agenda), the last bubble and intention before that, and the lines of the feed."""
     root = Path(run) / "replay"
     entries = [dict(e) for h in _hours(t_from, t_to) for e in _read_lines(_track_file(root, h))
                if t_from <= e.get("time", 0) * 1000 <= t_to]  # copies: the lines read are kept for the next call
-    lead, want, feed = [], {"decision", "bubble", "project"}, 0
-    # Twice the feed's length of lines that may make it: the reading skips a thought said twice in a row.
+    lead, want, recent = [], {"decision", "bubble", "project"}, True
+    # Twice the feed's length of Godling's lines (the reading skips a thought said twice in a row), and the feed's
+    # length of the world's, of which it keeps half.
+    mind, world = 0, 0
     for h in list(_hours(t_from - LEAD_HOURS * 3_600_000, t_from))[::-1]:
         for e in reversed(_read_lines(_track_file(root, h))):
             if e.get("time", 0) * 1000 >= t_from:
                 continue
             kind = e.get("kind")
-            if kind in want or kind in ("decision", "event", "glance") and feed < 2 * FEED_KEPT:
+            start = kind == "project" and e.get("phase") == "start"
+            if kind in ("event", "glance"):
+                line = world < FEED_KEPT
+                world += kind == "event"
+            else:
+                line = (_makes_line(e) or kind == "plan_discarded") and mind < 2 * FEED_KEPT
+                mind += _makes_line(e)
+            if recent or kind in want and (kind != "project" or start) or line:
                 lead.append(dict(e))
-                want.discard(kind)
-                feed += kind in ("decision", "event")
-        if not want and feed >= 2 * FEED_KEPT:
+                if kind != "project" or start:
+                    want.discard(kind)
+            if kind == "decision" or len(lead) >= LEAD_MOST:
+                recent = False
+        if not want and not recent and mind >= 2 * FEED_KEPT and world >= FEED_KEPT:
             break
     lead.reverse()
     return {"format": FORMAT, "from": t_from, "to": t_to, "lead": lead, "entries": entries,
@@ -997,21 +1015,63 @@ def chunk_file(run, rel):
     return path if path.is_file() else None
 
 
-def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT):
+def agenda_of(decision):
+    """How many projects a decision's agenda holds: the ones with steps, which the body carries out (run_godling)."""
+    if isinstance(decision.get("agenda"), int):  # a decision in the tracks keeps only the count
+        return decision["agenda"]
+    return sum(1 for p in decision.get("projects") or [] if isinstance(p, dict) and p.get("steps"))
+
+
+def _makes_line(e):
+    """Whether this entry adds one of Godling's own lines to the feed (reduce_status)."""
+    kind = e.get("kind")
+    return kind in ("decision", "learn") or kind == "sleep" and bool(e.get("dream")) or \
+        kind == "project" and e.get("phase") == "end" and e.get("ok") is False
+
+
+def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=WORLD_KEPT):
     """What the screen shows of Godling's mind after these log entries, in order: the guest panel's reading of the log
-    (mind_status). The viewers' screen reads replay's tracks the same way (reduceStatus, world/viewer/replay.js)."""
-    out = {"thought": "", "needs": "", "intention": ""}
-    feed = deque(maxlen=feed_kept)
+    (mind_status). The viewers' screen reads replay's tracks the same way (reduceStatus, world/viewer/replay.js).
+
+    `now` is what Godling is doing at this moment, with the time it began: a project ({"text": its intention, "step",
+    "of": where it is in the agenda}), or {"thinking": True} while the body stands until its mind has thought; None
+    between them. The feed holds its thoughts, what it could not finish, what it learned and dreamt (`about` says
+    which), and what it noticed; at most `world_kept` of its lines are the world's, so they never crowd Godling out."""
+    out = {"thought": "", "needs": "", "intention": "", "now": None}
+    feed, agenda, step, said = [], 0, 0, None  # said: the last thought in the feed, which is not said again
+
+    def say(e, about, text, **more):
+        feed.append({"time": e.get("time"), "who": "godling", "about": about, "text": text, **more})
+
     for e in entries:
         kind = e.get("kind")
         if kind == "decision":
             out["thought"], out["needs"] = clean(e.get("thought", "")), clean(e.get("needs", ""))
-            if out["thought"] and (not feed or feed[-1]["text"] != out["thought"]):
+            if out["thought"] and out["thought"] != said:
                 feed.append({"time": e.get("time"), "who": "godling", "text": out["thought"]})
+                said = out["thought"]
+            agenda, step, out["now"] = agenda_of(e), 0, None
         elif kind == "bubble" and e.get("ok"):
             out["bubble"] = {"thing": e.get("thing"), "feeling": e.get("feeling")}
+        elif kind == "thinking":
+            if not (out["now"] or {}).get("thinking"):  # thinking since the first time it said so
+                out["now"] = {"time": e.get("time"), "thinking": True}
         elif kind == "project" and e.get("phase") == "start":
             out["intention"] = clean(e.get("intention") or e.get("goal", ""))
+            step += 1
+            out["now"] = {"time": e.get("time"), "text": out["intention"], "step": step, "of": agenda}
+        elif kind == "project" and e.get("phase") == "end":
+            doing = (out["now"] or {}).get("text") or ""
+            if e.get("ok") is False and (e.get("intention") or doing or e.get("goal")):
+                say(e, "failed", clean(e.get("intention") or doing or e.get("goal")))
+            out["now"] = None
+        elif kind == "plan_discarded":  # something happened that it stopped for, to think again
+            if feed and feed[-1].get("about") == "failed":
+                feed[-1]["about"] = "stopped"
+        elif kind == "learn" and e.get("name"):
+            say(e, "learned", clean(e.get("does") or ""), name=clean(e["name"]))
+        elif kind == "sleep" and e.get("dream"):
+            say(e, "dream", clean(e["dream"]))
         elif kind == "event":
             feed.append({"time": e.get("time"), "who": "sky" if e.get("sky") else "notice", "text": clean(e["text"]),
                          "glance": None})
@@ -1019,7 +1079,21 @@ def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT):
             seen = next((n for n in reversed(feed) if n["text"] == e.get("text") and n.get("glance", 0) is None), None)
             if seen:
                 seen["glance"] = e.get("degrees") if e.get("turned") else 0
-    out["feed"] = list(feed)
+    kept, world = deque(), 0
+    for line in reversed(feed):
+        if line["who"] != "godling":
+            if world >= world_kept:
+                continue
+            world += 1
+        kept.appendleft(line)
+        if len(kept) >= feed_kept:
+            break
+    latest = next((line for line in reversed(feed) if line["who"] == "godling" and "about" not in line), None)
+    if latest is not None and not any(line is latest for line in kept):  # its newest thought always stays
+        if len(kept) >= feed_kept:
+            kept.popleft()
+        kept.appendleft(latest)
+    out["feed"] = list(kept)
     return out
 
 

@@ -96,7 +96,8 @@ def body_of(request):
 
 
 def moderate(status):
-    """Note pop-ups get their note's id (so viewers can report it); hidden notes vanish from pop-ups and the feed.
+    """Note pop-ups get their note's id (so viewers can report it); hidden notes vanish from pop-ups, the feed and the
+    line that says what Godling is doing now.
 
     The id came with the note through the panel (its pop-up's `ref`), so a report always reaches the note that was
     shown, never another account's note with the same words. A note pop-up without one has no Report button."""
@@ -121,6 +122,9 @@ def moderate(status):
     if hidden and isinstance(mind, dict) and mind.get("feed"):
         mind["feed"] = [f if not any(h in (f.get("text") or "") for h in hidden)
                         else {**f, "text": "A note drifted down; moderators have hidden it."} for f in mind["feed"]]
+    now = mind.get("now") if isinstance(mind, dict) else None
+    if hidden and isinstance(now, dict) and any(h in (now.get("text") or "") for h in hidden):
+        mind["now"] = {**now, "text": "…"}  # what Godling is doing, in its own words: held back as its lines are
     return status
 
 
@@ -349,7 +353,7 @@ def moderate_past(tracks):
             if quoted and quoted.group(1) not in sent | shown:
                 e["text"] = HIDDEN_NOTE
                 continue
-        for key in ("text", "thought", "needs", "intention", "goal"):
+        for key in ("text", "thought", "needs", "intention", "goal", "name", "does", "dream"):
             if pattern and isinstance(e.get(key), str) and pattern.search(e[key]):
                 e[key] = HIDDEN_NOTE if key == "text" else "…"
     return {**tracks, "acts": kept}

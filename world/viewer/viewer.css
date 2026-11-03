@@ -117,18 +117,47 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 }
 /* Older lines fade, but only their words: the band behind them stays dark enough to read over a bright sky */
 .b-feed .line > * { opacity: max(0.62, calc(1 - var(--age, 0) * 0.1)); }
-.b-feed .text, .b-objective .what { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.b-feed .latest > * { opacity: 1; } /* the newest thought stays bright, however much came after it */
+.b-feed .text, .b-objective .what, .b-now .what { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* Every line two lines at most (unfolded, the newest thought three); a cut line has a chevron and opens in full on a
+   click or a tap */
+.b-mind:not(.folded) .b-feed .latest .text { -webkit-line-clamp: 3; }
+.b-feed .opened .text { display: block; }
+.b-feed .open {
+  display: flex; align-items: flex-end; gap: 0.4rem; width: 100%; margin: 0; padding: 0; border: 0; background: none;
+  text-align: left; font: inherit; letter-spacing: inherit; text-shadow: inherit;
+}
+.b-feed .open .text { flex: 1; }
+.b-feed .open .px { flex: none; margin: 0 0 0.25rem; opacity: 0.7; }
+.b-feed .open:hover .text { color: var(--mist); }
+.b-feed .open:hover .px { opacity: 1; }
 .b-feed time { font: 400 0.68rem/1.9 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
 .b-feed .px { margin-top: 0.2rem; }
 .b-feed .sky .text { color: var(--gold); }
 .b-feed .notice .text { color: var(--teal); }
-.b-feed .waiting .text { color: var(--mist); }
-.b-objective {
+.b-feed .waiting .text, .b-feed .failed .text, .b-feed .stopped .text { color: var(--mist); }
+/* Folded, a new line shows a little while and fades, as a game's chat line does */
+.b-feed .fresh { animation: fresh 15s linear both; }
+@keyframes fresh { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
+/* The fold: a small band over the feed, as a game's quest tracker folds */
+.b-fold {
+  display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.25rem; padding: 0.3rem 0.65rem 0.3rem 0.45rem;
+  border: 0; background: rgba(14, 17, 18, 0.74); color: var(--fog); text-shadow: var(--pixel-shadow);
+  font: 400 0.68rem/1 'Silkscreen', monospace; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.b-fold:hover { color: var(--white); }
+.b-objective, .b-now {
   display: flex; align-items: center; gap: 0.65rem; width: max-content; max-width: 100%;
   margin: 0.7rem 0 0; padding: 0.55rem 0.8rem; background: rgba(14, 17, 18, 0.75); border: var(--bevel) solid var(--ink);
   font: 400 1.22rem/1.2 'Tiny5', sans-serif; text-shadow: var(--pixel-shadow);
 }
+.b-now + .b-objective { margin-top: 0.35rem; }
 .b-objective b { color: var(--gold); font-weight: 500; }
+/* What Godling is doing now: its own words in white, how far into its agenda in fog; thinking, in mist, bobbing */
+.b-now b { font-weight: 400; }
+.b-now .aside { flex: none; font: 400 0.68rem/1 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
+.b-now.thinking .what { color: var(--mist); }
+.b-now.thinking .px { animation: bob 1.2s steps(2, jump-none) infinite; }
 
 /* ---- Right: what viewers did, as it happens ---- */
 .b-popups { position: absolute; right: 1.5rem; top: 12.4rem; display: flex; flex-direction: column; gap: 0.5rem; width: 26rem; }
@@ -355,7 +384,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .bt-thanks { margin: 0.4rem 0 0.9rem; font: 400 1.05rem/1.3 'Tiny5', sans-serif; color: var(--mist); }
 
 @media (prefers-reduced-motion: reduce) {
-  .b-live .dot, .slot.calling .px, .b-account.nudge, .b-purse.nudge { animation: none; }
+  .b-live .dot, .slot.calling .px, .b-account.nudge, .b-purse.nudge, .b-now.thinking .px, .b-feed .fresh { animation: none; }
   .b-pop, .b-pop.out, .b-say, .b-camhint, .slot { transition-duration: 1ms; filter: none; }
   .b-bottle-open .px, .b-bottle:not([hidden]), .bt-sea, .bt-drift .px { animation: none; }
   .bt-drift { animation: none; left: 60%; }
@@ -383,7 +412,10 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .b-mind { top: 4.4rem; left: 0.75rem; right: 0.75rem; width: auto; }
   .b-feed .line { grid-template-columns: 2.4rem auto 1fr; font-size: 1rem; padding: 0.35rem 0.55rem; }
   .b-feed .text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .b-objective { font-size: 0.98rem; }
+  .b-feed .opened .text { display: block; }
+  .b-objective, .b-now { font-size: 0.98rem; margin-top: 0.45rem; }
+  .b-now .what { -webkit-line-clamp: 1; }
+  .b-now + .b-objective { margin-top: 0.25rem; }
   /* One pop-up at a time, over the feed (hidden meanwhile), never over Godling */
   .b-popups { top: 4.4rem; left: 0.75rem; right: 0.75rem; width: auto; }
   .has-pop .b-mind { visibility: hidden; }

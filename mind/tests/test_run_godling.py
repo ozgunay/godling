@@ -472,6 +472,32 @@ def test_agenda_loop_thinks_while_moving(monkeypatch, tmp_path):
     assert any(l["kind"] == "skill" and l["skill"] == "wait" for l in logs)  # an empty agenda: the body waits
 
 
+def test_the_body_says_when_it_stands_until_its_mind_has_thought(monkeypatch, tmp_path):
+    """The viewers' screen shows "Thinking" while the body waits (replay.reduce_status): the log says when it begins."""
+    plans = [{"thought": "go", "agenda": [project("hop", ("jump", {}), intention="Hop over")]}]
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, plans, calls=2)
+    gate = threading.Event()
+    llm = loop_args[3].llm
+    script = llm.complete_json
+
+    def slow(*a, **kw):  # the first plan is not ready before the body has begun to wait for it
+        assert gate.wait(5)
+        return script(*a, **kw)
+
+    def log(**entry):
+        logs.append(entry)
+        if entry["kind"] == "thinking":
+            gate.set()
+
+    llm.complete_json = slow
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args[:6], log, *loop_args[7:])
+    kinds = [l["kind"] for l in logs]
+    assert kinds.index("thinking") < kinds.index("wait_for_mind") < kinds.index("decision")
+    end = next(l for l in logs if l["kind"] == "project" and l["phase"] == "end")
+    assert end["intention"] == "Hop over" and end["goal"] == "hop"
+
+
 def test_agenda_loop_discards_an_interrupted_plan(monkeypatch, tmp_path):
     plans = [{"thought": "go", "agenda": [project("walk", ("walk_to", {"x": 10, "z": 0})), project("more", ("jump", {}))]}]
     island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, plans, calls=3, no_narration=True)

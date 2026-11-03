@@ -23,27 +23,58 @@ const PROBLEMS = {
 
 // What the screen shows of Godling's mind after these entries of its log, the way the guest panel reads it live
 // (mind/godling/replay.py reduce_status).
-export function reduceStatus(entries, feedKept = 8) {
-  const out = { thought: '', needs: '', intention: '' }
+export function reduceStatus(entries, feedKept = 8, worldKept = feedKept / 2) {
+  const out = { thought: '', needs: '', intention: '', now: null }
   const feed = []
-  const add = (line) => {
-    feed.push(line)
-    if (feed.length > feedKept) feed.shift()
-  }
+  let agenda = 0
+  let step = 0
+  let said = null // the last thought in the feed, which is not said again
+  const say = (e, about, text, more = {}) => feed.push({ time: e.time, who: 'godling', about, text, ...more })
   for (const e of entries) {
     if (e.kind === 'decision') {
       out.thought = e.thought || ''
       out.needs = e.needs || ''
-      if (out.thought && (!feed.length || feed[feed.length - 1].text !== out.thought)) add({ time: e.time, who: 'godling', text: out.thought })
+      if (out.thought && out.thought !== said) {
+        feed.push({ time: e.time, who: 'godling', text: out.thought })
+        said = out.thought
+      }
+      agenda = Number.isInteger(e.agenda) ? e.agenda : (e.projects || []).filter((p) => p?.steps?.length).length
+      step = 0
+      out.now = null
     } else if (e.kind === 'bubble' && e.ok) out.bubble = { thing: e.thing, feeling: e.feeling }
-    else if (e.kind === 'project' && e.phase === 'start') out.intention = e.intention || e.goal || ''
-    else if (e.kind === 'event') add({ time: e.time, who: e.sky ? 'sky' : 'notice', text: e.text, glance: null })
+    else if (e.kind === 'thinking') {
+      if (!out.now?.thinking) out.now = { time: e.time, thinking: true } // thinking since the first time it said so
+    } else if (e.kind === 'project' && e.phase === 'start') {
+      out.intention = e.intention || e.goal || ''
+      step += 1
+      out.now = { time: e.time, text: out.intention, step, of: agenda }
+    } else if (e.kind === 'project' && e.phase === 'end') {
+      const text = e.intention || out.now?.text || e.goal
+      if (e.ok === false && text) say(e, 'failed', text)
+      out.now = null
+    } else if (e.kind === 'plan_discarded') { // something happened that it stopped for, to think again
+      if (feed.at(-1)?.about === 'failed') feed.at(-1).about = 'stopped'
+    } else if (e.kind === 'learn' && e.name) say(e, 'learned', e.does || '', { name: e.name })
+    else if (e.kind === 'sleep' && e.dream) say(e, 'dream', e.dream)
+    else if (e.kind === 'event') feed.push({ time: e.time, who: e.sky ? 'sky' : 'notice', text: e.text, glance: null })
     else if (e.kind === 'glance') {
       const seen = [...feed].reverse().find((n) => n.text === e.text && n.glance === null)
       if (seen) seen.glance = e.turned ? e.degrees : 0
     }
   }
-  out.feed = feed
+  // At most `worldKept` of the lines kept are the world's, so they never crowd Godling's own out.
+  const kept = []
+  let world = 0
+  for (let i = feed.length - 1; i >= 0 && kept.length < feedKept; i--) {
+    if (feed[i].who !== 'godling' && world++ >= worldKept) continue
+    kept.unshift(feed[i])
+  }
+  const latest = feed.findLast((f) => f.who === 'godling' && !f.about)
+  if (latest && !kept.includes(latest)) { // its newest thought always stays
+    if (kept.length >= feedKept) kept.shift()
+    kept.unshift(latest)
+  }
+  out.feed = kept
   return out
 }
 
@@ -413,7 +444,8 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
     const mind = reduceStatus(entries)
     const c = m.clock || {}
     const g = m.godling
-    const key = JSON.stringify([mind.thought, mind.needs, mind.bubble, mind.feed.map((f) => [f.time, f.text, f.glance]),
+    const key = JSON.stringify([mind.thought, mind.needs, mind.bubble, mind.now,
+      mind.feed.map((f) => [f.time, f.text, f.glance, f.about]),
       Math.floor((c.hour ?? -1) * 60), c.day, c.rain >= 0.3, c.quake,
       g && [Math.round((g.health ?? 100) / 5), Math.round((g.hunger ?? 100) / 5), g.cold, g.wet >= 30, g.bracing, g.knockedDown]])
     if (key === drawn) return

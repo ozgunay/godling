@@ -194,7 +194,7 @@ def replay_tracks(run_dir, t_from, t_to):
     """The screen's tracks for a replay (ADR-016), with what viewers see of Godling's mind cleaned as it is live."""
     tracks = replay.read_tracks(run_dir, t_from, t_to)
     for e in tracks["lead"] + tracks["entries"]:
-        for key in ("thought", "needs", "intention", "goal", "text"):
+        for key in ("thought", "needs", "intention", "goal", "text", "name", "does", "dream"):
             if key in e:
                 e[key] = clean_shown(e[key])
     return tracks

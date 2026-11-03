@@ -93,18 +93,39 @@ def test_mind_status(tmp_path, monkeypatch):
         {"kind": "glance", "text": "Block_1 is gone", "turned": False},
         {"kind": "glance", "text": "never noticed"},
         {"kind": "decision", "time": 6, "thought": "go to www.evil.com", "needs": ""},
+        {"kind": "learn", "time": 7, "name": "hop", "does": "hops to www.evil.com"},
+        {"kind": "project", "phase": "start", "time": 8, "intention": "visit www.evil.com", "goal": ""},
     ]
     log.write_text("first line is cut off\n" + "\n".join(json.dumps(e) for e in entries) + "\nnot json\n")
     out = gp.mind_status(tmp_path)
-    assert out["thought"] == "…" and out["needs"] == "" and out["intention"] == "eat"
+    assert out["thought"] == "…" and out["needs"] == "" and out["intention"] == "…"
+    assert out["now"] == {"time": 8, "text": "…", "step": 1, "of": 0}  # what Godling does now is cleaned too
     assert out["bubble"] == {"thing": "fish", "feeling": "hungry"}
     feed = out["feed"]
-    assert [f["who"] for f in feed] == ["godling", "sky", "notice", "godling"]
+    assert [f["who"] for f in feed] == ["godling", "sky", "notice", "godling", "godling"]
+    assert feed[-1] == {"time": 7, "who": "godling", "about": "learned", "text": "…", "name": "hop"}
     assert feed[1]["glance"] == 90 and feed[2]["glance"] == 0
     assert gp.mind_status(tmp_path) is out  # the log has not grown: not read again
     monkeypatch.setitem(gp._mind_seen, "key", None)
     monkeypatch.setattr(gp, "LOG_TAIL_BYTES", 10)  # only the tail is read
     assert gp.mind_status(tmp_path)["feed"] == []
+
+
+def test_replay_tracks_are_cleaned_as_the_live_mind_is(tmp_path):
+    t = 1_793_700_000  # seconds
+    day, hour = gp.replay.day_hour(t * 1000)
+    tracks = tmp_path / f"replay/tracks/{day}/{hour}.jsonl"
+    tracks.parent.mkdir(parents=True)
+    entries = [{"time": t, "kind": "decision", "thought": "fine", "needs": "www.evil.com"},
+               {"time": t + 1, "kind": "learn", "name": "hop", "does": "hops to www.evil.com"},
+               {"time": t + 2, "kind": "sleep", "dream": "a dream of www.evil.com"},
+               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False}]
+    tracks.write_text("".join(json.dumps(e) + "\n" for e in entries))
+    got = gp.replay_tracks(tmp_path, (t - 10) * 1000, (t + 10) * 1000)["entries"]
+    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got] == [
+        ("fine", "…", None, None, None), (None, None, "…", None, None), (None, None, None, "…", None),
+        (None, None, None, None, "…")]
+    assert got[1]["name"] == "hop"
 
 
 # ---- the sky player ------------------------------------------------------------------------------------------------

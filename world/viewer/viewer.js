@@ -10,7 +10,10 @@ const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
 const POLL_MS = 1500
 const POPUP_MS = 9000 // a viewer's pop-up stays this long; a note's a little longer
 const POPUPS_SHOWN = 4
-const FEED_SHOWN = 5
+const FEED_SHOWN = 5 // lines of the feed (a phone shows 3)…
+const WORLD_SHOWN = 2 // …of them the world's at most (a phone's 1), so notices never crowd Godling's own lines out
+const NOW_STALE = 600 // seconds: a project or a think begun longer ago than this is not what Godling does now
+const FRESH = 15 // seconds a new line shows while the feed is folded (two at most, a phone's one), as a game's chat line
 const PHONE = () => matchMedia('(max-width: 760px)').matches
 const EURO = (credits) => `€${(credits * 0.05).toFixed(2)}`
 const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
@@ -141,12 +144,32 @@ setCamera(camera)
 
 // ---- top-left: Godling's mind -------------------------------------------------------------
 
+// Folded, as a game's quest tracker folds (the viewer's choice, kept): the newest thought cut to two lines, what
+// Godling does now and what it needs, and for a few seconds each new line, fading as a game's chat does. Unfolded,
+// the feed's last lines.
 const mind = el('section', 'b-mind')
 mind.setAttribute('aria-label', 'What Godling thinks and notices')
+const fold = el('button', 'b-fold')
+fold.type = 'button'
 const feed = el('ol', 'feed b-feed')
+feed.id = 'godling-feed'
+fold.setAttribute('aria-controls', feed.id)
+const doing = el('p', 'b-now') // what Godling is doing this moment, or that it stands thinking
 const objective = el('p', 'b-objective')
-mind.append(feed, objective)
+mind.append(fold, feed, doing, objective)
 stage.append(mind)
+let folded = store.get('godling.mind') !== 'open'
+let mindShown = null // what drawMind last drew from, to draw it again folded or not
+fold.addEventListener('click', () => {
+  folded = !folded
+  store.set('godling.mind', folded ? 'folded' : 'open')
+  if (mindShown) drawMind(...mindShown)
+})
+let feedDrawn = '' // the feed as last drawn: drawn again only when it changes, so a line's button keeps its focus
+let opened = '' // the one line opened in full, by its time and words
+// Each line's island time, worked out when it is first drawn: the world's clock and the panel's are read moments apart,
+// so working it out again on every poll would make it jump a minute back and forth.
+const stamps = new Map()
 
 const speaker = { godling: () => icon('godling', 2), sky: () => icon('sky', 2), notice: () => icon('notice', 2) }
 // What the mind noticed is written to Godling ("you") with the world's names and coordinates; viewers read it about
@@ -162,8 +185,8 @@ const article = (name) => (/^[AEIOU]/.test(name) ? 'an ' : 'a ') + name.toLowerC
 function plain(words, who = 'notice') {
   let s = String(words || '')
   for (const [from, to] of ABOUT_GODLING) s = s.replace(from, to)
-  s = s.replace(/\s*\b(at|to|from|near) \(-?\d+(\.\d+)?, -?\d+(\.\d+)?\)/g, '')
-    .replace(/\s*\(-?\d+(\.\d+)?, -?\d+(\.\d+)?\)/g, '')
+  s = s.replace(/\s*\b(at|to|from|near) \(-?\d+(\.\d+)?, ?-?\d+(\.\d+)?\)/g, '')
+    .replace(/\s*\(-?\d+(\.\d+)?, ?-?\d+(\.\d+)?\)/g, '')
     .replace(/: \w+_\d+( and \w+_\d+)* (landed|lies|lie)\b.*$/, '') // "a log dropped from the sky: Log_3 landed"
     .replace(/\b([A-Z][a-z]+)_\d+\b/g, (_, name) => article(name))
   s = s.charAt(0).toUpperCase() + s.slice(1)
@@ -185,22 +208,135 @@ function needsIcon(words) {
   return 'notice'
 }
 
-function drawMind(m, hour, now) {
-  const lines = (m?.feed || []).map((f) => ({ ...f, words: plain(f.text, f.who) })).filter((f) => f.words)
-    .slice(-(PHONE() ? 3 : FEED_SHOWN))
+// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream. Its own words
+// (an intention, what a skill does) follow, with the world's names and coordinates made plain as in its thoughts.
+const lower = (s) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s)
+const ABOUT = {
+  failed: ['close', (f) => `Couldn’t finish: ${lower(f.words)}`],
+  stopped: ['pause', (f) => `Stopped to think again: ${lower(f.words)}`],
+  learned: ['idea', (f) => `Learned “${String(f.name).replace(/_/g, ' ')}”${f.words ? `: ${f.words.replace(/\$(\w+)/g, 'the $1')}` : ''}`],
+  dream: ['moon', (f) => `Dreamt: ${f.words}`],
+}
+// A line longer than this many characters may be cut by its clamp (two lines of about 50 characters; unfolded, the
+// newest thought three), so it carries a chevron and opens in full on a click or a tap.
+const OPENS_FROM = { line: 70, latest: 110 }
+
+// `fresh`: the lines shown folded only because they are new, each with its age in seconds: they fade out by FRESH.
+function drawFeed(lines, times, phone, fresh = new Map()) {
+  const key = JSON.stringify([lines.map((f, i) => [times[i], f.who, f.about, f.name, f.words, fresh.has(f)]), opened,
+    phone, folded])
+  if (key === feedDrawn) return
+  feedDrawn = key
+  const focused = feed.contains(document.activeElement) ? document.activeElement.dataset.key : null
+  const latest = lines.findLast((f) => f.who === 'godling' && !f.about) // the newest thought, shown at more length
   feed.replaceChildren(...lines.map((f, i) => {
-    const li = el('li', `line ${f.who}`)
+    const li = el('li', `line ${f.who}${f.about ? ` ${f.about}` : ''}${f === latest ? ' latest' : ''}`)
     li.style.setProperty('--age', lines.length - 1 - i)
-    if (Number.isFinite(hour) && f.time) li.append(text('time', '', clockText(hour - ((now - f.time) * 24) / DAY_SECONDS)))
-    else li.append(el('time'))
-    li.insertAdjacentHTML('beforeend', speaker[f.who]?.() || speaker.notice())
-    const words = clip(f.words, 150)
-    const span = text('span', 'text', f.who === 'godling' ? `“${words}”` : words)
-    if (words !== f.words) span.title = f.words
-    li.append(span)
+    if (fresh.has(f)) {
+      li.classList.add('fresh')
+      li.style.animationDelay = `${-fresh.get(f)}s` // drawn again, it fades on from where it was
+    }
+    li.append(text('time', '', times[i]))
+    const [pic, say] = ABOUT[f.about] || []
+    li.insertAdjacentHTML('beforeend', pic ? icon(pic, 2) : speaker[f.who]?.() || speaker.notice())
+    if (f.who !== 'godling') {
+      const words = clip(f.words, 150)
+      const span = text('span', 'text', words)
+      if (words !== f.words) span.title = f.words
+      li.append(span)
+      return li
+    }
+    const words = say ? say(f) : `“${f.words}”` // whole: the clamp cuts what does not fit, at a word
+    const most = f !== latest || folded ? OPENS_FROM.line : OPENS_FROM.latest
+    if (words.length <= most) {
+      li.append(text('span', 'text', words))
+      return li
+    }
+    const id = `${f.time}|${f.words.slice(0, 80)}`
+    const open = el('button', 'open')
+    open.type = 'button'
+    open.dataset.key = id
+    open.setAttribute('aria-expanded', String(opened === id))
+    open.append(text('span', 'text', words))
+    open.insertAdjacentHTML('beforeend', icon(opened === id ? 'less' : 'more', 2))
+    open.addEventListener('click', () => {
+      opened = opened === id ? '' : id
+      drawFeed(lines, times, phone, fresh)
+    })
+    li.classList.toggle('opened', opened === id)
+    li.append(open)
     return li
   }))
   if (!lines.length) feed.append(el('li', 'line notice waiting', `<time></time>${icon('godling', 2)}<span class="text">Godling is waking up…</span>`))
+  if (focused) [...feed.querySelectorAll('.open')].find((b) => b.dataset.key === focused)?.focus()
+}
+
+// What the bubble's picture stands for (mind/godling/bubble.py THINGS): what Godling has in mind while it thinks.
+const THINKING_ABOUT = {
+  coconut: 'coconuts', fish: 'fish', cooked_fish: 'a meal', fire: 'fire', log: 'logs', block: 'stone blocks',
+  boulder: 'the boulders', axe: 'the axe', hammer: 'the hammer', spear: 'a spear', palm: 'the palms',
+  ladder: 'the ladder', raft: 'the raft', ball: 'its volleyball', help: 'a HELP sign', rescue: 'being rescued',
+  sea: 'the sea', lightning: 'the sky', tower: 'a tower', wall: 'a wall', shelter: 'a shelter',
+  explore: 'exploring', night: 'the night', rain: 'the rain',
+}
+
+// Now: the project under way, in Godling's words, and how far it is into its agenda; or, while its body stands
+// until its mind has thought, what is on its mind (the bubble) and how it feels.
+function drawNow(now, bubble, at) {
+  const fresh = now && !(Number.isFinite(now.time) && Number.isFinite(at) && at - now.time > NOW_STALE)
+  const about = THINKING_ABOUT[bubble?.thing]
+  const what = !fresh ? '' : now.thinking ? `Thinking${about ? ` about ${about}` : ''}…` : plain(now.text || '', 'godling')
+  doing.hidden = !what
+  doing.classList.toggle('thinking', Boolean(what && now.thinking))
+  if (!what) return
+  doing.innerHTML = `${icon(now.thinking ? 'think' : 'play', 2)}<b>Now</b>`
+  const words = text('span', 'what', what)
+  words.title = what
+  doing.append(words)
+  const aside = now.thinking ? bubble?.feeling : now.of > 1 && now.step <= now.of ? `${now.step} of ${now.of}` : ''
+  if (aside) doing.append(text('span', 'aside', aside))
+}
+
+function drawMind(m, hour, now) {
+  mindShown = [m, hour, now]
+  const phone = PHONE()
+  const all = (m?.feed || []).map((f) => ({ ...f, words: plain(f.text, f.who) }))
+    .filter((f) => f.words || f.about === 'learned' && f.name)
+  const full = [] // the lines shown unfolded
+  const most = phone ? 3 : FEED_SHOWN
+  let world = 0
+  for (let i = all.length - 1; i >= 0 && full.length < most; i--) {
+    if (all[i].who !== 'godling' && world++ >= (phone ? 1 : WORLD_SHOWN)) continue
+    full.unshift(all[i])
+  }
+  const latest = all.findLast((f) => f.who === 'godling' && !f.about)
+  if (latest && !full.includes(latest)) { // the newest thought always shows, however much came of the plan since
+    if (full.length >= most) full.shift()
+    full.unshift(latest)
+  }
+  const ids = full.map((f) => `${f.time}|${f.who}|${f.text}`)
+  const times = full.map((f, i) => {
+    if (!stamps.has(ids[i]) && Number.isFinite(hour) && f.time) stamps.set(ids[i], clockText(hour - ((now - f.time) * 24) / DAY_SECONDS))
+    return stamps.get(ids[i]) || ''
+  })
+  for (const id of stamps.keys()) if (!ids.includes(id)) stamps.delete(id)
+  const fresh = new Map()
+  if (folded) {
+    for (const f of full.filter((l) => l !== latest && now - l.time < FRESH).slice(phone ? -1 : -2)) fresh.set(f, now - f.time)
+  }
+  const shown = folded ? full.filter((f) => f === latest || fresh.has(f)) : full
+  drawFeed(shown, shown.map((f) => times[full.indexOf(f)]), phone, fresh)
+  mind.classList.toggle('folded', folded)
+  const more = full.length - shown.length
+  fold.hidden = folded && !more
+  const label = folded ? `${more} more` : 'Less'
+  if (fold.dataset.label !== label) {
+    fold.dataset.label = label
+    fold.innerHTML = `${icon(folded ? 'more' : 'less', 2)}<span>${label}</span>`
+    fold.setAttribute('aria-expanded', String(!folded))
+    fold.setAttribute('aria-label', folded ? `Show ${more} more of what Godling thought and noticed` : 'Show less of it')
+  }
+  drawNow(m?.now, m?.bubble, now)
   const needs = plain(m?.needs || '', 'godling')
   objective.hidden = !needs
   if (needs) {
