@@ -54,7 +54,7 @@ services:
   # The shared cache (rate limits, the island's news, who is watching) and the worker's queue. Nothing in it
   # outlives a restart that matters: a queued power not taken in 3 minutes is given up and its credits come back.
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb",
               "--maxmemory-policy", "volatile-lru"]
