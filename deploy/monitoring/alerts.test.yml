@@ -1,0 +1,149 @@
+# promtool test rules alerts.test.yml: each alert fires on what it is for, and only then.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: the relay down for a minute
+    interval: 15s
+    input_series:
+      - series: 'up{job="relay", instance="island:8082"}'
+        values: "1 1 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 45s
+        alertname: RelayDown
+        exp_alerts: [] # down for 15 s: not yet
+      - eval_time: 105s
+        alertname: RelayDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: relay, instance: "island:8082"}
+            exp_annotations:
+              summary: The stream relay is not answering.
+              description: Prometheus has not reached the relay (island:8082) for a minute. Viewers' islands are reconnecting.
+
+  - name: the world down, then back before 3 minutes
+    interval: 30s
+    input_series:
+      - series: 'godling_relay_world_up{job="relay", instance="island:8082"}'
+        values: "1 0 0 0 0 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: WorldStreamDown
+        exp_alerts: []
+
+  - name: the world down for good
+    interval: 30s
+    input_series:
+      - series: 'godling_relay_world_up{job="relay", instance="island:8082"}'
+        values: "1 0x10"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: WorldStreamDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: relay, instance: "island:8082"}
+            exp_annotations:
+              summary: The relay has had no world to follow for 3 minutes.
+              description: The world's spectator stream is down. Viewers see "Restarting". Look at the island's world.log.
+
+  - name: a crowd near the cap
+    interval: 1m
+    input_series:
+      - series: 'godling_relay_viewers{job="relay", instance="island:8082"}'
+        values: "4200x10"
+      - series: 'godling_relay_max_viewers{job="relay", instance="island:8082"}'
+        values: "5000x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ViewersNearCap
+        exp_alerts:
+          - exp_labels: {severity: warning, job: relay, instance: "island:8082"}
+            exp_annotations:
+              summary: "Viewers at 84% of the relay's cap."
+              description: Raise RELAY_MAX_VIEWERS if the server has room, or add a relay.
+
+  - name: someone hammering the relay
+    interval: 1m
+    input_series:
+      - series: 'godling_relay_refused_total{job="relay", instance="island:8082", reason="rate"}'
+        values: "0+300x15" # 5 a second
+      - series: 'godling_relay_refused_total{job="relay", instance="island:8082", reason="origin"}'
+        values: "0+600x15" # other sites' pages: not counted here
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConnectionsRefused
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The relay refuses 5 connections a second."
+              description: Someone is hammering the relay (refusals by reason in godling_relay_refused_total), or the limits are too tight for a real crowd.
+
+  - name: a quiet relay refuses now and then
+    interval: 1m
+    input_series:
+      - series: 'godling_relay_refused_total{job="relay", instance="island:8082", reason="address"}'
+        values: "0+6x15" # one every 10 s
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ConnectionsRefused
+        exp_alerts: []
+
+  - name: the stream sending a lot
+    interval: 1m
+    input_series:
+      - series: 'godling_relay_sent_bytes_total{job="relay", instance="island:8082"}'
+        values: "0+1800000000x20" # 30 MB/s
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: PublicBandwidthHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Sending 28.61MiB/s to viewers."
+              description: The stream and the site together are above 20 MB/s (160 Mbit/s) for 10 minutes.
+
+  - name: the site failing
+    interval: 1m
+    input_series:
+      - series: 'caddy_http_request_duration_seconds_count{job="caddy", code="200"}'
+        values: "0+600x10"
+      - series: 'caddy_http_request_duration_seconds_count{job="caddy", code="502"}'
+        values: "0+120x10"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: SiteErrors
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "16.67% of requests fail with a server error."
+              description: The site or the island answers 5xx through Caddy. Look at docker compose logs site island.
+
+  - name: the disk with the run filling, wherever it is mounted
+    interval: 1m
+    input_series:
+      # One disk under two mount points, 5% free: one alert for the device.
+      - series: 'node_filesystem_avail_bytes{job="node", device="/dev/sdb", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: "10e9x20"
+      - series: 'node_filesystem_size_bytes{job="node", device="/dev/sdb", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: "200e9x20"
+      - series: 'node_filesystem_avail_bytes{job="node", device="/dev/sdb", fstype="ext4", mountpoint="/mnt/data"}'
+        values: "10e9x20"
+      - series: 'node_filesystem_size_bytes{job="node", device="/dev/sdb", fstype="ext4", mountpoint="/mnt/data"}'
+        values: "200e9x20"
+      # A tiny bind mount that is always full, and the system disk with room: neither alerts.
+      - series: 'node_filesystem_avail_bytes{job="node", device="/dev/sdc", fstype="ext4", mountpoint="/usr/lib/wsl"}'
+        values: "0x20"
+      - series: 'node_filesystem_size_bytes{job="node", device="/dev/sdc", fstype="ext4", mountpoint="/usr/lib/wsl"}'
+        values: "50e6x20"
+      - series: 'node_filesystem_avail_bytes{job="node", device="/dev/sda", fstype="ext4", mountpoint="/"}'
+        values: "60e9x20"
+      - series: 'node_filesystem_size_bytes{job="node", device="/dev/sda", fstype="ext4", mountpoint="/"}'
+        values: "100e9x20"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: DiskFilling
+        exp_alerts:
+          - exp_labels: {severity: critical, device: /dev/sdb}
+            exp_annotations:
+              summary: "The server's disk /dev/sdb is 5% free."
+              description: The run's recordings and logs grow. Free space before the world and the database stop.

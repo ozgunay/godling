@@ -28,6 +28,9 @@ x-site-env: &site-env
   GODLING_EMAIL_PASSWORD: ${GODLING_EMAIL_PASSWORD:-}
   GODLING_EMAIL_TLS: ${GODLING_EMAIL_TLS:-1}
   GODLING_EMAIL_SSL: ${GODLING_EMAIL_SSL:-0}
+  GODLING_SECURITY_REVIEW: ${GODLING_SECURITY_REVIEW:-}  # live Stripe keys wait for it (ADR-016)
+  GODLING_TURNSTILE_SITE_KEY: ${GODLING_TURNSTILE_SITE_KEY:-}
+  GODLING_TURNSTILE_SECRET_KEY: ${GODLING_TURNSTILE_SECRET_KEY:-}
 
 services:
   postgres:
@@ -121,6 +124,9 @@ services:
       GODLING_DOMAIN: ${GODLING_DOMAIN}
       GODLING_ISLAND_DOMAIN: ${GODLING_ISLAND_DOMAIN}
       GODLING_SPECTATOR_TOKEN: ${GODLING_SPECTATOR_TOKEN}  # handed to the world on the page's own requests
+      # Behind Cloudflare: its address ranges, whose CF-Connecting-IP is the viewer's address (ADR-016). Empty: no proxy
+      # in front is believed.
+      GODLING_PROXY_RANGES: ${GODLING_PROXY_RANGES:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -129,8 +135,54 @@ services:
       - site
       - island
 
+  # Monitoring (ADR-016): Prometheus reads the relay, Caddy and the server; Alertmanager emails what alerts.yml finds
+  # wrong, through the site's SMTP, to GODLING_ALERT_EMAIL. Their pages listen on the server's loopback only: reach
+  # them through an SSH tunnel (deploy/README.md).
+  prometheus:
+    image: quay.io/prometheus/prometheus:v3.5.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  alertmanager:
+    image: quay.io/prometheus/alertmanager:v0.28.1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/alertmanager/start.sh"]  # its config from the environment
+    environment:
+      GODLING_ALERT_EMAIL: ${GODLING_ALERT_EMAIL:-}
+      GODLING_FROM_EMAIL: ${GODLING_FROM_EMAIL:-Godling <noreply@localhost>}
+      GODLING_EMAIL_HOST: ${GODLING_EMAIL_HOST:-}
+      GODLING_EMAIL_PORT: ${GODLING_EMAIL_PORT:-587}
+      GODLING_EMAIL_USER: ${GODLING_EMAIL_USER:-}
+      GODLING_EMAIL_PASSWORD: ${GODLING_EMAIL_PASSWORD:-}
+      GODLING_EMAIL_TLS: ${GODLING_EMAIL_TLS:-1}
+      GODLING_EMAIL_SSL: ${GODLING_EMAIL_SSL:-0}
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+
+  # The server itself (CPU, memory, disks), read through its root mounted read-only. Network totals are not taken
+  # here: from a container they would be the container's own; the relay and Caddy count what goes to viewers.
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.9.1
+    restart: unless-stopped
+    command: ["--path.rootfs=/host", "--no-collector.netdev", "--no-collector.netstat"]
+    pid: host
+    volumes:
+      - /:/host:ro
+
 volumes:
   pgdata:
   runs:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  alertmanager_data:

@@ -1,5 +1,6 @@
 """Signing up as a viewer: the allauth flow as AgentOp has it, with Godling's username rules."""
 import re
+from unittest import mock
 
 from allauth.core.internal.httpkit import get_client_ip
 from django.core import mail
@@ -7,7 +8,7 @@ from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
-from apps.users import validators
+from apps.users import turnstile, validators
 from apps.users.models import DisposableDomain, User
 
 PASSWORD = "an-island-test-pass-4127"
@@ -85,3 +86,52 @@ class SignupTests(TestCase):
         response = self.client.get(reverse("account_login"))
         self.assertContains(response, "Back to the island")
         self.assertContains(response, "Tiny5")
+
+
+TEST_SITE_KEY = "1x00000000000000000000AA"  # Cloudflare's published test keys: they never reach a real site
+TEST_SECRET = "1x0000000000000000000000000000000AA"
+
+
+@override_settings(GODLING_TURNSTILE_SITE_KEY=TEST_SITE_KEY, GODLING_TURNSTILE_SECRET_KEY=TEST_SECRET)
+class TurnstileTests(TestCase):
+    """Cloudflare Turnstile on sign-up (apps.users.turnstile, ADR-016), with Cloudflare's answer stood in for."""
+
+    def setUp(self):
+        cache.clear()
+
+    def post(self, token):
+        data = {"username": "mara_k", "email": "mara@example.org", "password1": PASSWORD, "password2": PASSWORD}
+        if token is not None:
+            data[turnstile.RESPONSE_FIELD] = token
+        return self.client.post(reverse("account_signup"), data)
+
+    def test_the_sign_up_page_shows_the_check_only_with_keys(self):
+        page = self.client.get(reverse("account_signup"))
+        self.assertContains(page, f'class="cf-turnstile" data-sitekey="{TEST_SITE_KEY}"')
+        self.assertContains(page, turnstile.SCRIPT_URL)
+        with self.settings(GODLING_TURNSTILE_SITE_KEY="", GODLING_TURNSTILE_SECRET_KEY=""):
+            self.assertNotContains(self.client.get(reverse("account_signup")), "cf-turnstile")
+
+    def test_a_sign_up_cloudflare_did_not_pass_is_refused(self):
+        with mock.patch.object(turnstile, "verify", return_value=False) as verify:
+            response = self.post("a-script's-token")
+        verify.assert_called_once_with("a-script's-token", None)
+        self.assertContains(response, "confirm you are a person")
+        self.assertFalse(User.objects.filter(username="mara_k").exists())
+
+    def test_a_sign_up_without_the_check_never_asks_cloudflare(self):
+        with mock.patch.object(turnstile, "verify") as verify:
+            response = self.post(None)
+        verify.assert_not_called()
+        self.assertContains(response, "confirm you are a person")
+        self.assertFalse(User.objects.filter(username="mara_k").exists())
+
+    def test_a_sign_up_that_passed_goes_on(self):
+        with mock.patch.object(turnstile, "verify", return_value=True):
+            response = self.post("a-person's-token")
+        self.assertRedirects(response, reverse("account_email_verification_sent"))
+        self.assertTrue(User.objects.filter(username="mara_k").exists())
+
+    def test_cloudflare_out_of_reach_is_no_pass(self):
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("unreachable")):
+            self.assertFalse(turnstile.verify("a-token"))

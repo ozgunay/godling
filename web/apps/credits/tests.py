@@ -1,12 +1,16 @@
 """Credits: welcome credits once, buying packs through Stripe (mocked) or the development checkout, credited once."""
+import os
 import re
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
 import stripe
+from django.conf import settings
 from django.core import mail
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 from apps.credits import services
@@ -211,3 +215,25 @@ class StripeErrorTests(TestCase):
     def test_stripe_errors_are_importable_where_the_views_expect_them(self):
         self.assertTrue(issubclass(stripe.SignatureVerificationError, Exception))
         self.assertTrue(issubclass(stripe.StripeError, Exception))
+
+
+class LivePaymentsWaitForAReviewTests(SimpleTestCase):
+    """The money gate (godling_web/settings.py, ADR-016): live Stripe keys stop the site from starting until an outside
+    security review is named. Run as the site starts: `manage.py check` in a fresh process."""
+
+    def check(self, **env):
+        clean = {k: v for k, v in os.environ.items() if not k.startswith(("GODLING_STRIPE", "GODLING_SECURITY"))}
+        return subprocess.run([sys.executable, "manage.py", "check"], cwd=settings.BASE_DIR, capture_output=True,
+                              text=True, timeout=120, env={**clean, "GODLING_SECRET_KEY": "check", "GODLING_DEBUG": "0", **env})
+
+    def test_live_keys_wait_for_a_review(self):
+        refused = self.check(GODLING_STRIPE_SECRET_KEY="sk_live_51abc")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("outside security review", refused.stderr)
+        reviewed = self.check(GODLING_STRIPE_SECRET_KEY="sk_live_51abc",
+                              GODLING_SECURITY_REVIEW="Example Security, 2026-12-01, report in the shared drive")
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
+
+    def test_test_keys_and_none_need_no_review(self):
+        self.assertEqual(self.check(GODLING_STRIPE_SECRET_KEY="sk_test_51abc").returncode, 0)
+        self.assertEqual(self.check().returncode, 0)

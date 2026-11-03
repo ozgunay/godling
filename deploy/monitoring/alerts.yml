@@ -1,0 +1,111 @@
+# What is worth an email (ADR-016). Tested by alerts.test.yml (promtool test rules). The thresholds are a start for one
+# server; StreamTrafficDaily belongs to the hosting plan's traffic allowance.
+groups:
+  - name: stream
+    rules:
+      - alert: RelayDown
+        expr: up{job="relay"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: The stream relay is not answering.
+          description: Prometheus has not reached the relay (island:8082) for a minute. Viewers' islands are reconnecting.
+
+      - alert: WorldStreamDown
+        expr: godling_relay_world_up == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: The relay has had no world to follow for 3 minutes.
+          description: The world's spectator stream is down. Viewers see "Restarting". Look at the island's world.log.
+
+      - alert: ViewersNearCap
+        expr: godling_relay_viewers / godling_relay_max_viewers > 0.8
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Viewers at {{ $value | humanizePercentage }} of the relay's cap."
+          description: Raise RELAY_MAX_VIEWERS if the server has room, or add a relay.
+
+      - alert: ConnectionsRefused
+        expr: sum(rate(godling_relay_refused_total{reason=~"rate|address|busy"}[5m])) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "The relay refuses {{ $value | humanize }} connections a second."
+          description: Someone is hammering the relay (refusals by reason in godling_relay_refused_total), or the limits are too tight for a real crowd.
+
+      - alert: ViewersFallingBehind
+        expr: rate(godling_relay_resyncs_total[10m]) * 60 > 30
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | humanize }} viewers a minute fall behind and get the whole island again."
+          description: The server's upload or CPU cannot keep up with the stream, or many viewers are on poor connections.
+
+      - alert: SlowViewersDropped
+        expr: rate(godling_relay_dropped_total{reason="slow"}[10m]) * 60 > 5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | humanize }} viewers a minute are let go for falling behind again and again."
+
+  - name: traffic
+    rules:
+      - alert: PublicBandwidthHigh
+        expr: (sum(rate(godling_relay_sent_bytes_total[5m])) + (sum(rate(caddy_http_response_size_bytes_sum[5m])) or vector(0))) > 20e6
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Sending {{ $value | humanize1024 }}B/s to viewers."
+          description: The stream and the site together are above 20 MB/s (160 Mbit/s) for 10 minutes.
+
+      - alert: StreamTrafficDaily
+        expr: increase(godling_relay_sent_bytes_total[24h]) > 300e9
+        labels: {severity: warning}
+        annotations:
+          summary: "The stream sent {{ $value | humanize1024 }}B in the last day."
+          description: Over 300 GB a day is about 9 TB a month. Check the hosting plan's traffic allowance.
+
+  - name: site
+    rules:
+      - alert: SiteErrors
+        expr: |
+          sum(rate(caddy_http_request_duration_seconds_count{code=~"5.."}[5m]))
+            / sum(rate(caddy_http_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests fail with a server error."
+          description: The site or the island answers 5xx through Caddy. Look at docker compose logs site island.
+
+  - name: server
+    rules:
+      # Every real disk over 1 GB, once per device (one disk shows under many mount points): the one with Docker's
+      # volumes (the run, the database) is not always the one mounted at /.
+      - alert: DiskFilling
+        expr: |
+          min by (instance, device) (
+            node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs|zfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs|zfs"}
+              and node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs|zfs"} > 1e9
+          ) < 0.10
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "The server's disk {{ $labels.device }} is {{ $value | humanizePercentage }} free."
+          description: The run's recordings and logs grow. Free space before the world and the database stop.
+
+      - alert: MemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of the server's memory is free."
+
+      - alert: CpuBusy
+        expr: 1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.9
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "The server's CPU is {{ $value | humanizePercentage }} busy."
+          description: The world's simulation shares it. Godling's own pace suffers first.

@@ -19,14 +19,18 @@ finds it there, on the PATH, or at `RELAY_BIN`); the island image builds it (`de
 | `RELAY_BASE_PATH` | none | Served under this path, as the world is (`/island` when deployed). |
 | `RELAY_ORIGINS` | any | Page origins a viewer's socket may come from, comma-separated. |
 | `RELAY_MAX_VIEWERS` | 5000 | Viewers at once. |
-| `RELAY_MAX_PER_IP` | 8 | Viewers from one address. |
+| `RELAY_MAX_PER_IP` | 8 | Viewers from one address. An IPv6 address counts by its /64, the block one subscriber holds. |
+| `RELAY_CONNECT_BURST` | 10 | New connections from one address at once… |
+| `RELAY_CONNECTS_PER_MINUTE` | 20 | …and then this many a minute. Refused with 429 and `Retry-After`. |
+| `RELAY_ALL_CONNECTS_PER_SECOND` | 200 | New connections from everyone together, in bursts of twice that. Pages that reconnect wait longer each time, so a relay coming back is spread out. |
 | `RELAY_TRUSTED_PROXIES` | 0 | Proxies of ours in front (Caddy: 1); the viewer's address is then read from their X-Forwarded-For. |
 | `RELAY_BUFFER` | 256 | Frames a viewer may fall behind before it is handed the whole island again. |
 | `RELAY_RESUME_FRAMES` | 300 | Updates kept for viewers coming back (ten seconds of the stream). |
 
 ## What a viewer gets
 The stream Clawblox's page already speaks, so the page works through the relay unchanged:
-- first the whole island (no `type`), with `relay_epoch` and `relay_seq`;
+- first the whole island (no `type`), with `relay_epoch` and `relay_seq`; a page that asks with `?gz=1` gets it as one
+  gzipped binary message instead, made once for everyone (276 KB becomes about 17);
 - then the world's messages in order (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`;
 - and the relay's own news, `{"type":"relay","world":"up"|"down","viewers":n,…}`, on connecting, when the world goes
   down or comes back, and every five seconds.
@@ -37,3 +41,7 @@ holds the updates after that place, it sends only those; otherwise the whole isl
 
 `GET /relay/status` gives the world, the epoch and place, the tick, the entities, how many watch, and how many came
 back by resuming or had to be handed the whole island again.
+
+`GET /metrics` gives the same and more in Prometheus' format, for the monitoring (`deploy/monitoring`): viewers and the
+cap, the world up or down, connections, refusals by reason (origin, busy, address, rate), viewers let go by reason
+(slow, silent, send), resumes, resyncs, bytes and messages sent. Caddy passes neither on from outside.
