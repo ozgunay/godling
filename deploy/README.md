@@ -50,7 +50,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015, ADR-017). Seven serv
    - Put its signing secret in `GODLING_STRIPE_WEBHOOK_SECRET`.
    - Start with test keys (`sk_test_…`) and Stripe's test cards, then switch to live keys.
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.
-8. **Alerts:** set `GODLING_ALERT_EMAIL`, then see one arrive: stop the relay (`docker compose exec island pkill godling-relay`); within two minutes "RelayDown" is in your inbox. `docker compose restart island` brings it back.
+8. **Alerts:** set `GODLING_ALERT_EMAIL`, then see one arrive: `docker compose stop relay`; within two minutes "RelayDown" is in your inbox. `docker compose start relay` brings it back, and the all-clear follows.
 9. **Cloudflare in front** (below), before you announce the site.
 10. **Real money** waits for an outside security review: [`security-review.md`](security-review.md). With live Stripe keys the site does not start until `GODLING_SECURITY_REVIEW` names one.
 
@@ -83,6 +83,11 @@ Why (ADR-017): one server cannot absorb a flood, and its address should not be p
 - **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory, the island's save and the replays' tracks and markers).
 
 ## Tested so far
+- **The whole deployment under Docker** (Docker Desktop, 3 November; these images, both names under `*.localhost` with Caddy's own CA, and Mailpit as the SMTP server):
+  - `deploy/check.sh` from another container, through the published ports as a visitor comes: 55 checks pass. HTTP sent to HTTPS; TLS 1.3 with a trusted certificate naming each domain; TLS 1.1 refused; no certificate for any other name; HSTS, framing and sniffing headers; every open and closed path of the island; the stream's door (101 from the island's page, 403 from another site's or with no Origin); and the 65th socket from one address refused, though each claimed another address. The three failures are this machine's, not the deployment's: a Postgres of the host's own on 5432, and the monitoring's loopback ports, which Docker Desktop's gateway reaches. Caddy's local certificates last 12 hours, so `CHECK_CERT_DAYS=0`.
+  - The viewers' screen in headless Chromium: "Live, 1 watching"; the island in its frame from its own origin; its stream at `wss://…/spectate/ws?gz=1`: the whole island as one gzipped message of 17 KB, then updates; no errors.
+  - Prometheus reading all five targets with the twelve alerts loaded, and the relay counting exactly what `check.sh` did (two sockets refused for their origin, one for its address). `docker compose stop relay` emailed RelayDown after 2 minutes; `docker compose start relay`, and the all-clear followed.
+  - The site and the worker on Postgres and Redis.
 - **Tested without Docker** (in WSL), the same pieces as the images run:
   - the world under `/island` with a fixed spectator token;
   - the mind's and the panel's calls to it;
@@ -90,5 +95,4 @@ Why (ADR-017): one server cannot absorb a flood, and its address should not be p
   - the site with the panel's key, its tests with the worker's tasks run inline;
   - gunicorn with whitenoise, with debug off;
   - SMTP sending, to a local SMTP server.
-- **Not built yet:** the images and the Caddy proxy.
-- **Not run against yet:** Postgres and Redis. The site runs on them through Django's own backends, with nothing database-specific.
+- **Not yet:** a real server, with DNS, Let's Encrypt and Cloudflare in front: `deploy/check.sh` from another machine there.

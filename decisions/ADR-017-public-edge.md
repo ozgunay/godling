@@ -46,7 +46,24 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 - **`deploy/check.sh`**: the deployment from outside (HTTPS, certificates, routes, the stream's door, ports), for the reviewer and for every change.
 
 ## Tests
-See the pull request and `deploy/README.md` "Tested so far".
+- **The relay**: 20 unit tests, 5 against a scripted world, 18 end to end; among them, the whole island gzipped for a page that asks, an address that keeps reconnecting refused for a while, and `/metrics` counting what happened. Clippy with warnings as errors.
+- **The world on `patches/v4`**, through the relay and straight: identical islands on all 343 ticks both saw, and two relay viewers identical on all 366 places in the stream.
+- **The deployment under Docker**, end to end: `deploy/check.sh` from another container (55 checks pass; the three others are this machine's own ports), the viewers' screen in headless Chromium through Caddy and the relay, all five Prometheus targets up, and RelayDown emailed two minutes after the relay was stopped, then its all-clear. Details in `deploy/README.md` "Tested so far".
+- **The configs** as their own tools read them: `caddy validate` (with and without Cloudflare's ranges), `promtool check config` and the alerts' unit tests, `amtool check-config`, `docker compose config`, actionlint and shellcheck.
+- **The site**: 175 tests, among them Turnstile's (5) and the money gate's.
+
+## What the stream costs, for later
+Measured on the deployment's own stream (30 s, 917 updates through Caddy and the relay), beside ADR-016's load test, which found the live stream is most of what a viewer costs:
+
+| The updates, a viewer | KB/s |
+|---|---|
+| As sent (JSON, 31 a second) | 84 |
+| Gzipped once per update, the same bytes for everyone | 31 |
+| permessage-deflate (a compressor per viewer, keeping its context) | 10 |
+| Rounded to 0.001, then gzipped once per update | 24 |
+| Rounded to 0.001, then permessage-deflate | 4.2 |
+
+Gzipping once is nearly free (the relay already does it for the whole island, and the page inflates any gzipped message in order); per-viewer deflate saves most, at a compressor's CPU and memory for every viewer. Not changed here.
 
 ## Not done here
 - **A real server**: `deploy/check.sh` from another machine, with DNS, Let's Encrypt and Cloudflare. The local run uses Caddy's own CA on `*.localhost`.

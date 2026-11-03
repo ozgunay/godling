@@ -644,8 +644,10 @@ def test_main_starts_the_world(main_env, monkeypatch, tmp_path):
         rg.main()
     finally:
         close_console()
-    world, panel = procs
+    world, packer, panel = procs
     assert world.args[:2] == ["clawblox-test", "run"] and "--record" in world.args and world.signals
+    # The replay packer (ADR-016) follows the run's recording, and stops with the run.
+    assert packer.args[1:] == ["-m", "godling.replay", "follow", str(run)] and packer.signals
     assert panel.args[-2:] == ["--view", "http://spectate"]
     assert json.loads((run / "island-save.json").read_text())["body"]["health"] == 80  # saved at the stop
     assert "the island put back (1 piece)" in (run / "console.log").read_text()
@@ -674,8 +676,9 @@ def test_main_with_the_relay(main_env, monkeypatch, tmp_path):
         rg.main()
     finally:
         close_console()
-    world, relay, panel = procs
+    world, relay, packer, panel = procs
     assert relay.args == [str(exe)] and relay.signals  # stopped with the run
+    assert packer.args[1:] == ["-m", "godling.replay", "follow", str(run)]
     assert relay.env["RELAY_LISTEN"] == "127.0.0.1:8190" and relay.env["RELAY_SPECTATOR_TOKEN"] == "spec"
     assert relay.env["RELAY_UPSTREAM"] == f"ws://127.0.0.1:{port}/spectate/ws"
     assert panel.args[-1] == "http://spectate/?spectator_token=t&stream_port=8190"  # the page streams from the relay
