@@ -65,7 +65,7 @@ You said to start. Each of these is the recommended choice, and any of them can 
 12. **The password and `.env` are not in the backups.** Without the password nothing can be read, so it and `.env` belong in a password manager too.
 
 ## What was built
-- **`deploy/backup.sh`**, run by the `backup` service from `deploy/Dockerfile.backup` (Postgres 16's client and restic 0.18). It is checked by shellcheck in CI, as busybox's `sh` runs it. Its commands:
+- **`deploy/backup.sh`**, run by the `backup` service from `deploy/Dockerfile.backup` (the client of the server's Postgres, 16 then 18, and restic 0.18). It is checked by shellcheck in CI, as busybox's `sh` runs it. Its commands:
   - `serve` is the loop;
   - `db`, `run`, `prune` and `check` each run one job now, and exit non-zero if it failed;
   - `snapshots` lists this site's snapshots, in UTC;
