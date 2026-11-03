@@ -68,6 +68,19 @@ class SignupTests(TestCase):
         two = RequestFactory().get("/", HTTP_X_FORWARDED_FOR="198.51.100.20", **caddy)
         self.assertEqual((get_client_ip(one), get_client_ip(two)), ("203.0.113.7", "198.51.100.20"))
 
+    def test_one_key_per_inbox(self):
+        same = ("mara@example.org", "Mara+island@Example.org", "mara+x+y@example.org")
+        self.assertEqual({validators.canonical_email(e) for e in same}, {"mara@example.org"})
+        gmail = ("j.o.e@gmail.com", "joe+1@googlemail.com", "JOE@gmail.com")
+        self.assertEqual({validators.canonical_email(e) for e in gmail}, {"joe@gmail.com"})
+        self.assertNotEqual(validators.canonical_email("j.o.e@example.org"), validators.canonical_email("joe@example.org"))
+        user = User.objects.create_user(username="joe", email="J.oe+tv@gmail.com", password=PASSWORD)
+        self.assertEqual(user.email_key, "joe@gmail.com")
+        user.email = "joe2@example.org"
+        user.save(update_fields=["email"])
+        user.refresh_from_db()
+        self.assertEqual(user.email_key, "joe2@example.org")
+
     def test_the_sign_in_page_wears_the_island(self):
         response = self.client.get(reverse("account_login"))
         self.assertContains(response, "Back to the island")

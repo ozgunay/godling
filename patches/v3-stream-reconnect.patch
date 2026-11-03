@@ -1,0 +1,226 @@
+diff --git a/frontend_runtime/dist/main.js b/frontend_runtime/dist/main.js
+index 85fb8e8..1194781 100644
+--- a/frontend_runtime/dist/main.js
++++ b/frontend_runtime/dist/main.js
+@@ -1598,7 +1598,7 @@ function applyPendingReplayCameraState() {
+ }
+ 
+ function reportReplayCameraState(ws) {
+-  if (!replayState.enabled || !ws || ws.readyState !== WebSocket.OPEN) return
++  if (!replayState.enabled || !ws || ws?.readyState !== WebSocket.OPEN) return
+   const now = Date.now()
+   if (now - lastCameraReportMs < 250) return
+   const api = replayCameraApi()
+@@ -2599,9 +2599,10 @@ async function bootstrap() {
+ 
+   const wsStats = { frames: 0, lastTick: 0 }
+   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+-  const ws = new WebSocket(`${protocol}//${window.location.host}${withSpectatorToken('/spectate/ws')}`)
+-  ws.binaryType = 'arraybuffer'
+-  spectateWs = ws
++  // Godling (patches/v3, ADR-015): the stream comes back by itself when it drops, and through Godling's relay it
++  // resumes where it left off. `ws` is the socket of the moment; connectStream() below sets these handlers on each.
++  let ws = null
++  const stream = { epoch: null, seq: null, world: 'up', state: '', attempt: 0, retry: 0, healthy: 0, hidden: 0, heardMs: 0, leaving: false }
+   let pendingRendererState = null
+   let pendingRendererTrace = null
+   let pendingRendererReplayMeta = null
+@@ -2644,7 +2645,7 @@ async function bootstrap() {
+       renderer.onFrame({ dt, nowMs, replay: replayState.enabled })
+       captureHook.frame += 1
+       applyPendingReplayCameraState()
+-      if (replayState.enabled && ws.readyState === WebSocket.OPEN) reportReplayCameraState(ws)
++      if (replayState.enabled && ws?.readyState === WebSocket.OPEN) reportReplayCameraState(ws)
+     }
+     rendererFrameLoopRaf = requestAnimationFrame(step)
+   }
+@@ -2663,7 +2664,7 @@ async function bootstrap() {
+   }
+ 
+   function requestReplayFrame(reason = 'buffer') {
+-    if (!replayState.enabled || ws.readyState !== WebSocket.OPEN) return
++    if (!replayState.enabled || ws?.readyState !== WebSocket.OPEN) return
+     const stepTicks = replayRequestStepTicks()
+     const step = lastReplayRequestedTick == null
+       ? stepReplayPlaybackClock()
+@@ -2713,7 +2714,7 @@ async function bootstrap() {
+   }
+ 
+   function maybeRequestReplayFrames(reason = 'buffer-low') {
+-    if (!replayState.enabled || ws.readyState !== WebSocket.OPEN) return
++    if (!replayState.enabled || ws?.readyState !== WebSocket.OPEN) return
+     if (replayWindowRequestOutstanding) return
+     if (replayFrameQueue.length > replayFrameQueueLowWater) return
+     requestReplayFrame(reason)
+@@ -2842,7 +2843,7 @@ async function bootstrap() {
+       }
+       applyPendingReplayCameraState()
+       reportReplayCameraState(ws)
+-      if (replayState.enabled && ws.readyState === WebSocket.OPEN) {
++      if (replayState.enabled && ws?.readyState === WebSocket.OPEN) {
+         const longTaskMetrics = consumeReplayLongTaskMetrics()
+         ws.send(JSON.stringify({
+           type: 'replay_render_ready',
+@@ -2874,7 +2875,9 @@ async function bootstrap() {
+     })
+   }
+ 
+-  ws.onopen = () => {
++  const onStreamOpen = () => {
++    clearTimeout(stream.healthy)
++    stream.healthy = setTimeout(() => { stream.attempt = 0 }, 10000) // ten good seconds: the next drop starts over
+     chatState.wsConnected = true
+     setChatConnection(replayState.enabled ? 'Replay' : 'Live')
+     setStatus(
+@@ -2887,20 +2890,21 @@ async function bootstrap() {
+       startViewportReplayControlSync()
+     }
+   }
+-  ws.onerror = () => {
++  const onStreamError = () => {
+     setChatConnection('WS error')
+     setStatus('WebSocket error', 'error')
+     reportReplayViewportError('Replay connection failed before the first frame')
+   }
+-  ws.onclose = (event) => {
++  const onStreamClose = (event) => {
+     chatState.wsConnected = false
+     setChatConnection('Offline')
+     setStatus('Disconnected', 'warn')
+     renderPlayerList([])
+     reportReplayViewportError('Replay connection closed before the first frame', { code: event?.code ?? null })
++    if (!replayState.enabled) streamLost('the connection closed')
+   }
+ 
+-  ws.onmessage = (event) => {
++  const onStreamMessage = (event) => {
+     try {
+       const rawReceiveMs = performance.now()
+       const payloadBytes = event.data instanceof ArrayBuffer
+@@ -2917,6 +2921,19 @@ async function bootstrap() {
+       const decodedMs = performance.now()
+       const data = JSON.parse(text)
+       const parsedMs = performance.now()
++      stream.heardMs = parsedMs
++      if (data && data.type === 'relay') { // Godling's relay: whether the world is up, and how many watch
++        stream.world = data.world === 'down' ? 'down' : 'up'
++        setStatus(stream.world === 'down' ? 'The island is restarting…' : `Connected | ${rendererTarget}`,
++          stream.world === 'down' ? 'warn' : 'ok')
++        tellStream('live')
++        return
++      }
++      if (stream.state !== 'live') tellStream('live')
++      if (data && Number.isFinite(data.relay_seq)) { // where this page is in the relay's stream, to resume from
++        stream.seq = data.relay_seq
++        if (Number.isFinite(data.relay_epoch)) stream.epoch = data.relay_epoch
++      }
+       if (data && data.type === 'audio_chunk') {
+         onAudioChunk(data)
+         return
+@@ -2931,6 +2948,7 @@ async function bootstrap() {
+         const appliedMs = performance.now()
+         if (!state) {
+           setStatus('Missing base spectator state; reconnecting', 'warn')
++          stream.epoch = stream.seq = null // start over from the whole island
+           ws.close()
+           return
+         }
+@@ -3000,13 +3018,97 @@ async function bootstrap() {
+     }
+   }
+ 
++  // Godling (patches/v3): open the stream, and open it again when it drops, so a world restart, a network blip or a
++  // phone waking up no longer leaves the island frozen until a reload.
++  function streamUrl() {
++    const url = new URL(withSpectatorToken('/spectate/ws'), window.location.origin)
++    if (stream.epoch != null && stream.seq != null) { // a relay hands back only what was missed; the world ignores it
++      url.searchParams.set('epoch', String(stream.epoch))
++      url.searchParams.set('since', String(stream.seq))
++    }
++    // Run locally, the relay listens on a port of its own (mind/run_godling.py --relay): this host, never another.
++    const port = new URLSearchParams(window.location.search).get('stream_port') || ''
++    const host = /^\d{2,5}$/.test(port) ? `${window.location.hostname}:${port}` : window.location.host
++    return `${protocol}//${host}${url.pathname}${url.search}`
++  }
++  function tellStream(state) { // the renderer passes it on to the viewers' screen, for an honest Live badge
++    stream.state = state
++    if (typeof renderer.onConnection === 'function') renderer.onConnection({ state, world: stream.world })
++  }
++  function dropStream() {
++    if (!ws) return
++    const old = ws
++    ws = null
++    old.onopen = old.onmessage = old.onerror = old.onclose = null
++    try { old.close() } catch { /* already closed */ }
++    chatState.wsConnected = false
++  }
++  function connectStream() {
++    clearTimeout(stream.retry)
++    stream.retry = 0
++    dropStream()
++    ws = new WebSocket(streamUrl())
++    ws.binaryType = 'arraybuffer'
++    spectateWs = ws
++    stream.heardMs = performance.now()
++    ws.onopen = onStreamOpen
++    ws.onerror = onStreamError
++    ws.onclose = onStreamClose
++    ws.onmessage = onStreamMessage
++  }
++  function streamLost(why) {
++    clearTimeout(stream.healthy)
++    stream.healthy = 0
++    if (stream.leaving || stream.retry || document.hidden) return // a hidden page reconnects when it is shown again
++    // Full jitter, anywhere up to the cap: a world restart does not bring every viewer back at the same instant.
++    const delay = Math.random() * Math.min(30000, 500 * 2 ** stream.attempt)
++    stream.attempt += 1
++    tellStream('reconnecting')
++    setStatus(`Reconnecting (${why})…`, 'warn')
++    stream.retry = setTimeout(() => {
++      stream.retry = 0
++      connectStream()
++    }, delay)
++  }
++  if (!replayState.enabled) {
++    // A stream gone quiet has died without a close (phones, mobile networks): the world sends at least every ~165 ms,
++    // and the relay tells how the world is every 5 s.
++    setInterval(() => {
++      if (ws?.readyState !== WebSocket.OPEN) return
++      if (performance.now() - stream.heardMs > (stream.world === 'down' ? 15000 : 5000)) {
++        dropStream()
++        streamLost('no news')
++      }
++    }, 1000)
++    document.addEventListener('visibilitychange', () => {
++      clearTimeout(stream.hidden)
++      if (document.hidden) {
++        stream.hidden = setTimeout(() => { // out of sight half a minute: let the socket go until the page is shown
++          dropStream()
++          tellStream('paused')
++        }, 30000)
++      } else if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
++        stream.attempt = 0
++        connectStream()
++      }
++    })
++    window.addEventListener('online', () => {
++      if (ws?.readyState === WebSocket.OPEN) return
++      stream.attempt = 0
++      connectStream()
++    })
++  }
++  connectStream()
++  tellStream('connecting')
++
+   window.addEventListener('beforeunload', () => {
+     stopRendererFrameLoop()
+     if (viewportReplayControlTimer) clearInterval(viewportReplayControlTimer)
+     runtimeKit.internal.dispose()
+     if (renderer.unmount) renderer.unmount()
+     if (replayState.pollTimer) clearInterval(replayState.pollTimer)
+-    ws.close()
++    stream.leaving = true
++    dropStream()
+   })
+ }
+ 

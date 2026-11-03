@@ -9,25 +9,29 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 | `world/` | Godling's Mesa Island: the world script, the renderer and the models. The changes from upstream are in [`world/README.md`](world/README.md). |
 | `world/viewer/` | The viewers' screen, the Block HUD over the live island: sky powers, notes for Godling, pop-ups of what viewers did, the watcher count. `tools/guest_panel.py` serves it. The three HUD prototypes it was chosen from are in `prototypes/`. |
 | `web/` | The public site: viewer accounts (copied from AgentOp's django-allauth setup), credits with Stripe, note reports and the admin, in front of the viewer screen. See [`web/README.md`](web/README.md), ADR-012 and ADR-013. |
-| `deploy/` | Running it all on one server with Docker Compose: Postgres, the site, the island (world, mind, panel) and Caddy for HTTPS, with the island's spectator page public under `/island`. See [`deploy/README.md`](deploy/README.md). |
+| `relay/` | The island's stream relay, in Rust: one connection to the world's spectator stream, the same updates to every viewer, resuming after gaps. See [`relay/README.md`](relay/README.md) and ADR-015. |
+| `deploy/` | Running it all on one server with Docker Compose: Postgres, the site, the island (world, mind, panel, relay) and Caddy for HTTPS, with the island's spectator page public under `/island`. See [`deploy/README.md`](deploy/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |
 | `tools/` | Long-run launcher, run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`) and the guest panel (`guest_panel.py`), which serves the viewers' screen with sky powers and notes, free in test mode. |
-| `decisions/` | Decision records, ADR-002 to ADR-013. |
+| `decisions/` | Decision records, ADR-002 to ADR-015. |
 | `research/` | Design notes and screenshots. |
 | `reports/`, `research_notes/` | Research reports and the notes behind them (god games: what Godling can use). |
-| `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001). |
+| `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001, SEC-001, STREAM-001). |
 
 ## Running
 Everything runs inside WSL (Ubuntu 22.04), because Clawblox's agent mode needs tmux.
 
-1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with both patches applied:
+1. Clawblox at commit `8be90a0` (github.com/nacloos/clawblox), with the four patches applied in order:
    - `patches/v0-fix-cli-sandbox.patch` (BUG-001);
-   - `patches/v1-viewer-terrain-and-offline.patch` (VIEWER-001): terrain for viewers, a viewer with no CDN, fresh world files.
+   - `patches/v1-viewer-terrain-and-offline.patch` (VIEWER-001): terrain for viewers, a viewer with no CDN, fresh world files;
+   - `patches/v2-private-agent-api.patch` (SEC-001): joining takes the run's key, the spectator token only watches, the world listens on loopback;
+   - `patches/v3-stream-reconnect.patch` (STREAM-001): the island page reconnects by itself, and resumes through the relay.
 
-   The world still runs on Clawblox without v1, but its page then needs esm.sh for one icon set.
+   The world still runs on Clawblox without v1, but its page then needs esm.sh for one icon set. Without v2 it runs too, but anyone who reaches its port, or has a viewer's link, can act as Godling (ADR-014). Without v3 the island freezes when its stream drops, until a reload.
    ```bash
-   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && git apply /path/to/godling/patches/v1-viewer-terrain-and-offline.patch && cargo install --path . --locked
+   cd ~/clawblox && git checkout 8be90a0 && git apply /path/to/godling/patches/v0-fix-cli-sandbox.patch && git apply /path/to/godling/patches/v1-viewer-terrain-and-offline.patch && git apply /path/to/godling/patches/v2-private-agent-api.patch && git apply /path/to/godling/patches/v3-stream-reconnect.patch && cargo install --path . --locked
    ```
+   For the stream relay (`--relay`): `cd relay && cargo build --release`.
 2. A DeepSeek key: run `tools/setup_deepseek.sh`, or set `DEEPSEEK_API_KEY`.
 3. One run: `python3 mind/run_godling.py --run-dir ~/godling-runs/<name>`.
    An overnight run: `bash tools/long_runs.sh 8 <prefix> now hindsight`.

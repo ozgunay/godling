@@ -1,8 +1,11 @@
 """The admin, as staff use it: every page opens; prices are edited in their list; grants, mutes and bans work; the
-island's logs show."""
+island's logs show; staff need two-factor sign-in."""
 import tempfile
+import time
 from pathlib import Path
 
+from allauth.account.internal.flows.login import AUTHENTICATION_METHODS_SESSION_KEY
+from allauth.mfa.models import Authenticator
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -12,17 +15,33 @@ from apps.notes.models import Note
 from apps.users.models import User
 
 
+def two_factor(user):
+    """As if the user had set up an authenticator app (allauth.mfa): what the admin asks of staff."""
+    Authenticator.objects.create(user=user, type=Authenticator.Type.TOTP, data={"secret": "not-used-in-tests"})
+    return user
+
+
+def code_entered(client, ago=0):
+    """As if this client's session had given its authenticator's code `ago` seconds ago (allauth's record of it)."""
+    session = client.session
+    session[AUTHENTICATION_METHODS_SESSION_KEY] = [{"method": "password", "at": time.time() - ago},
+                                                   {"method": "mfa", "at": time.time() - ago, "type": "totp"}]
+    session.save()
+
+
 class AdminTests(TestCase):
     def setUp(self):
-        self.staff = User.objects.create_superuser(username="keeper", email="keeper@example.org",
-                                                   password="an-island-test-pass-4127")
+        self.staff = two_factor(User.objects.create_superuser(username="keeper", email="keeper@example.org",
+                                                              password="an-island-test-pass-4127"))
         self.client.force_login(self.staff)
+        code_entered(self.client)
         self.viewer = User.objects.create_user(username="tomv", email="tomv@example.org",
                                                password="an-island-test-pass-4127")
 
     def test_every_list_opens(self):
         for model in ("users/user", "users/disposabledomain", "credits/power", "credits/creditpack", "credits/purse",
-                      "credits/entry", "credits/powercall", "credits/payment", "notes/note", "notes/report",
+                      "credits/entry", "credits/powercall", "credits/payment", "credits/stripeevent", "notes/note",
+                      "notes/report",
                       "rules/blockedword"):
             self.assertEqual(self.client.get(f"/admin/{model}/").status_code, 200, model)
         page = self.client.get(f"/admin/users/user/{self.viewer.pk}/change/")
@@ -66,14 +85,15 @@ class AdminTests(TestCase):
 
     def test_the_rules_are_edited_on_one_page(self):
         from apps.rules.models import Rules
+        reports = {"reports_to_hide": "4", "report_min_age_hours": "48", "reports_per_hour": "5"}
         self.client.post("/admin/rules/rules/1/change/", {"welcome_credits": "30", "power_every": "5",
-                                                          "note_every": "120", "note_limit": "100",
-                                                          "reports_to_hide": "4"})
+                                                          "note_every": "120", "note_limit": "100", **reports})
         rules = Rules.get()
         self.assertEqual((rules.welcome_credits, rules.free_powers, rules.note_limit), (30, False, 100))
+        self.assertEqual((rules.report_min_age_hours, rules.reports_per_hour), (48, 5))
         self.assertEqual(self.client.post("/admin/rules/rules/1/change/", {
             "welcome_credits": "30", "power_every": "5", "note_every": "120", "note_limit": "200",
-            "reports_to_hide": "4"}).status_code, 200)  # over 140: the form refuses it
+            **reports}).status_code, 200)  # over 140: the form refuses it
         self.assertEqual(Rules.get().note_limit, 100)
 
     def test_notes_are_hidden_and_restored(self):
@@ -98,16 +118,66 @@ class AdminTests(TestCase):
         self.assertEqual(self.client.get("/admin/credits/power/").status_code, 302)
         self.assertEqual(self.client.get(reverse("admin_logs")).status_code, 302)
 
+    def test_staff_without_two_factor_set_it_up_first(self):
+        newcomer = User.objects.create_user(username="newkeeper", email="newkeeper@example.org",
+                                            password="an-island-test-pass-4127", is_staff=True, is_superuser=True)
+        self.client.force_login(newcomer)
+        for page in ("/admin/", "/admin/credits/power/", reverse("admin_logs")):
+            self.assertRedirects(self.client.get(page), reverse("mfa_activate_totp"), fetch_redirect_response=False)
+        self.assertEqual(self.client.get("/").status_code, 200)  # the screen itself asks nothing of them
+        two_factor(newcomer)
+        code_entered(self.client)
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+
+    def test_a_password_only_session_is_asked_for_a_code(self):
+        """The reviewer's case: signed in with a password on one device, an authenticator set up on another. This
+        session never gave a code, so the admin asks it for one; a code given 13 hours ago no longer counts."""
+        self.client.logout()
+        self.client.force_login(self.staff)  # a fresh session: a password, no code
+        ask = f"{reverse('mfa_reauthenticate')}?next=%2Fadmin%2Fcredits%2Fpower%2F"
+        self.assertRedirects(self.client.get("/admin/credits/power/"), ask, fetch_redirect_response=False)
+        code_entered(self.client, ago=13 * 3600)
+        self.assertRedirects(self.client.get("/admin/credits/power/"), ask, fetch_redirect_response=False)
+        code_entered(self.client)
+        self.assertEqual(self.client.get("/admin/credits/power/").status_code, 200)
+
+    def test_a_real_code_on_allauths_screen_opens_the_admin(self):
+        """End to end, with a real authenticator: the code typed on allauth's screen is what the admin then sees."""
+        from allauth.mfa.totp.internal.auth import (TOTP, format_hotp_value, generate_totp_secret, hotp_value,
+                                                     yield_hotp_counters_from_time)
+
+        keeper = User.objects.create_user(username="keeper2", email="keeper2@example.org",
+                                          password="an-island-test-pass-4127", is_staff=True, is_superuser=True)
+        secret = generate_totp_secret()
+        TOTP.activate(keeper, secret)
+        self.client.logout()
+        self.client.force_login(keeper)
+        self.assertEqual(self.client.get("/admin/").status_code, 302)
+        code = format_hotp_value(hotp_value(secret, next(yield_hotp_counters_from_time())))
+        self.client.post(reverse("mfa_reauthenticate"), {"code": code})
+        self.assertEqual(self.client.get("/admin/").status_code, 200)
+
+    def test_the_admin_signs_in_through_the_site(self):
+        """Django's own admin form would skip the site's rate limits and the two-factor code."""
+        self.client.logout()
+        response = self.client.get("/admin/login/?next=/admin/")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith(reverse("account_login")))
+        self.assertEqual(self.client.post("/admin/login/", {"username": "keeper@example.org",
+                                                            "password": "an-island-test-pass-4127"}).status_code, 302)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
     def test_staff_need_the_permission_for_imports_and_actions(self):
         """A staff account allowed only to look (view permissions) imports no domains and runs no actions."""
         from django.contrib.auth.models import Permission
 
         from apps.users.models import DisposableDomain
-        looker = User.objects.create_user(username="looker", email="looker@example.org",
-                                          password="an-island-test-pass-4127", is_staff=True)
+        looker = two_factor(User.objects.create_user(username="looker", email="looker@example.org",
+                                                     password="an-island-test-pass-4127", is_staff=True))
         looker.user_permissions.add(*Permission.objects.filter(codename__in=(
             "view_disposabledomain", "view_user", "view_note")))
         self.client.force_login(looker)
+        code_entered(self.client)
         page = self.client.get("/admin/users/disposabledomain/")
         self.assertEqual(page.status_code, 200)
         self.assertNotContains(page, "Add Domains")  # no import forms for someone who may not add
