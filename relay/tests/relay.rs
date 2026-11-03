@@ -102,6 +102,7 @@ async fn start_relay(world_port: u16, tweak: impl FnOnce(&mut Config)) -> u16 {
         trusted_proxies: 0,
         buffer: 64,
         resume_frames: 50,
+        updates_per_second: 0, // one update for each of the world's, so most tests can follow them one by one
         status_every: Duration::from_secs(3600),
         ping_every: Duration::from_secs(20),
         silent_for: Duration::from_secs(60),
@@ -198,7 +199,8 @@ async fn a_late_viewer_is_handed_the_island_the_others_hold() {
         world.push(push.clone());
         let got = next_world(&mut early).await;
         assert_eq!(seq(&got), start + 1 + i as u64, "places count on one by one");
-        assert_eq!(without_relay_fields(got.clone()), *push, "the world's message, untouched but for its place");
+        // Rounding and leaving out what viewers hold change nothing in these: the world's delta, with its place.
+        assert_eq!(without_relay_fields(got.clone()), *push, "the world's delta, with its place");
         held.apply(got.as_object().unwrap());
     }
     let mut late = viewer(relay, "").await;
@@ -232,6 +234,47 @@ async fn a_returning_viewer_catches_up_without_the_whole_island() {
     }
     world.push(delta(5, json!([])));
     assert_eq!(seq(&next_world(&mut back).await), start + 4, "then the live stream, with nothing doubled");
+}
+
+#[tokio::test]
+async fn at_ten_a_second_late_and_returning_viewers_hold_the_same_island() {
+    let ids: Vec<u64> = (1..=5).collect();
+    let (world_port, world) = start_world(island(1, &ids)).await;
+    let relay = start_relay(world_port, |config| config.updates_per_second = 10).await;
+    let mut leaving = viewer(relay, "").await;
+    let first = whole(&mut leaving).await;
+    let (epoch, start) = (first["relay_epoch"].as_u64().unwrap(), seq(&first));
+    drop(leaving);
+    let mut watcher = viewer(relay, "").await;
+    let mut held = Island::from_snapshot(without_relay_fields(whole(&mut watcher).await)).unwrap();
+    for tick in 2..=12 {
+        let moves: Vec<Value> = ids.iter().map(|&id| json!({"id": id, "p": [id as f64 + tick as f64 / 4.0, 0.5, 0.0]})).collect();
+        world.push(delta(tick, Value::Array(moves)));
+        tokio::time::sleep(Duration::from_millis(33)).await;
+    }
+    world.push(delta(13, json!([{"id": 6, "add": {"id": 6, "name": "Meteor_1", "position": [0, 40, 0]}}, {"id": 2, "rm": true}])));
+    let as_value = |island: &Island| -> Value { serde_json::from_str(&island.to_json(0, 0)).unwrap() };
+    loop {
+        let update = next_world(&mut watcher).await;
+        held.apply(update.as_object().unwrap());
+        if update["tick"] == 13 {
+            break;
+        }
+    }
+    let mut late = viewer(relay, "").await;
+    assert_eq!(without_relay_fields(whole(&mut late).await), without_relay_fields(as_value(&held)), "a late viewer holds it");
+    let mut back = viewer(relay, &format!("?epoch={epoch}&since={start}")).await;
+    let mut caught = Island::from_snapshot(without_relay_fields(first)).unwrap();
+    assert_eq!(next(&mut back).await["type"], "relay");
+    loop {
+        let update = next(&mut back).await;
+        assert_eq!(update["type"], "spectator_delta", "the gathered updates it missed, no whole island");
+        caught.apply(update.as_object().unwrap());
+        if update["tick"] == 13 {
+            break;
+        }
+    }
+    assert_eq!(as_value(&caught), as_value(&held), "so does one coming back");
 }
 
 #[tokio::test]
@@ -435,9 +478,62 @@ async fn a_page_that_asks_gets_the_whole_island_gzipped() {
     assert!(bytes.len() * 5 < json.len(), "much smaller: {} bytes for {}", bytes.len(), json.len());
     world.push(delta(2, json!([{"id": 1, "p": [2, 0, 0]}])));
     match next_raw(&mut packed).await {
-        WsMessage::Text(update) => assert!(update.as_str().contains("\"spectator_delta\""), "updates stay text"),
+        WsMessage::Text(update) => assert!(update.as_str().contains("\"spectator_delta\""), "a small update stays text"),
         other => panic!("an update came as {other:?}"),
     }
+}
+
+fn inflated(bytes: &[u8]) -> Value {
+    let mut json = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(bytes), &mut json).unwrap();
+    serde_json::from_str(&json).unwrap()
+}
+
+#[tokio::test]
+async fn the_worlds_updates_go_out_gathered_ten_a_second() {
+    let ids: Vec<u64> = (1..=50).collect();
+    let (world_port, world) = start_world(island(1, &ids)).await;
+    let relay = start_relay(world_port, |config| config.updates_per_second = 10).await;
+    let mut plain = viewer(relay, "").await;
+    let mut held = Island::from_snapshot(without_relay_fields(whole(&mut plain).await)).unwrap();
+    let mut packed = viewer(relay, "?gz=1").await;
+    let mut truth = Island::from_snapshot(island(1, &ids)).unwrap();
+    for tick in 2..=31 {
+        // Everything moves on every tick, as the world sends it 31 times a second.
+        let moves: Vec<Value> = ids.iter().map(|&id| json!({"id": id, "p": [id as f64 + tick as f64 / 8.0, 0.5, -0.25]})).collect();
+        let push = delta(tick, Value::Array(moves));
+        truth.apply(push.as_object().unwrap());
+        world.push(push);
+        tokio::time::sleep(Duration::from_millis(33)).await;
+    }
+    let mut updates = 0;
+    loop {
+        let update = next_world(&mut plain).await;
+        updates += 1;
+        held.apply(update.as_object().unwrap());
+        if update["tick"] == 31 {
+            break;
+        }
+    }
+    assert!((5..=20).contains(&updates), "30 world updates in a second went out as {updates}, not 30");
+    let island = |island: &Island| -> Value { serde_json::from_str(&island.to_json(0, 0)).unwrap() };
+    assert_eq!(island(&held), island(&truth), "and leave the viewer with the world's island");
+    let mut gzipped = 0;
+    loop {
+        let (update, binary) = match next_raw(&mut packed).await {
+            WsMessage::Binary(bytes) => (inflated(&bytes), true),
+            WsMessage::Text(text) => (serde_json::from_str::<Value>(text.as_str()).unwrap(), false),
+            _ => continue,
+        };
+        if update["type"] == "spectator_delta" {
+            assert!(binary, "an update of fifty moves comes gzipped");
+            gzipped += 1;
+            if update["tick"] == 31 {
+                break;
+            }
+        }
+    }
+    assert_eq!(gzipped, updates, "the page that asks gets the same updates, each gzipped");
 }
 
 #[tokio::test]
@@ -685,11 +781,12 @@ async fn a_viewer_too_slow_to_take_a_send_is_let_go() {
         world.push(json!({"type": "chat_message", "content": pad}));
         next_world(&mut reading).await;
     }
-    // Back from a gap, a viewer is handed what it missed first: here 48 MB, too much for one that never reads.
-    let _stuck = viewer(relay, &format!("?epoch={epoch}&since={start}")).await;
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-    assert_eq!(relay_status(relay).await["viewers"], 1, "only the one that reads");
-    // And the one that read, once it stops: a send of the stream's own takes too long.
+    // Back from a gap it missed 48 MB of: it is handed the island instead, far smaller.
+    let mut back = viewer(relay, &format!("?epoch={epoch}&since={start}")).await;
+    assert_eq!(next(&mut back).await["type"], "relay");
+    assert!(next(&mut back).await.get("type").is_none(), "the whole island, not what it missed");
+    assert_eq!(relay_status(relay).await["viewers"], 2);
+    // Neither reads from now on: a send of the stream's own takes too long, and both are let go.
     for _ in 0..48 {
         world.push(json!({"type": "chat_message", "content": pad}));
     }

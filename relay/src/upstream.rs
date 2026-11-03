@@ -59,8 +59,8 @@ async fn watch(hub: &Hub, url: &str, token: &str, quiet: Duration) -> Result<boo
             return Err(format!("the world says {error}")); // "World ended": it is stopping
         }
         match fields.get("type").and_then(Value::as_str) {
-            Some("spectator_delta") => hub.update(text, Some(&fields)),
-            Some(_) => hub.update(text, None), // chat, speech, audio: passed on in their place
+            Some("spectator_delta") => hub.delta(&fields),
+            Some(_) => hub.pass(text), // chat, speech, audio: passed on in their place
             None => seen |= hub.world_seen(Value::Object(fields)), // the whole island, first on every connection
         }
     }

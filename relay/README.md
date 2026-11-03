@@ -23,19 +23,29 @@ the part of the island the whole internet talks to holds the spectator token and
 | `RELAY_MAX_PER_IP` | 64 | Viewers from one address (a phone network puts many behind one); an IPv6 /64 counts as one. Also the burst of new sockets one address may open at once. |
 | `RELAY_CONNECTS_PER_MINUTE` | 60 | New sockets one address may open a minute after that burst: each is handed the whole island. |
 | `RELAY_TRUSTED_PROXIES` | 0 | Proxies of ours in front (Caddy: 1); the viewer's address is then read from their X-Forwarded-For. |
-| `RELAY_BUFFER` | 256 | Frames a viewer may fall behind before it is handed the whole island again. |
-| `RELAY_RESUME_FRAMES` | 300 | Updates kept for viewers coming back (ten seconds of the stream). |
+| `RELAY_BUFFER` | eight seconds' worth (80) | Frames a viewer may fall behind before it is handed the whole island again. |
+| `RELAY_RESUME_FRAMES` | ten seconds' worth (100) | Updates kept for viewers coming back. One that missed more than the whole island weighs is handed the island. |
+| `RELAY_UPDATES_PER_SECOND` | 10 | Updates a second to viewers, 0 to 60. The world sends 31; the relay gathers what they did into one, and the page draws between them, two gaps behind (it measures them). 0: one update for each of the world's, still rounded and without what viewers already hold. |
 
 ## What a viewer gets
 The stream Clawblox's page already speaks, so the page works through the relay unchanged:
 - first the whole island (no `type`), with `relay_epoch` and `relay_seq`; a page that asks with `?gz=1` gets it as one
   gzipped binary message instead, made once for everyone (276 KB becomes about 17);
-- then the world's messages in order (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`;
+- then the world's messages (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`.
+  The world's deltas come gathered, ten a second (`src/gather.rs`): one update does what the world's three did, as the
+  page would have applied them one by one (the latest place of each thing that moved, what was added and removed, every
+  event once). Something removed and back, or added and gone, within a tenth of a second is split over two updates, as
+  the page would have seen it. Rotations and the players' numbers are rounded to 0.001 (positions come rounded to 0.01
+  from the world), and what every viewer already holds is left out (a rotation that rounding made the same, players or
+  a game status that did not change). A page that asked for `gz=1` gets each update gzipped, made once for everyone: 74
+  KB a second as the world sends it becomes about 3. Chat, speech and audio go out right after the next update, never
+  cutting one short;
 - and the relay's own news, `{"type":"relay","world":"up"|"down","viewers":n,…}`, on connecting, when the world goes
   down or comes back, and every five seconds.
 
 A page coming back from a gap connects with `?epoch=<last relay_epoch>&since=<last relay_seq>`: while the relay still
-holds the updates after that place, it sends only those; otherwise the whole island. Patched Clawblox's page
+holds the updates after that place, it sends only those, unless they weigh more than the whole island; otherwise the
+whole island. Patched Clawblox's page
 (`patches/v3`) does this by itself.
 
 `GET /relay/status` gives the world, the epoch and place, the tick, the entities, how many watch, and how many came
