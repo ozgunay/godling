@@ -14,12 +14,13 @@ export const TIERS = {
     blastGlow: 128, // fire, embers and flashes alive at once
     blastSoft: 96, // smoke, sand and dust alive at once
     blastChunks: 8, // charred chunks thrown out at once
-    blastLight: false, // the flash lights the ground with a light of its own; without one, the ambient light flares
-    lightningDepth: 5, // how many times a bolt's channel is halved and bent (lightning.js): 2^n segments
-    lightningForks: 3, // forks off the channel
+    blastLight: false, // the flash lights the ground with a light of its own (a lightning strike's too); without one,
+    // the ambient light flares
+    // A bolt is the same on every tier (lightning.js), drawn with less of it:
+    lightningDepth: 5, // its channel drawn with 2^n segments (of 2^7)
+    lightningForks: 3, // forks off the channel (of 5)
     lightningForkDepth: 0, // forks of forks
-    lightningArcs: 3, // arcs along the ground where it strikes
-    lightningLight: false, // a strike lights the ground with a light of its own; the exposure and ambient flash always
+    lightningArcs: 3, // arcs along the ground where it strikes (of 5)
     pixelRatio: 1.25, // the most device pixels per CSS pixel
     antialias: false,
     shadowMapSize: 1024,
@@ -48,7 +49,6 @@ export const TIERS = {
     lightningForks: 4,
     lightningForkDepth: 1,
     lightningArcs: 4,
-    lightningLight: true,
     pixelRatio: 1.5,
     antialias: true,
     shadowMapSize: 2048,
@@ -77,7 +77,6 @@ export const TIERS = {
     lightningForks: 5,
     lightningForkDepth: 1,
     lightningArcs: 5,
-    lightningLight: true,
     pixelRatio: 2,
     antialias: true,
     shadowMapSize: 2048,

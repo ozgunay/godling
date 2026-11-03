@@ -273,6 +273,32 @@ describe('the renderer', () => {
     r.unmount()
   })
 
+  it('plays a lightning marker as a strike: the part never drawn, the picture flashing and settling', () => {
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const debug = globalThis.__godlingRenderer
+    const calm = { players: [], entities: [part(1, 'Ground', [0, -0.5, 0], [100, 1, 100])] }
+    r.onState(calm)
+    r.onFrame({ dt: 0.02 })
+    const instances = debug.info().instances
+    expect(renders.renderer.toneMappingExposure).toBe(1.2)
+    r.onState({ ...calm, entities: [...calm.entities, part(2, 'SkyFlash', [4, 15, 4], [0.35, 30, 0.35],
+      { attributes: { SkyId: 3, StrikeX: 4, StrikeY: 0, StrikeZ: 4 } })] })
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().instances).toBe(instances) // the marker itself is never drawn
+    expect(debug.lightning().strikes).toBe(1)
+    let brightest = 0
+    for (let k = 0; k < 20; k++) {
+      r.onFrame({ dt: 0.02 })
+      brightest = Math.max(brightest, renders.renderer.toneMappingExposure)
+    }
+    expect(brightest).toBeGreaterThan(1.4) // the whole picture flashes
+    for (let k = 0; k < 70; k++) r.onFrame({ dt: 0.02 })
+    expect(debug.lightning().strikes).toBe(0)
+    expect(renders.renderer.toneMappingExposure).toBe(1.2)
+    r.unmount()
+  })
+
   it('works without the runtime\'s extras', () => {
     const { ctx } = runtime()
     ctx.runtime.internal = undefined

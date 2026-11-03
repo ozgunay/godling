@@ -49,7 +49,10 @@ for (let i = 0; i < 9; i++) { // palm stand-ins
   crown.position.set(trunk.position.x, 9.5, trunk.position.z)
   scene.add(trunk, crown)
 }
-const lightning = createLightning(scene, tier)
+// The renderer shares the meteor's flash light with the lightning (blast.js); here, a light of the same kind.
+const light = tier.blastLight ? new THREE.PointLight(0xffd29a, 0, 80, 1.5) : null
+if (light) scene.add(light)
+const lightning = createLightning(scene, tier, { light })
 const daylight = sky.daylight
 let elapsed = 0
 let next = 0.5

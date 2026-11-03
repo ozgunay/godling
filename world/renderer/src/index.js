@@ -502,9 +502,9 @@ export function createRenderer(ctx) {
   const dust = createDust(scene, tier)
   // Meteors: the blast where one lands (a Blast_<n> marker), and the trail of one falling (blast.js).
   const blasts = createBlasts(scene, tier, { onMaterial })
-  // Lightning: a strike where a SkyBolt_<n> marker appears (lightning.js). `?bolt=4` strikes near the camera's
-  // target every 4 seconds, to look.
-  const lightning = createLightning(scene, tier)
+  // Lightning: a strike where a SkyBolt_<n> marker appears (lightning.js), lighting the ground with the meteor's
+  // flash light. `?bolt=4` strikes near the camera's target every 4 seconds, to look.
+  const lightning = createLightning(scene, tier, { light: blasts.light })
   const boltEvery = Number(params.get('bolt'))
   let nextBolt = 1
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
