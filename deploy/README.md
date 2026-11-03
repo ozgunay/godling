@@ -43,6 +43,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015, ADR-017). Seven serv
      - `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`;
      - `charge.refunded`, `charge.refund.updated`, and `refund.updated` and `refund.failed` where the Dashboard lists them;
      - `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`.
+   - Give the endpoint API version `2026-10-28.endive`, the one the `stripe` library in `web/requirements.txt` pins: events come in the endpoint's version, the site's own requests in the library's.
    - A refund takes back its share of the pack's credits, and a refund that fails gives it back. A dispute holds back all of them until the bank decides; a lost one takes back the disputed share. Credits already spent are owed, and come out of whatever the viewer gets next.
    - Events may arrive in any order or twice: each is applied once, refunds and disputes are read from Stripe as they are now, and only the difference moves credits. If Stripe cannot be reached, the site answers 503 and Stripe sends the event again.
    - A checkout Stripe charged less for than the pack, or in another currency, is **held**: no credits until staff let it stand (Payments in the admin, action "Let held payments stand") or refund it in Stripe. The admin's Stripe events list notes held payments and any paid checkout that matched no payment.

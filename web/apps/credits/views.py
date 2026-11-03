@@ -149,16 +149,17 @@ def payment_for(payment_intent):
 def as_it_is_now(kind, thing):
     """The charge or dispute an event is about, as Stripe has it now (docs.stripe.com/webhooks#event-ordering: fetch
     the object rather than trust an event's copy, which may be older than one already applied). Without a secret key
-    (development), the event's own copy. Raises AskAgain when Stripe cannot be reached."""
+    (development), the event's own copy. Either way a plain dict, as the event is. Raises AskAgain when Stripe cannot
+    be reached."""
     key = settings.GODLING_STRIPE_SECRET_KEY
     try:
         if kind in REFUND_EVENTS:
             charge_id = thing.get("id") if thing.get("object") == "charge" else thing.get("charge")
             if key and charge_id:
-                return stripe.Charge.retrieve(str(charge_id), api_key=key)
+                return stripe.Charge.retrieve(str(charge_id), api_key=key).to_dict()
             return thing if thing.get("object") == "charge" else None
         if key and thing.get("id"):
-            return stripe.Dispute.retrieve(str(thing["id"]), api_key=key)
+            return stripe.Dispute.retrieve(str(thing["id"]), api_key=key).to_dict()
         return thing
     except stripe.StripeError as err:
         raise AskAgain(str(err)) from err
@@ -183,6 +184,7 @@ def stripe_webhook(request):
                                                settings.GODLING_STRIPE_WEBHOOK_SECRET)
     except (ValueError, stripe.SignatureVerificationError):
         return HttpResponseBadRequest("bad signature")
+    event = event.to_dict()  # Stripe's objects are no longer dicts (stripe 15): read as plain data from here on
     event_id, kind, thing = event.get("id") or "", event["type"], event["data"]["object"]
     if settings.GODLING_STRIPE_SECRET_KEY and bool(event.get("livemode")) != live_key():
         log.warning("Stripe event %s (%s) is from the other mode than the key: ignored", event_id, kind)

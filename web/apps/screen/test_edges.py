@@ -3,6 +3,7 @@ again, held payments in the admin, Stripe telling one event twice at once, and t
 import time
 from unittest import mock
 
+import stripe
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.test import TestCase, override_settings
@@ -115,7 +116,7 @@ class StripeEdgeTests(TestCase):
     def test_one_event_delivered_twice_at_once_is_applied_once(self):
         """Both deliveries pass the first look; the second finds the first's record when it tries to keep its own."""
         event = {"id": "evt_twice", "type": "checkout.session.expired", "data": {"object": {"id": "cs_1"}}}
-        with mock.patch("stripe.Webhook.construct_event", return_value=event), \
+        with mock.patch("stripe.Webhook.construct_event", return_value=stripe.Event.construct_from(event, "k")), \
                 mock.patch.object(StripeEvent.objects, "filter") as kept, \
                 mock.patch.object(StripeEvent.objects, "create", side_effect=IntegrityError("unique")):
             kept.return_value.exists.side_effect = [False, True]
