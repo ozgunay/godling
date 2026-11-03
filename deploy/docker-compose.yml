@@ -184,7 +184,7 @@ services:
       - "127.0.0.1:9090:9090"
 
   alertmanager:
-    image: quay.io/prometheus/alertmanager:v0.28.1
+    image: quay.io/prometheus/alertmanager:v0.34.2
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/etc/alertmanager/start.sh"]  # its config from the environment
     environment:
