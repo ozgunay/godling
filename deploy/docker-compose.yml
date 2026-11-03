@@ -61,7 +61,9 @@ services:
       POSTGRES_USER: godling
       POSTGRES_PASSWORD: ${GODLING_DB_PASSWORD:?set GODLING_DB_PASSWORD in .env}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # From 18 the image keeps its data in a folder per major version (18/docker) under this one, and refuses a
+      # mount at .../data. The backup image's client is of the same major version (Dockerfile.backup).
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U godling -d godling"]
       interval: 5s
