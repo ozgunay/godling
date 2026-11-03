@@ -15,9 +15,11 @@ import json
 import math
 import mimetypes
 import re
-from datetime import timedelta
+import urllib.parse
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
@@ -286,6 +288,98 @@ def api_report(request):
     reason = body.get("reason") if body.get("reason") in dict(Report.REASONS) else Report.UNKIND
     ok, text = notes.report(note, request.user, reason)
     return JsonResponse({"ok": ok, "text": text})
+
+
+HIDDEN_NOTE = "A note drifted down; moderators have hidden it."
+REPLAY_PARTS = ("index", "tracks", "marks", "sky")
+REPLAY_TIMEOUT = 5  # seconds: a replay request waits no longer than this for the panel (no request waits long)
+REPLAY_INDEX_KEY = "godling:replay-index"
+REPLAY_INDEX_FRESH = 3  # seconds one copy of the replay index serves every viewer
+GLIDER_QUOTE = re.compile(r'It reads: "(.*)"\s*$')  # the paper glider's line quotes the note whole (attention.py)
+QUOTE_MIN = 8  # characters: a hidden note shorter than this is not looked for inside Godling's own words
+
+
+def hidden_quotes(texts):
+    """One pattern for any of these note texts inside other words, whatever their case, or None. Notes shorter than
+    QUOTE_MIN ("no", "ugh") are left out: they sit inside too many words that have nothing to do with them."""
+    texts = sorted({t.strip() for t in texts if t and len(t.strip()) >= QUOTE_MIN}, key=len, reverse=True)
+    return re.compile("|".join(re.escape(t) for t in texts), re.IGNORECASE) if texts else None
+
+
+def moderate_past(tracks):
+    """A replay's tracks as viewers may see them (ADR-016), looked up now and never baked into the recording.
+
+    A note is shown only while its Note row exists and is not hidden, with its author's name and its text from that
+    row, so a note hidden or deleted since (or whose author was deleted) is gone from the past too, and so is the paper
+    glider's line that quotes it; lines of Godling's mind quoting it are hidden. It can be reported only while the site
+    still takes reports on it (notes.REPORT_WINDOW). A power whose viewer's account is gone was called by "Someone"."""
+    lead, entries, acts = tracks.get("lead") or [], tracks.get("entries") or [], tracks.get("acts") or []
+    try:
+        start = datetime.fromtimestamp(int(tracks["from"]) / 1000, dt_timezone.utc) - timedelta(days=2)
+        end = datetime.fromtimestamp(int(tracks["to"]) / 1000, dt_timezone.utc) + timedelta(days=1)
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return {"ok": False}
+    refs = [a["ref"] for a in acts if a.get("kind") == "note" and type(a.get("ref")) is int]
+    by_id = Note.objects.select_related("author").in_bulk(refs)
+    names = set(get_user_model().objects.filter(username__in={a.get("name") for a in acts if a.get("kind") != "note"})
+                .values_list("username", flat=True))
+    reportable = timezone.now() - notes.REPORT_WINDOW
+    shown, gone, kept = set(), set(), []
+    for a in acts:
+        a = dict(a)
+        ref = a.pop("ref", None)
+        if a.get("kind") == "note":
+            note = by_id.get(ref) if type(ref) is int else None
+            if note is None or note.status != Note.SENT:
+                gone.add(a.get("text") or "")
+                continue
+            a.update(name=note.author.username, text=note.text)
+            if note.created >= reportable:
+                a["noteId"] = note.pk
+            shown.add(note.text)
+        elif a.get("name") not in names:
+            a["name"] = "Someone"
+        kept.append(a)
+    sent = set(Note.objects.filter(status=Note.SENT, created__range=(start, end)).values_list("text", flat=True))
+    hidden = gone | set(Note.objects.filter(status=Note.HIDDEN, created__range=(start, end)).values_list("text", flat=True))
+    pattern = hidden_quotes(hidden - sent - shown)  # never one that is still shown (the same words, another account)
+    for e in lead + entries:
+        if e.get("kind") == "event" and e.get("sky") == "Note":
+            quoted = GLIDER_QUOTE.search(str(e.get("text") or ""))
+            if quoted and quoted.group(1) not in sent | shown:
+                e["text"] = HIDDEN_NOTE
+                continue
+        for key in ("text", "thought", "needs", "intention", "goal"):
+            if pattern and isinstance(e.get(key), str) and pattern.search(e[key]):
+                e[key] = HIDDEN_NOTE if key == "text" else "…"
+    return {**tracks, "acts": kept}
+
+
+@require_GET
+def api_replay(request, what):
+    """The island's past (ADR-016): anyone may watch it all (D1). The panel reads it from the run; the site moderates
+    what it says about viewers. No request waits on the island long, and the index (the same for everyone) is shared.
+    Chunks never pass through here: the island's origin serves them from the runs volume (GODLING_REPLAY_URL), and the
+    bucket those that are up (`chunks_url` before `chunks_url_until`)."""
+    if what not in REPLAY_PARTS:
+        raise Http404
+    params = {k: request.GET[k] for k in ("from", "to", "every") if k in request.GET}
+    path = f"/api/replay/{what}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
+    answer = cache.get(REPLAY_INDEX_KEY) if what == "index" else None
+    if answer is None:
+        answer = island.relay("GET", path, timeout=REPLAY_TIMEOUT)
+        if what == "index" and answer is not PANEL_DOWN and isinstance(answer, dict) and "segments" in answer:
+            cache.set(REPLAY_INDEX_KEY, answer, timeout=REPLAY_INDEX_FRESH)
+    if answer is PANEL_DOWN:
+        return JsonResponse({"ok": False, "text": "The island's past is out of reach. Try again in a moment."}, status=503)
+    if isinstance(answer, dict) and answer.get("ok") is False:
+        return JsonResponse(answer, status=400)
+    if what == "index":
+        # Without a setting (a development site beside its panel), the panel's own chunks.
+        answer = {**answer, "chunks": settings.GODLING_REPLAY_URL or f"{settings.GODLING_PANEL_URL}/replay"}
+    elif what == "tracks":
+        answer = moderate_past(answer)
+    return JsonResponse(answer, safe=False)
 
 
 @ensure_csrf_cookie

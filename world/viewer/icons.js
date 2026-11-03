@@ -230,6 +230,18 @@ const DRAW = {
   cold() {
     return outline(rows(['...w...', '.w.w.w.', '..www..', 'wwwcwww', '..www..', '.w.w.w.', '...w...']))
   },
+  play() {
+    return outline(rows(['.w.....', '.ww....', '.www...', '.wwww..', '.www...', '.ww....', '.w.....']))
+  },
+  pause() {
+    return outline(rows(['.ww.ww.', '.ww.ww.', '.ww.ww.', '.ww.ww.', '.ww.ww.', '.ww.ww.', '.ww.ww.']))
+  },
+  back() { // the island's past: a clock hand turning back
+    return outline(rows(['..www..', '.w...w.', 'w..w..w', 'ww.w..w', 'w..ww.w', '.w...w.', '..www..']))
+  },
+  fire() {
+    return outline(rows(['...o...', '..oo...', '..ooo.o', '.ooyoo.', '.oyyyo.', '.OoyoO.', '..bbb..']))
+  },
   glider() { // a viewer's note, folded into a paper glider
     return outline(rows([
       '................',

@@ -14,8 +14,9 @@ RUN cd /src && git apply /patches/v0-fix-cli-sandbox.patch && git apply /patches
 FROM debian:bookworm-slim
 # tmux: Clawblox's agent mode needs it (README). Chromium: the world draws Godling's first-person view with it
 # (world.toml vision = true, GET /observe/image), headless and on software WebGL; the fonts are for its pages.
-RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux chromium \
-    fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
+# zstd: the replay packer reads the recordings with it; python3-boto3: it uploads replay chunks to object storage,
+# when a bucket is set (ADR-016).
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates tmux chromium     fonts-dejavu-core zstd python3-boto3 && rm -rf /var/lib/apt/lists/*
 ENV CLAWBLOX_CHROME=/usr/bin/chromium
 COPY --from=world /out/bin/clawblox /usr/local/bin/clawblox
 WORKDIR /app
@@ -23,7 +24,8 @@ COPY mind/ ./mind/
 COPY tools/ ./tools/
 COPY world/ ./world/
 COPY deploy/island-start.sh /usr/local/bin/island-start
-RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs && chown island /runs
+# /runs/live/replay/chunks is where the replay chunks' own volume mounts (docker-compose.yml): made here, the island's.
+RUN chmod +x /usr/local/bin/island-start && useradd --create-home island && mkdir -p /runs/live/replay/chunks     && chown -R island /runs
 USER island
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080 8081

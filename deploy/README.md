@@ -7,7 +7,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015). Seven services:
 - **`worker`:** the site's Celery worker. It takes powers to the island one at a time, so no web request waits on the island.
 - **`island`:** the world (Clawblox, built from source with `patches/`), Godling's mind and the guest panel, started by `mind/run_godling.py`. The run lives in a volume, so it continues across restarts: Godling's memory, and the island itself. Every five minutes and when the container stops, the launcher saves what stands (`island-save.json`); on the next start the world puts it back (ADR-013).
 - **`relay`:** the island's stream relay (`relay/`, `Dockerfile.relay`), which every viewer's socket reaches: one connection to the world, the same updates to everyone. A container of its own, holding the spectator token and nothing else, so the part of the island the whole internet talks to is kept apart from Godling's keys (the agent key, the operator token, the DeepSeek key).
-- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world (watching side only) and its stream to the relay.
+- **`caddy`:** HTTPS for both domains. The site's domain goes to the site; the island's domain goes to the world (watching side only), its stream to the relay, and its replay chunks (`/replay/chunks/…`) to files in their own volume (`replay_chunks`, mounted inside the island's run), the only part of the run Caddy can read.
 
 ## What the public can reach
 - **The site**, at `https://<domain>/`.
@@ -15,6 +15,7 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015). Seven services:
   - Caddy passes only what watching needs: the page, its files and chat to the world, and the stream to the relay (ADR-015). The world's agent API (`join`, `input`, `observe`, `reset`, `chat`, `snapshot`…) and its whole-island `/spectate` answer 404 from outside.
   - The stream relay is the world's one spectator: every viewer's socket is the relay's, from the island's own page only. From one address it takes at most 64 sockets (an IPv6 /64 counts as one address; a phone network puts many people behind one), and new ones at a steady pace after a first burst, since each is handed the whole island. However many watch, the world works out its changes once.
   - Inside Compose's network the world still asks for its keys: joining takes the agent key the launcher makes at every start, and the snapshot takes the operator token (`patches/v2`, ADR-014). The spectator token stays on the server: Caddy adds it to the page's requests, and the relay holds its own.
+- **The island's past** (ADR-016): the replay chunks at `https://<island domain>/replay/chunks/…`, or at the bucket's public address when one is set. They hold only the world as spectators see it.
 - **Nothing else.** The guest panel (8081) is reachable only from the site and its worker, inside Compose's network, and only with `GODLING_PANEL_KEY`. Postgres and Redis are not published.
 
 ## Steps
@@ -49,11 +50,13 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015). Seven services:
 7. **Email:** set the SMTP details. Sign up once yourself to see a confirmation email arrive.
 
 ## Day to day
-- **Logs:** `docker compose logs -f site worker island relay`, or the admin's Logs page: the world's, the mind's and the panel's (`world.log`, `console.log` and `panel.log` in the run folder). The relay's are in `docker compose logs relay`; how many watch, in its `/relay/status` (inside Compose's network: `docker compose exec site python -c "import urllib.request; print(urllib.request.urlopen('http://relay:8082/island/relay/status').read().decode())"`).
+- **Logs:** `docker compose logs -f site worker island relay`, or the admin's Logs page: the world's, the mind's, the panel's and the replay packer's (`world.log`, `console.log`, `panel.log` and `replay.log` in the run folder). The relay's are in `docker compose logs relay`; how many watch, in its `/relay/status` (inside Compose's network: `docker compose exec site python -c "import urllib.request; print(urllib.request.urlopen('http://relay:8082/island/relay/status').read().decode())"`).
+- **Replays and disk** (ADR-016): the world records about 5 GB a day. The packer keeps raw recordings `GODLING_REPLAY_RAW_DAYS` days (3): older recordings are deleted once packed, and the one being written is trimmed of its older rows once an hour. It writes a warning to `replay.log` when the disk is 80% full. Replay chunks take about 0.2 GB a day; with a bucket set, they go there too (it needs a CORS rule allowing GET and HEAD from any origin, which the packer sets if its key may), and a day stays on the server until it is all uploaded and two days old.
+- **Updates and the renderer:** a run keeps its frozen copy of the world script, but each start copies in today's renderer and models, so the island's page always has the current replay player.
 - **Prices, credit packs, viewers, notes and reports:** in the admin.
 - **Updates:** `git pull && docker compose up -d --build`. The site migrates its database on start.
   - A run keeps the copy of the world script it started with (`/runs/live/world`). For a new world script, remove that copy before restarting: `docker compose exec island rm -rf /runs/live/world`. The island save is kept beside it, so the new script puts the same island back.
-- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory and the island's save).
+- **Backups:** the `pgdata` volume (`docker compose exec postgres pg_dump -U godling godling > backup.sql`) and the `runs` volume (Godling's memory, the island's save and the replays' tracks and markers).
 
 ## Tested so far
 - **Tested without Docker** (in WSL), the same pieces as the images run:

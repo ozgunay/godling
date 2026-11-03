@@ -92,6 +92,7 @@ Tests: `~/.venvs/godling-web/bin/python manage.py test`. For the admin: `manage.
 | `GODLING_PANEL_KEY` | | the panel's `--key` |
 | `GODLING_VIEW_URL` | | the island as the public reaches it, on its own origin and with no token: `https://<island domain>/island` (empty: the panel's own link, which carries the token; development only) |
 | `GODLING_RUN_DIR` | | the live run, for the admin's log viewer |
+| `GODLING_REPLAY_URL` | | where browsers fetch replay chunks (ADR-016): `https://<island domain>/replay` (empty: the guest panel's own, `GODLING_PANEL_URL/replay`; development only) |
 | `GODLING_TRUSTED_PROXIES` | `0` | proxies in front of the site (deploy/: Caddy, `1`), so rate limits see each viewer's address |
 | `GODLING_CURRENCY` | `eur` | the credit packs' currency |
 | `GODLING_STRIPE_SECRET_KEY`, `GODLING_STRIPE_WEBHOOK_SECRET` | | Stripe; without them, only the development test checkout |

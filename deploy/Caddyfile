@@ -2,6 +2,8 @@
 #   {$GODLING_DOMAIN}         the site: the viewer screen, accounts, credits, the admin.
 #   {$GODLING_ISLAND_DOMAIN}  the world's spectator page and its stream (WORLD_BASE_PATH=/island), and only that: the
 #                             agent API (join, input, observe, reset, chat, snapshot…) is never reachable from outside.
+#                             Also the island's past, packed for replays (/replay/chunks/…, ADR-016), which the page
+#                             fetches and plays itself.
 # The island is a page of its own origin inside the screen's frame, so nothing on it can reach the site's cookies or
 # act as a signed-in viewer, and only the site may frame it.
 # Its stream comes from the relay (ADR-015): one connection to the world, however many watch. The spectator token
@@ -29,6 +31,18 @@
 		reverse_proxy island:8080 {
 			header_up X-Spectator-Token {$GODLING_SPECTATOR_TOKEN}
 		}
+	}
+
+	# Replays (ADR-016): the chunks the island packs, from their own volume (Caddy sees nothing else of the run). Files
+	# only, the same for everyone and never changed once written, so they are cached for good. (With a bucket, browsers
+	# fetch those already up from there.)
+	handle_path /replay/chunks/* {
+		root * /srv/replay-chunks
+		# Kept for good only when there: a chunk asked for before it is written must be asked for again.
+		@chunk file
+		header @chunk Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin *
+		file_server
 	}
 	handle {
 		respond 404

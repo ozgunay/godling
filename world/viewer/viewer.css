@@ -243,6 +243,33 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .tip dd { margin: 0; font: 500 0.95rem/1.3 'Tiny5', sans-serif; }
 .tip .free { display: block; color: var(--teal); }
 
+/* ---- The island's past (ADR-016): Rewind under the live badge; the timeline above the hotbar while replaying ---- */
+:root { --r-day: #4f6b3c; --r-night: #1d2d4a; --r-rain: #3c5560; }
+.b-live.past .dot { background: var(--teal); border-color: #1e9690; animation: none; }
+.replaying .b-hotbar, .replaying .b-purse { filter: grayscale(0.8) brightness(0.7); }
+.replaying .b-camhint { display: none; }
+.b-replay { position: relative; width: min(72rem, calc(100vw - 3rem)); padding: 0.6rem 0.75rem 0.7rem; display: flex; flex-direction: column; gap: 0.55rem; pointer-events: auto; text-shadow: var(--pixel-shadow); }
+.r-controls { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+.r-play { display: grid; place-items: center; width: 3rem; height: 3rem; padding-top: 0.45rem; }
+.r-jump, .r-share { padding: 0.5rem 0.65rem; }
+.r-speeds, .r-spans { display: flex; gap: 0.2rem; }
+.r-speed, .r-span { min-width: 2.6rem; padding: 0.5rem 0.45rem; background: rgba(14, 17, 18, 0.7); color: var(--mist); border: var(--bevel) solid var(--ink); font: 400 1rem/1 'Tiny5', sans-serif; }
+.r-speed[aria-pressed='true'], .r-span[aria-pressed='true'] { background: var(--gold); color: var(--gold-ink); text-shadow: none; }
+.r-when { margin: 0 0.4rem 0 auto; display: flex; flex-direction: column; align-items: flex-end; font: 400 1.15rem/1.1 'Tiny5', sans-serif; white-space: nowrap; }
+.r-when b { font-weight: 400; color: var(--gold); font-variant-numeric: tabular-nums; }
+.r-when span { font-size: 0.9rem; color: var(--fog); }
+.r-live { display: flex; align-items: center; gap: 0.5rem; }
+.r-live .dot { width: 0.7rem; height: 0.7rem; background: var(--heart); border: var(--bevel) solid var(--heart-deep); }
+.r-strip { display: flex; align-items: center; gap: 0.6rem; }
+.r-bar { position: relative; flex: 1; height: 2.4rem; background-color: var(--r-day); border: var(--bevel) solid var(--ink); cursor: pointer; touch-action: none; }
+.r-bar:focus-visible { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+.r-gap { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(14, 17, 18, 0.85) 0 0.35rem, rgba(14, 17, 18, 0.55) 0.35rem 0.7rem); }
+.r-head { position: absolute; top: -0.45rem; bottom: -0.45rem; width: 0.3rem; margin-left: -0.15rem; background: var(--gold); box-shadow: 0 0 0 0.12rem var(--ink); pointer-events: none; }
+.r-mark { position: absolute; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 1.7rem; height: 1.7rem; padding: 0; background: rgba(14, 17, 18, 0.78); border: 0.12rem solid var(--ink); }
+.r-mark:hover, .r-mark:focus-visible { background: var(--ink); outline: 0.2rem solid var(--gold); outline-offset: 0; z-index: 1; }
+.r-mark .px { width: 1.2rem; height: auto; }
+.r-tip { position: absolute; padding: 0.35rem 0.55rem; font: 400 0.95rem/1 'Tiny5', sans-serif; white-space: nowrap; pointer-events: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .b-live .dot, .slot.calling .px, .b-account.nudge, .b-purse.nudge { animation: none; }
   .b-pop, .b-pop.out, .b-say, .b-camhint, .slot { transition-duration: 1ms; filter: none; }
@@ -301,4 +328,14 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .slot.aiming { transform: none; }
   .b-note textarea, .b-note input { font-size: 16px; } /* under 16px, iOS zooms the page on focus */
   .b-say { max-width: 100%; }
+  .b-replay { width: 100%; padding: 0.45rem 0.5rem 0.55rem; gap: 0.4rem; }
+  .r-controls { gap: 0.3rem; }
+  .r-jump, .r-share { display: none; }
+  .r-speed { min-width: 2.2rem; padding: 0.45rem 0.3rem; font-size: 0.9rem; }
+  .r-when { font-size: 1rem; }
+  .r-strip { flex-direction: column; align-items: stretch; gap: 0.35rem; }
+  .r-bar { flex: none; height: 2.8rem; }
+  .r-spans { justify-content: center; }
+  .r-span { flex: 1; }
+  .replaying .b-hotbar, .replaying .b-purse { display: none; }
 }

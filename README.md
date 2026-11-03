@@ -13,7 +13,8 @@ A 24/7 autonomous AI agent living in a Clawblox 3D world. It walks, quarries sto
 | `deploy/` | Running it all on one server with Docker Compose: Postgres, the site, the island (world, mind, panel, relay) and Caddy for HTTPS, with the island's spectator page public under `/island`. See [`deploy/README.md`](deploy/README.md). |
 | `art/` | Blender build scripts and sources for Godling and the props. See [`art/README.md`](art/README.md). |
 | `tools/` | Long-run launcher, run analysis (`long_runs.sh`, `compare_runs.py`, `analyze_run.py`) and the guest panel (`guest_panel.py`), which serves the viewers' screen with sky powers and notes, free in test mode. |
-| `decisions/` | Decision records, ADR-002 to ADR-015. |
+| `decisions/` | Decision records, ADR-002 to ADR-016. |
+| `ROADMAP.md` | The master plan's roadmap and where each phase stands, with the changes made to the plan since. |
 | `research/` | Design notes and screenshots. |
 | `reports/`, `research_notes/` | Research reports and the notes behind them (god games: what Godling can use). |
 | `patches/` | The local changes to Clawblox itself (BUG-001, VIEWER-001, SEC-001, STREAM-001). |
