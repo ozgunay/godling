@@ -5,4 +5,4 @@ whitenoise>=6.6
 gunicorn>=22
 psycopg[binary]>=3.2
 celery[redis]>=5.4,<6  # the worker that relays powers to the island (apps.screen.tasks)
-redis>=5,<7  # the shared cache and Celery's broker (deploy/: the redis service)
+redis>=8.1.0,<9  # the shared cache and Celery's broker (deploy/: the redis service)
