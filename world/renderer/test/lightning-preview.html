@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- A look at lightning.js on its own, with the renderer's own sky: serve world/renderer (any static server) and open
+     /test/lightning-preview.html. ?hour=21 for night, ?every=3 for seconds between strikes, ?quality=low|medium|high. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightning preview</title>
+<style>html, body { margin: 0; height: 100%; background: #0b0e10; overflow: hidden; } canvas { display: block; }</style>
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js",
+  "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three'
+import { createLightning } from '../src/lightning.js'
+import { createSky, sunForHour } from '../src/sky.js'
+import { TIERS } from '../src/quality.js'
+
+const params = new URLSearchParams(location.search)
+const tier = TIERS[params.get('quality') || 'high']
+const every = Number(params.get('every')) || 3
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.outputColorSpace = THREE.SRGBColorSpace
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+document.body.append(renderer.domElement)
+const scene = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 3000)
+camera.position.set(-38, 14, 46)
+camera.lookAt(4, 22, -6)
+const sky = createSky(scene, tier)
+sky.setSun(sunForHour(Number(params.get('hour') ?? 14)))
+scene.fog = new THREE.Fog(sky.fogColor, 80, 520)
+const ambient = new THREE.AmbientLight(0xffffff, 0.6)
+const hemisphere = new THREE.HemisphereLight(0x87ceeb, 0x98fb98, 0.4)
+const sun = new THREE.DirectionalLight(0xffffff, 2.2)
+sun.position.copy(sky.sun).multiplyScalar(100)
+scene.add(ambient, hemisphere, sun)
+const sand = new THREE.Mesh(new THREE.BoxGeometry(400, 1, 400), new THREE.MeshStandardMaterial({ color: 0xd8c38f }))
+sand.position.y = -0.5
+const grass = new THREE.Mesh(new THREE.BoxGeometry(120, 1.2, 120), new THREE.MeshStandardMaterial({ color: 0x5c9c3a }))
+grass.position.set(10, -0.4, -10)
+scene.add(sand, grass)
+for (let i = 0; i < 9; i++) { // palm stand-ins
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 9), new THREE.MeshStandardMaterial({ color: 0x8a6a42 }))
+  trunk.position.set(-20 + (i % 3) * 18, 4.5, -25 + Math.floor(i / 3) * 16)
+  const crown = new THREE.Mesh(new THREE.ConeGeometry(3, 2, 6), new THREE.MeshStandardMaterial({ color: 0x3f8a2c }))
+  crown.position.set(trunk.position.x, 9.5, trunk.position.z)
+  scene.add(trunk, crown)
+}
+const lightning = createLightning(scene, tier)
+const daylight = sky.daylight
+let elapsed = 0
+let next = 0.5
+let n = 0
+let last = performance.now()
+function resize() {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+}
+addEventListener('resize', resize)
+resize()
+// hold(age): one strike, held still `age` seconds in (0.1 the leader, 0.17 the stroke, 0.5 the afterglow); hold() runs on.
+let held = null
+let heldFrom = 0
+globalThis.hold = (age = null) => {
+  if (age !== null && held === null) {
+    heldFrom = elapsed + 0.01
+    n += 1
+    lightning.strike(-4, 0, -12, n * 7919)
+  }
+  held = age
+}
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min((now - last) / 1000, 0.05)
+  last = now
+  elapsed = held === null ? elapsed + dt : heldFrom + held
+  if (held === null && elapsed >= next) {
+    next = elapsed + every
+    n += 1
+    lightning.strike(-10 + ((n * 37) % 40), 0, -20 + ((n * 23) % 30), n * 7919)
+  }
+  ambient.intensity = 0.6 * (0.3 + 0.7 * daylight) + lightning.update({ time: elapsed, daylight })
+  hemisphere.intensity = 0.4 * (0.35 + 0.65 * daylight)
+  sun.intensity = 2.2 * daylight
+  renderer.toneMappingExposure = 1.2 * lightning.exposure()
+  sky.update(camera, elapsed)
+  renderer.render(scene, camera)
+  globalThis.lightningInfo = lightning.info()
+})
+globalThis.strikeNow = () => { next = elapsed }
+</script>
+</body>
+</html>
