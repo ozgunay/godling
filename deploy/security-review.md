@@ -12,6 +12,7 @@ An autonomous AI agent living on a 3D island, streamed live. Viewers watch for f
 - **The world's private side**: that nothing outside reaches the agent API (`patches/v2`), the guest panel (`tools/guest_panel.py`) and its key.
 - **Godling's mind and notes**: prompt injection through notes (`tools/guest_panel.py clean_note`, `mind/godling/mind.py`): can a note make Godling do or say what it should not, or reach anything beyond the island?
 - **The deployment**: `deploy/` (Compose, the images, secrets in `.env`, Caddy, Cloudflare in front), the monitoring.
+- **The backups** (`deploy/backup.sh`, ADR-018): an off-site bucket holding a full copy of the accounts, the ledger and Godling's run, encrypted with a password kept in `.env`. The server holds a key that may write and delete there: what someone with the server could do to the backups, and whether a bucket lock or a second copy the server cannot reach is needed.
 
 **Out of scope**: Stripe, Cloudflare and DeepSeek themselves; Clawblox's internals beyond our patches (its dependencies are audited: `patches/DEPS-001`).
 
@@ -21,6 +22,7 @@ viewer ──HTTPS──▶ Cloudflare ──▶ Caddy ─┬─▶ site (Django
                                         ├─▶ island page, chat ──▶ world (watching routes only; Caddy adds the token)
                                         └─▶ /island/spectate/ws ──▶ relay ──one connection──▶ world's stream
 mind (DeepSeek) ◀──▶ world's agent API (loopback/Compose network, join key)
+backup ──read-only──▶ Postgres, the run, the chunks ──encrypted snapshots──▶ the backups' bucket (off the server)
 ```
 
 ## What to look for, first
@@ -35,7 +37,7 @@ mind (DeepSeek) ◀──▶ world's agent API (loopback/Compose network, join k
 ## How to run it for the review
 - A staging copy of `deploy/` with **test keys**: Stripe test mode (`sk_test_…` and its webhook secret), Turnstile's test keys, any SMTP sink.
 - `deploy/check.sh <site> <island>` from outside shows what the public reaches; `.github/workflows/` holds the tests and audits.
-- Decision records: ADR-012 to ADR-017 (`decisions/`). Known and accepted: the ignored advisories in `patches/clawblox-audit-ignore.txt`; Chromium without its sandbox inside the island container; prompt injection can be reduced, not ruled out.
+- Decision records: ADR-012 to ADR-018 (`decisions/`). Known and accepted: the ignored advisories in `patches/clawblox-audit-ignore.txt`; Chromium without its sandbox inside the island container; prompt injection can be reduced, not ruled out.
 
 ## What we ask back
 A report with each finding's severity, how to reproduce it, and a fix; then a retest of the fixes.
@@ -45,6 +47,6 @@ A report with each finding's severity, how to reproduce it, and a fix; then a re
 2. Set `GODLING_SECURITY_REVIEW` in `deploy/.env`: who reviewed, when, where the report is.
 3. Cloudflare in front, its ranges in `GODLING_PROXY_RANGES`, the server's ports 80 and 443 open to Cloudflare only (`deploy/README.md`).
 4. `GODLING_ALERT_EMAIL` set, and one alert seen arriving (stop the relay for two minutes).
-5. Backups of `pgdata` and `runs` running, and one restored.
+5. Backups going to a bucket (`GODLING_BACKUP_REPOSITORY`, ADR-018), and the new-server restore done once on a staging copy from it (`deploy/README.md`, Backups).
 6. Stripe's live keys and live webhook secret in `deploy/.env`, the webhook endpoint created in live mode; `docker compose up -d`.
 7. `deploy/check.sh` from outside: all checks pass.

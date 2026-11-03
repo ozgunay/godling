@@ -5,10 +5,10 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 
 const RELAY: &str = env!("CARGO_BIN_EXE_godling-relay");
-const SETTINGS: [&str; 12] = [
+const SETTINGS: [&str; 13] = [
     "RELAY_LISTEN", "RELAY_UPSTREAM", "RELAY_SPECTATOR_TOKEN", "WORLD_SPECTATOR_TOKEN", "RELAY_BASE_PATH",
     "RELAY_ORIGINS", "RELAY_MAX_VIEWERS", "RELAY_MAX_PER_IP", "RELAY_CONNECTS_PER_MINUTE", "RELAY_TRUSTED_PROXIES",
-    "RELAY_BUFFER", "RELAY_RESUME_FRAMES",
+    "RELAY_BUFFER", "RELAY_RESUME_FRAMES", "RELAY_UPDATES_PER_SECOND",
 ];
 
 /// The relay with only these settings, none of the test runner's own.
@@ -62,6 +62,10 @@ fn a_setting_that_is_not_a_number_stops_it() {
     let out = relay(&[("RELAY_MAX_VIEWERS", "lots")]).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("RELAY_MAX_VIEWERS is not a number"));
+    // Too many updates a second would make the flush's period zero (or wrap): refused at the start, not frozen later.
+    let out = relay(&[("RELAY_UPDATES_PER_SECOND", "10000000000")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("RELAY_UPDATES_PER_SECOND is at most 60"));
 }
 
 #[test]

@@ -50,9 +50,9 @@ The relay's own job: send the same message to N viewers 15 times a second for 15
 ## What was built
 ### The relay (`relay/`, `godling-relay`)
 - **One connection to the world.** It keeps the island by applying every delta exactly as Clawblox's page does (`applySpectatorDelta`, with v1's terrain). Godling's own eyes (the headless capture) still go to the world directly.
-- **The same frames for everyone, made once.** Each world message gets its place, `relay_seq`, spliced into it without parsing it again; a whole island carries `relay_epoch` too. Clawblox's page ignores fields it does not know, so it works through the relay unchanged.
+- **The same frames for everyone, made once.** Each world message gets its place, `relay_seq`, spliced into it without parsing it again; a whole island carries `relay_epoch` too. *Since ADR-017 the world's deltas are gathered into one update ten times a second, which gets the place; only passed messages are still spliced.* Clawblox's page ignores fields it does not know, so it works through the relay unchanged.
 - **Late viewers** get the whole island at the latest place, built at most once per place.
-- **Returning viewers** (`?epoch=&since=`) get only what they missed, from the last 300 updates (ten seconds). Another epoch, or a place no longer held: the whole island.
+- **Returning viewers** (`?epoch=&since=`) get only what they missed, from the last 300 updates (ten seconds). *Since ADR-017: ten seconds' worth of updates, and the island instead when what was missed weighs more.* Another epoch, or a place no longer held: the whole island.
 - **A world restart** reaches viewers on the socket they hold: `{"type":"relay","world":"down"}`, then the new island with a new epoch.
 - **Slow viewers**: a viewer 256 frames behind gets the whole island again; after three, it is let go to reconnect.
 - **Limits**: viewers in all (5,000) and per address (behind Caddy, from its X-Forwarded-For), an Origin list (any case), a 4 KB cap on what a viewer sends, pings and a 60 s silence limit, a 10 s send limit.
@@ -88,6 +88,6 @@ The relay's own job: send the same message to N viewers 15 times a second for 15
 - **Not tested**: building the images and Caddy's routes, as in ADR-013 (no Docker engine here).
 
 ## Next
-- **Bandwidth** (the real bill): send viewers 15 updates a second from the relay's own copy (the renderer then draws 150 ms behind), the player list only when it changes, then a compact format (quaternions, rounded positions) and one compression per update for everyone. Target: under 5 KB/s per viewer.
+- **Bandwidth** (the real bill): send viewers 15 updates a second from the relay's own copy (the renderer then draws 150 ms behind), the player list only when it changes, then a compact format (quaternions, rounded positions) and one compression per update for everyone. Target: under 5 KB/s per viewer. *Built in ADR-017, at ten a second and 200 ms: 5.0 KB/s.*
 - **The screen's live data on the same socket**: the relay fetches the shared part of the status once a second and pushes it, retiring the 1.5 s polling of every viewer; its viewer count replaces the panel's.
 - **Tickets**, if hotlinking or abuse shows up: short-lived, one use, from the site.

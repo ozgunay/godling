@@ -26,6 +26,7 @@ run_godling.py runs `follow` beside the world, in a process of its own, so packi
 """
 import datetime as dt
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -456,8 +457,13 @@ class _Segment:
         chunk = {"format": FORMAT, "segment": self.id, "t0": t0, "t1": self.frames[-1]["t"] + FRAME_MS, "rate": RATE,
                  "frames": self.frames}
         rel = chunk_rel(t0)
-        _write_atomic(self.packer.root / rel, gzip.compress(json.dumps(chunk, separators=(",", ":")).encode(), 9, mtime=0))
-        self.packer.store.put(rel)
+        # A chunk never changes once written (browsers keep it for good). One already there, here or up in the bucket,
+        # is left as it is: after a restore (ADR-018) the packer may pack a window again from a recording since trimmed.
+        up = self.packer.store.uploaded_until()
+        if not (self.packer.root / rel).exists() and not (up is not None and t0 < up):
+            _write_atomic(self.packer.root / rel,
+                          gzip.compress(json.dumps(chunk, separators=(",", ":")).encode(), 9, mtime=0))
+            self.packer.store.put(rel)
         self.info["end"] = chunk["t1"]
         self.info["chunks"] = self.info.get("chunks", 0) + 1
         self.window_t0, self.frames = None, []
@@ -662,6 +668,7 @@ class Packer:
         self.saved_at = 0
         self.warned_at = 0
         self.marks = []
+        self.appended = set()  # files added to since this packer started (_append_new)
         self.marked = {}  # marker (or the event it is about) -> when it was set: one event often says itself twice
         self.index_was = None
 
@@ -767,8 +774,8 @@ class Packer:
         if t >= self.state["sky_next"] and seg.clock_id is not None:
             a = ents[seg.clock_id].get("attributes") or {}
             day, _ = day_hour(t)
-            _append(self.root / f"sky/{day}.jsonl", [{"t": t, "hour": a.get("TimeOfDay"), "day": a.get("Day"),
-                                                       "rain": a.get("Rain") or 0, "fog": a.get("Fog") or 0}])
+            self._append_new(self.root / f"sky/{day}.jsonl", [{"t": t, "hour": a.get("TimeOfDay"), "day": a.get("Day"),
+                                                                "rain": a.get("Rain") or 0, "fog": a.get("Fog") or 0}])
             self.state["sky_next"] = t - t % SKY_EVERY_MS + SKY_EVERY_MS
         # Faints: the world counts them on Godling (none until the first). The players' order is not fixed, and the
         # guest panel's bodiless Sky is one of them: the most faints any player has.
@@ -785,13 +792,19 @@ class Packer:
         if not path.exists():
             return
         offset = self.state["log_offset"]
-        if path.stat().st_size < offset:  # a new log
-            offset = 0
         with path.open("rb") as f:
+            head = hashlib.sha1(f.readline(4096)).hexdigest()  # the log's first line: which log this is
+            size = f.seek(0, 2)
+            if size < offset:
+                # Shorter than where the packer got to. The same log, put back by a restore (ADR-018), whose end the
+                # packer had passed: on from its end. Any other log is a new one, from its start.
+                offset = size if head == self.state.get("log_head") else 0
             f.seek(offset)
             data = f.read(8_000_000)
+        self.state["log_head"] = head
         end = data.rfind(b"\n")
         if end < 0:
+            self.state["log_offset"] = offset  # nothing new yet: on from here (a restored log's end, or a new log's start)
             return
         hours = {}
         for line in data[:end].decode("utf-8", "replace").splitlines():
@@ -819,7 +832,7 @@ class Packer:
         if len(self.marked) > 2000:  # events long past cannot come again
             self.marked = {k: v for k, v in self.marked.items() if v > max(self.marked.values()) - 86_400_000}
         for rel, entries in hours.items():
-            _append(self.root / rel, entries)
+            self._append_new(self.root / rel, entries)
         self.state["log_offset"] = offset + end + 1
         self._flush_marks()
         self._save()  # at once: the tracks were appended, and must not be appended again after a restart
@@ -829,8 +842,21 @@ class Packer:
         for m in self.marks:
             by_day.setdefault(day_hour(m["t"])[0], []).append(m)
         for day, marks in by_day.items():
-            _append(self.root / f"marks/{day}.jsonl", marks)
+            self._append_new(self.root / f"marks/{day}.jsonl", marks)
         self.marks = []
+
+    def _append_new(self, path, entries):
+        """Appends, leaving out the first time in this run of the packer what the file already ends with. A backup
+        reads the run's files one by one while they grow (ADR-018), so a restored state.json may be a little behind
+        the tracks, markers and sky it was restored with, and the packer then reads those lines of the log again."""
+        if path not in self.appended:
+            self.appended.add(path)
+            if entries and path.exists():
+                with path.open("rb") as f:
+                    f.seek(max(0, f.seek(0, 2) - 262_144))
+                    tail = set(f.read().decode("utf-8", "replace").splitlines())
+                entries = [e for e in entries if json.dumps(e, separators=(",", ":")) not in tail]
+        _append(path, entries)
 
     def _write_index(self):
         segments = [{"id": sid, "start": info["start"], "end": info["end"], "live": not info.get("done")}

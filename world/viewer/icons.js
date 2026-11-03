@@ -169,16 +169,18 @@ const DRAW = {
     return outline(rows(['.RR.RR.', 'RwrRrrR', 'RrrrrrR', '.RrrrR.', '..RrR..', '...R...']))
   },
   heartHalf() {
-    return outline(rows(['.RR.ee.', 'RwrRee.', 'RrrReee', '.RrRee.', '..RRe..', '...R...']).map((r) => r.map((c) => c)))
+    return outline(rows(['.RR.ee.', 'RwrReee', 'RrrReee', '.RrRee.', '..RRe..', '...R...']))
   },
   heartEmpty() {
     return outline(rows(['.ee.ee.', 'eeeeeee', 'eeeeeee', '.eeeee.', '..eee..', '...e...']))
   },
+  // The husk is bark brown, not end grain: on the dark dock end grain vanished, and a full coconut looked smaller than
+  // an empty one. Coconuts fill from the right (viewer.js drawBody), so a half one keeps its right half.
   food() {
-    return outline(rows(['..nnn..', '.nbbbn.', 'nbwwwbn', 'nbwyWbn', '.nbbbn.', '..nnn..']))
+    return outline(rows(['..BBB..', '.BbbbB.', 'BbwwwbB', 'BbwyWbB', '.BbbbB.', '..BBB..']))
   },
   foodHalf() {
-    return outline(rows(['..nee..', '.nbee..', 'nbwee..', 'nbwe...', '.nbee..', '..nee..']))
+    return outline(rows(['..eBB..', '.eebbB.', 'eeewwbB', 'eeeyWbB', '.eebbB.', '..eBB..']))
   },
   foodEmpty() {
     return outline(rows(['..eee..', '.eeeee.', 'eeeeeee', 'eeeeeee', '.eeeee.', '..eee..']))

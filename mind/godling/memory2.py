@@ -10,6 +10,7 @@ Procedural memory (protected proven skills) lives in learned.SkillLibrary.
 import json
 import re
 
+from .files import write_atomic
 from .memory import NativeMemory
 
 MAX_FACTS_PER_SUBJECT = 6
@@ -33,7 +34,7 @@ class BrainMemory(NativeMemory):
 
     def save(self):
         super().save()
-        self.facts_path.write_text(json.dumps(self.facts, indent=2))
+        write_atomic(self.facts_path, json.dumps(self.facts, indent=2))
 
     @staticmethod
     def _subject(about):

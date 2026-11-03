@@ -21,7 +21,7 @@ const MAX_IN: usize = 4 * 1024; // a viewer has nothing to say: pongs, and a clo
 const RESYNCS_KEPT: u32 = 3; // a viewer that falls behind this often cannot keep up: let it reconnect later
 
 /// `?epoch=&since=`: where a returning viewer left off (the last `relay_epoch` and `relay_seq` it saw). `gz=1`: it
-/// can take a whole island gzipped (ADR-017).
+/// takes gzipped frames, the whole island and the updates (ADR-017).
 #[derive(Deserialize)]
 pub struct Resume {
     epoch: Option<u64>,
@@ -72,7 +72,7 @@ pub async fn stream(
 
 async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option<(u64, u64)>, gz: bool) {
     let counters = &app.hub.counters;
-    let (joined, _watching) = app.hub.join(resume);
+    let (joined, _watching) = app.hub.join(resume, gz);
     let (mut rx, mut seq) = (joined.rx, joined.seq);
     let (ping_every, silent_for, within) = (app.config.ping_every, app.config.silent_for, app.config.send_within);
     for frame in joined.first {
@@ -131,8 +131,9 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
     }
 }
 
-/// A frame to one viewer: a whole island gzipped if the page asked for it, everything else as text. Counted for the
-/// monitoring; a send that does not finish within `within` lets the viewer go.
+/// A frame to one viewer: gzipped if the page asked for it and the frame has a gzipped copy (whole islands, updates
+/// and big passed messages), else as text. Counted for the monitoring; a send that does not finish within `within`
+/// lets the viewer go.
 async fn send(socket: &mut WebSocket, frame: &Frame, gz: bool, within: Duration, counters: &Counters) -> bool {
     let (message, bytes) = match (&frame.gz, gz) {
         (Some(packed), true) => (Message::Binary(packed.clone()), packed.len()),

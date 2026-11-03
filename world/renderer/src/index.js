@@ -16,8 +16,10 @@ import { createDust } from './dust.js'
 import { createBlasts } from './blast.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
+import { createFollowCamera } from './followcam.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
+import { createStateBuffer } from './buffer.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -521,9 +523,6 @@ export function createRenderer(ctx) {
     return DEFAULT_SUN
   }
 
-  const interpolationDelayMs = Number.isFinite(captureConfig.interpolationDelayMs)
-    ? Math.max(0, Number(captureConfig.interpolationDelayMs))
-    : 100
   const followPositionSmoothing = Number.isFinite(captureConfig.followPositionSmoothing)
     ? Math.max(0, Number(captureConfig.followPositionSmoothing))
     : 10
@@ -531,24 +530,27 @@ export function createRenderer(ctx) {
     ? Math.max(0, Number(captureConfig.followRotationSmoothing))
     : 14
 
-  const stateBuffer = ctx.runtime.state.createSnapshotBuffer({ maxSnapshots: 8, interpolationDelayMs })
+  // The island is drawn a moment behind the stream, between the states either side (buffer.js): two of the stream's
+  // gaps, so an update that comes late does not leave things standing still; a capture may set its own.
+  const stateBuffer = createStateBuffer({
+    delayMs: Number.isFinite(captureConfig.interpolationDelayMs) ? Math.max(0, Number(captureConfig.interpolationDelayMs)) : undefined,
+  })
+  // The upstream camera controller holds the camera only while the engine's capture (Godling's own view) poses it;
+  // otherwise our follow camera (followcam.js) or our free one (freecam.js) does.
   const cameraModes = ctx.runtime.three.createCameraModeController(THREE, camera, {
     canvas: ctx.canvas,
     stateBuffer,
     debugCamera: false,
-    follow: {
-      followDistance: 20,
-      followHeight: 6,
-      shoulderOffset: 0,
-      positionSmoothing: followPositionSmoothing,
-      rotationSmoothing: followRotationSmoothing,
-    },
     spectatorOffset: new THREE.Vector3(0, 18, -18),
     spectatorBoundsPadding: 8,
   })
   if (cameraModes?.api && ctx.runtime?.internal?.expose) {
     ctx.runtime.internal.expose('camera', cameraModes.api)
   }
+  const followCam = createFollowCamera(THREE, camera, {
+    positionSmoothing: followPositionSmoothing,
+    rotationSmoothing: followRotationSmoothing,
+  })
   // With nobody followed, our own free camera flies (freecam.js). Inside the viewer screen (?embed=1, world/viewer)
   // the page around the island is hidden and the screen picks the camera: follow Godling, or fly free with the keys
   // it forwards.
@@ -1063,12 +1065,17 @@ export function createRenderer(ctx) {
       freeCam.update(dt)
     } else {
       freeCam.leave()
-      cameraModes.update({
-        mode: cameraMode,
-        targetPosition: cameraTarget,
-        targetForward: tmpForward,
-        dt,
-      })
+      const held = cameraModes?.spectator?.state
+      if (held?.poseOverride || held?.attach) {
+        cameraModes.update({
+          mode: cameraMode,
+          targetPosition: cameraTarget,
+          targetForward: tmpForward,
+          dt,
+        })
+      } else {
+        followCam.update(cameraTarget, dt)
+      }
     }
 
     return { seaLevel, land, landKey: landKey.join(';'), cameraTarget, swimming }
@@ -1162,6 +1169,8 @@ export function createRenderer(ctx) {
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
+    state: () => latestObs, // the island as last drawn: between two updates, as interpolated
+    delay: () => stateBuffer.delayMs(), // how far behind the stream it is drawn, in ms
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
@@ -1172,6 +1181,7 @@ export function createRenderer(ctx) {
     onResize({ width, height, dpr }) {
       viewport = { width, height, dpr: Number.isFinite(dpr) ? dpr : (globalThis.devicePixelRatio || 1) }
       camera.aspect = width / Math.max(1, height)
+      camera.fov = followCam.frame(camera.aspect).fov // wider on a tall screen, for the free camera too
       camera.updateProjectionMatrix()
       applyResolution()
       csm?.updateFrustums()

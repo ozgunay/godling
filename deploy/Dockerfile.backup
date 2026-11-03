@@ -1,0 +1,8 @@
+# Backups (ADR-018): restic, and Postgres's own client of the server's major version (postgres:16 in
+# docker-compose.yml), which pg_dump and pg_restore need. deploy/backup.sh does the rest. Build context: the repo root.
+FROM postgres:16-alpine
+RUN apk add --no-cache restic && restic version
+COPY deploy/backup.sh /usr/local/bin/backup
+RUN chmod +x /usr/local/bin/backup && mkdir -p /cache /metrics /backups
+ENTRYPOINT ["/usr/local/bin/backup"]
+CMD ["serve"]
