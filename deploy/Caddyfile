@@ -8,9 +8,29 @@
 # act as a signed-in viewer, and only the site may frame it.
 # Its stream comes from the relay (ADR-015): one connection to the world, however many watch. The spectator token
 # stays on the server: Caddy hands it to the world, the relay holds its own, and the public link carries none.
+# Behind Cloudflare (ADR-017), the viewer's address is the one Cloudflare forwards, believed only from Cloudflare.
+{
+	# Request counts, sizes and durations per host, for the monitoring (deploy/monitoring), on :2020 below.
+	metrics
+	servers {
+		# Proxies in front of Caddy whose word on the viewer's address counts: Cloudflare's ranges in
+		# GODLING_PROXY_RANGES when it is in front (deploy/README.md), none otherwise (TEST-NET-1 matches nobody).
+		trusted_proxies static {$GODLING_PROXY_RANGES:192.0.2.0/32}
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# Every app behind Caddy hears exactly one address, the viewer's ({client_ip}: Cloudflare's word for it if Cloudflare
+# is in front, the connection's otherwise), never a chain a client wrote: the site and the relay trust one proxy.
+(viewer_address) {
+	header_up X-Forwarded-For {client_ip}
+}
+
 {$GODLING_DOMAIN} {
 	encode zstd gzip
-	reverse_proxy site:8000
+	reverse_proxy site:8000 {
+		import viewer_address
+	}
 }
 
 {$GODLING_ISLAND_DOMAIN} {
@@ -22,13 +42,16 @@
 
 	@stream path /island/spectate/ws
 	handle @stream {
-		reverse_proxy relay:8082
+		reverse_proxy relay:8082 {
+			import viewer_address
+		}
 	}
 	# The page and what it fetches. Not /island/spectate: the page never asks for it, and each call would have the
 	# world build the whole island.
 	@island path /island /island/ /island/ui /island/ui/* /island/spectate/chat/messages /island/renderer/manifest /island/replay/info /island/renderer-files/* /island/assets/* /island/static/*
 	handle @island {
 		reverse_proxy island:8080 {
+			import viewer_address
 			header_up X-Spectator-Token {$GODLING_SPECTATOR_TOKEN}
 		}
 	}
@@ -47,4 +70,9 @@
 	handle {
 		respond 404
 	}
+}
+
+# Caddy's metrics for Prometheus, inside Compose's network only: this port is not published.
+:2020 {
+	metrics
 }

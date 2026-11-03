@@ -1,20 +1,25 @@
 """Credits: welcome credits once, buying packs through Stripe (mocked) or the development checkout, credited once, and
-Stripe's refunds and disputes taken back exactly, whatever order and however often Stripe tells of them."""
+Stripe's refunds and disputes taken back exactly, whatever order and however often Stripe tells of them; and live keys
+waiting for an outside security review."""
 import hashlib
 import hmac
 import json
+import os
 import re
+import subprocess
+import sys
 import time
 from types import SimpleNamespace
 from unittest import mock
 
 import stripe
+from django.conf import settings
 from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import Client, TestCase, TransactionTestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 
 from apps.credits import services
@@ -545,3 +550,25 @@ class StripeErrorTests(TestCase):
         self.assertTrue(issubclass(stripe.SignatureVerificationError, Exception))
         self.assertTrue(issubclass(stripe.StripeError, Exception))
         self.assertTrue(issubclass(stripe.APIConnectionError, stripe.StripeError))
+
+
+class LivePaymentsWaitForAReviewTests(SimpleTestCase):
+    """The money gate (godling_web/settings.py, ADR-017): live Stripe keys stop the site from starting until an outside
+    security review is named. Run as the site starts: `manage.py check` in a fresh process."""
+
+    def check(self, **env):
+        clean = {k: v for k, v in os.environ.items() if not k.startswith(("GODLING_STRIPE", "GODLING_SECURITY"))}
+        return subprocess.run([sys.executable, "manage.py", "check"], cwd=settings.BASE_DIR, capture_output=True,
+                              text=True, timeout=120, env={**clean, "GODLING_SECRET_KEY": "check", "GODLING_DEBUG": "0", **env})
+
+    def test_live_keys_wait_for_a_review(self):
+        refused = self.check(GODLING_STRIPE_SECRET_KEY="sk_live_51abc")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("outside security review", refused.stderr)
+        reviewed = self.check(GODLING_STRIPE_SECRET_KEY="sk_live_51abc",
+                              GODLING_SECURITY_REVIEW="Example Security, 2026-12-01, report in the shared drive")
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
+
+    def test_test_keys_and_none_need_no_review(self):
+        self.assertEqual(self.check(GODLING_STRIPE_SECRET_KEY="sk_test_51abc").returncode, 0)
+        self.assertEqual(self.check().returncode, 0)

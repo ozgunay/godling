@@ -1,0 +1,8 @@
+# Advisories in Clawblox's lock file (8be90a0 + v0..v4) that do not reach the island, reviewed 2026-11-02 (ADR-017).
+# The dependency audit (.github/workflows/audit.yml) passes these to cargo audit as --ignore. One ID a line, then why.
+# Look again when Clawblox moves on, or when one of these crates turns up in something Godling uses.
+RUSTSEC-2025-0020  # pyo3: only in Clawblox's Python bindings crate, not in the clawblox binary (cargo tree -i pyo3)
+RUSTSEC-2026-0177  # pyo3: the same
+RUSTSEC-2023-0071  # rsa (Marvin attack): only through sqlx's MySQL driver, not compiled into the clawblox binary
+RUSTSEC-2026-0194  # quick-xml: only rust-s3's replies (recordings to R2), from a store we would set up; Godling sets none
+RUSTSEC-2026-0195  # quick-xml: the same; fixing it needs rust-s3's next major version

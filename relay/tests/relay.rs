@@ -168,12 +168,16 @@ fn seq(message: &Value) -> u64 {
     message["relay_seq"].as_u64().expect("every message from the world carries its place")
 }
 
-async fn relay_status(port: u16) -> Value {
+async fn http_get(port: u16, path: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    stream.write_all(b"GET /relay/status HTTP/1.1\r\nHost: relay\r\nConnection: close\r\n\r\n").await.unwrap();
+    stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: relay\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
-    serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap()
+    response.split("\r\n\r\n").nth(1).unwrap().to_string()
+}
+
+async fn relay_status(port: u16) -> Value {
+    serde_json::from_str(&http_get(port, "/relay/status").await).unwrap()
 }
 
 #[tokio::test]
@@ -333,6 +337,17 @@ async fn the_status_counts_viewers_and_says_when_the_world_will_not_stream() {
     assert_eq!(relay_status(wrong).await["world"], "down");
 }
 
+/// The next message, binary or text, as bytes.
+async fn next_raw(viewer: &mut Viewer) -> WsMessage {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), viewer.next()).await.expect("a message within 5 s");
+        let message = message.expect("the stream goes on").expect("a good message");
+        if message.is_text() || message.is_binary() {
+            return message;
+        }
+    }
+}
+
 /// What a scripted world does with one of the relay's connections.
 #[derive(Clone, Copy, Debug)]
 enum Visit {
@@ -396,6 +411,82 @@ async fn next_within(viewer: &mut Viewer, within: Duration) -> Option<Value> {
             Ok(Some(Ok(_))) => {}
         }
     }
+}
+
+#[tokio::test]
+async fn a_page_that_asks_gets_the_whole_island_gzipped() {
+    let ids: Vec<u64> = (1..=400).collect();
+    let (world_port, world) = start_world(island(1, &ids)).await;
+    let relay = start_relay(world_port, |_| {}).await;
+    let mut plain = viewer(relay, "").await;
+    let text = whole(&mut plain).await;
+    let mut packed = viewer(relay, "?gz=1").await;
+    let mut got = None;
+    while got.is_none() {
+        if let WsMessage::Binary(bytes) = next_raw(&mut packed).await {
+            got = Some(bytes);
+        }
+    }
+    let bytes = got.unwrap();
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b], "gzip");
+    let mut json = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut json).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&json).unwrap(), text, "the same island");
+    assert!(bytes.len() * 5 < json.len(), "much smaller: {} bytes for {}", bytes.len(), json.len());
+    world.push(delta(2, json!([{"id": 1, "p": [2, 0, 0]}])));
+    match next_raw(&mut packed).await {
+        WsMessage::Text(update) => assert!(update.as_str().contains("\"spectator_delta\""), "updates stay text"),
+        other => panic!("an update came as {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn connecting_again_and_again_is_refused_for_a_while() {
+    let (world_port, _world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| {
+        config.max_per_ip = 3; // also the burst of openings one address has
+        config.connects_per_minute = 6;
+    })
+    .await;
+    for _ in 0..3 {
+        let mut quick = viewer(relay, "").await;
+        whole(&mut quick).await;
+        drop(quick); // in and out again, as a script hammering the relay would
+    }
+    match connect(relay, "", None).await {
+        Err(WsError::Http(response)) => {
+            assert_eq!(response.status().as_u16(), 429);
+            assert!(response.headers().contains_key("retry-after"));
+        }
+        other => panic!("a fourth connection at once was let in: {}", other.is_ok()),
+    }
+    let metrics = http_get(relay, "/metrics").await;
+    assert!(metrics.contains("godling_relay_refused_total{reason=\"rate\"} 1"), "{metrics}");
+}
+
+#[tokio::test]
+async fn metrics_count_what_happened() {
+    let (world_port, world) = start_world(island(1, &[1, 2])).await;
+    let relay = start_relay(world_port, |config| config.origins = vec!["http://island.test".into()]).await;
+    let _refused = connect(relay, "", None).await;
+    let mut watching = connect(relay, "", Some("http://island.test")).await.unwrap();
+    whole(&mut watching).await;
+    world.push(delta(2, json!([])));
+    next_world(&mut watching).await;
+    let metrics = http_get(relay, "/metrics").await;
+    for line in [
+        "godling_relay_viewers 1",
+        "godling_relay_max_viewers 100",
+        "godling_relay_world_up 1",
+        "godling_relay_connections_total 1",
+        "godling_relay_refused_total{reason=\"origin\"} 1",
+        "godling_relay_world_connections_total 1",
+        "# TYPE godling_relay_sent_bytes_total counter",
+    ] {
+        assert!(metrics.lines().any(|l| l == line || l.starts_with(line)), "missing {line:?} in\n{metrics}");
+    }
+    let sent: u64 = metrics.lines().find_map(|l| l.strip_prefix("godling_relay_sent_bytes_total ")).unwrap().parse().unwrap();
+    assert!(sent > 100, "bytes counted: {sent}");
 }
 
 /// Whether the relay ends this viewer's stream within `within` (whatever it still sends before).

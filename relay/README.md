@@ -28,7 +28,8 @@ the part of the island the whole internet talks to holds the spectator token and
 
 ## What a viewer gets
 The stream Clawblox's page already speaks, so the page works through the relay unchanged:
-- first the whole island (no `type`), with `relay_epoch` and `relay_seq`;
+- first the whole island (no `type`), with `relay_epoch` and `relay_seq`; a page that asks with `?gz=1` gets it as one
+  gzipped binary message instead, made once for everyone (276 KB becomes about 17);
 - then the world's messages in order (`spectator_delta`, `chat_message`, speech, audio), each with its `relay_seq`;
 - and the relay's own news, `{"type":"relay","world":"up"|"down","viewers":n,…}`, on connecting, when the world goes
   down or comes back, and every five seconds.
@@ -39,3 +40,7 @@ holds the updates after that place, it sends only those; otherwise the whole isl
 
 `GET /relay/status` gives the world, the epoch and place, the tick, the entities, how many watch, and how many came
 back by resuming or had to be handed the whole island again.
+
+`GET /metrics` gives the same and more in Prometheus' format, for the monitoring (`deploy/monitoring`): viewers and the
+cap, the world up or down, connections, refusals by reason (origin, busy, address, rate), viewers let go by reason
+(slow, silent, send), resumes, resyncs, bytes and messages sent. Caddy passes neither on from outside.

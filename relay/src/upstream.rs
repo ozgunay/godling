@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::hub::Hub;
+use crate::hub::{Counters, Hub};
 
 const RETRY_FIRST: Duration = Duration::from_millis(500);
 const RETRY_MOST: Duration = Duration::from_secs(10);
@@ -53,6 +53,7 @@ async fn watch(hub: &Hub, url: &str, token: &str, quiet: Duration) -> Result<boo
             Message::Close(_) => return Ok(seen),
             _ => continue, // the library answers pings itself
         };
+        Counters::add(&hub.counters.world_messages, 1);
         let Ok(Value::Object(fields)) = serde_json::from_str::<Value>(text) else { continue };
         if let Some(error) = fields.get("error") {
             return Err(format!("the world says {error}")); // "World ended": it is stopping

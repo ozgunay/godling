@@ -14,7 +14,9 @@ Set by the environment:
   RELAY_CONNECTS_PER_MINUTE  new sockets one address may open a minute after that burst (default 60)
   RELAY_TRUSTED_PROXIES   proxies of ours in front, whose X-Forwarded-For is believed (default 0)
   RELAY_BUFFER            frames a viewer may fall behind before a resync (default 256)
-  RELAY_RESUME_FRAMES     updates kept for viewers coming back (default 300)";
+  RELAY_RESUME_FRAMES     updates kept for viewers coming back (default 300)
+
+GET /metrics gives the counts in Prometheus' format; GET <base>/relay/status, the world and the viewers as JSON.";
 
 #[tokio::main]
 async fn main() {

@@ -7,24 +7,26 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::hub::Kind;
+use crate::hub::{Counters, Frame, Kind};
 use crate::App;
 
 const MAX_IN: usize = 4 * 1024; // a viewer has nothing to say: pongs, and a close
 const RESYNCS_KEPT: u32 = 3; // a viewer that falls behind this often cannot keep up: let it reconnect later
 
-/// `?epoch=&since=`: where a returning viewer left off (the last `relay_epoch` and `relay_seq` it saw).
+/// `?epoch=&since=`: where a returning viewer left off (the last `relay_epoch` and `relay_seq` it saw). `gz=1`: it
+/// can take a whole island gzipped (ADR-017).
 #[derive(Deserialize)]
 pub struct Resume {
     epoch: Option<u64>,
     since: Option<u64>,
+    gz: Option<String>,
 }
 
 /// GET `/spectate/ws`: checks who may watch, then hands the socket over.
@@ -35,32 +37,46 @@ pub async fn stream(
     Query(resume): Query<Resume>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let counters = &app.hub.counters;
     if !app.config.origins.is_empty() {
         // Browsers always send the page's origin: another site cannot show our stream as its own. A host name has no
         // case, so neither does the match (a domain written with capitals in .env still matches the browser's).
         let origin = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()).unwrap_or("");
         if !app.config.origins.iter().any(|allowed| allowed.eq_ignore_ascii_case(origin)) {
+            Counters::add(&counters.refused_origin, 1);
             return (StatusCode::FORBIDDEN, "This stream is watched from the island's own page.").into_response();
         }
     }
     let ip = client_ip(&headers, peer, app.config.trusted_proxies);
     let seat = match app.seats.take(ip, Instant::now()) {
         Ok(seat) => seat,
-        Err(code) => return (code, "Too many viewers right now: try again in a moment.").into_response(),
+        Err(refusal) => {
+            let (counter, code, words) = match refusal {
+                Refusal::Busy => (&counters.refused_busy, StatusCode::SERVICE_UNAVAILABLE,
+                                  "Too many viewers right now: try again in a moment."),
+                Refusal::Address => (&counters.refused_address, StatusCode::TOO_MANY_REQUESTS, "Too many sockets from here."),
+                Refusal::Rate => (&counters.refused_rate, StatusCode::TOO_MANY_REQUESTS, "Connecting too often: wait a moment."),
+            };
+            Counters::add(counter, 1);
+            return (code, [(header::RETRY_AFTER, "10")], words).into_response();
+        }
     };
+    Counters::add(&counters.connections, 1);
+    let gz = resume.gz.as_deref() == Some("1");
     let resume = resume.epoch.zip(resume.since);
     upgrade
         .max_message_size(MAX_IN)
         .max_frame_size(MAX_IN)
-        .on_upgrade(move |socket| watch(socket, app, seat, resume))
+        .on_upgrade(move |socket| watch(socket, app, seat, resume, gz))
 }
 
-async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option<(u64, u64)>) {
+async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option<(u64, u64)>, gz: bool) {
+    let counters = &app.hub.counters;
     let (joined, _watching) = app.hub.join(resume);
     let (mut rx, mut seq) = (joined.rx, joined.seq);
     let (ping_every, silent_for, within) = (app.config.ping_every, app.config.silent_for, app.config.send_within);
     for frame in joined.first {
-        if !send(&mut socket, frame.text, within).await {
+        if !send(&mut socket, &frame, gz, within, counters).await {
             return;
         }
     }
@@ -77,19 +93,20 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
                         }
                         seq = frame.seq;
                     }
-                    if !send(&mut socket, frame.text, within).await {
+                    if !send(&mut socket, &frame, gz, within, counters).await {
                         return;
                     }
                 }
                 Err(RecvError::Lagged(_)) => {
                     resyncs += 1;
                     if resyncs > RESYNCS_KEPT {
+                        Counters::add(&counters.dropped_slow, 1);
                         return;
                     }
                     let (whole, at) = app.hub.resync();
                     seq = at;
                     if let Some(whole) = whole {
-                        if !send(&mut socket, whole.text, within).await {
+                        if !send(&mut socket, &whole, gz, within, counters).await {
                             return;
                         }
                     }
@@ -102,9 +119,11 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
             },
             _ = ping.tick() => {
                 if heard.elapsed() > silent_for {
+                    Counters::add(&counters.dropped_silent, 1);
                     return;
                 }
                 if !matches!(tokio::time::timeout(within, socket.send(Message::Ping(Bytes::new()))).await, Ok(Ok(()))) {
+                    Counters::add(&counters.dropped_send, 1);
                     return;
                 }
             }
@@ -112,8 +131,21 @@ async fn watch(mut socket: WebSocket, app: Arc<App>, _seat: Seat, resume: Option
     }
 }
 
-async fn send(socket: &mut WebSocket, text: Utf8Bytes, within: Duration) -> bool {
-    matches!(tokio::time::timeout(within, socket.send(Message::Text(text))).await, Ok(Ok(())))
+/// A frame to one viewer: a whole island gzipped if the page asked for it, everything else as text. Counted for the
+/// monitoring; a send that does not finish within `within` lets the viewer go.
+async fn send(socket: &mut WebSocket, frame: &Frame, gz: bool, within: Duration, counters: &Counters) -> bool {
+    let (message, bytes) = match (&frame.gz, gz) {
+        (Some(packed), true) => (Message::Binary(packed.clone()), packed.len()),
+        _ => (Message::Text(frame.text.clone()), frame.text.len()),
+    };
+    let sent = matches!(tokio::time::timeout(within, socket.send(message)).await, Ok(Ok(())));
+    if sent {
+        Counters::add(&counters.sent_frames, 1);
+        Counters::add(&counters.sent_bytes, bytes as u64);
+    } else {
+        Counters::add(&counters.dropped_send, 1);
+    }
+    sent
 }
 
 /// The viewer's address: the connection's, or behind `trusted` proxies of ours (Caddy), the one they forwarded.
@@ -165,6 +197,15 @@ struct Address {
     at: Instant,
 }
 
+/// Why a viewer is not let in: every seat taken, its address holding its share, or opening sockets too fast. Each has
+/// its own counter in `/metrics` and its own words.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refusal {
+    Busy,
+    Address,
+    Rate,
+}
+
 /// Addresses remembered before the idle ones (no socket, bucket full again) are forgotten.
 const ADDRESSES_KEPT: usize = 4096;
 
@@ -185,12 +226,12 @@ impl Seats {
         }
     }
 
-    fn take(self: &Arc<Self>, ip: IpAddr, now: Instant) -> Result<Seat, StatusCode> {
+    fn take(self: &Arc<Self>, ip: IpAddr, now: Instant) -> Result<Seat, Refusal> {
         let ip = bucket(ip);
         let burst = self.most_per_ip.max(1) as f64;
         let mut book = self.book.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.taken.load(Ordering::Relaxed) >= self.most {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
+            return Err(Refusal::Busy);
         }
         if book.len() >= ADDRESSES_KEPT {
             let refill = self.refill_per_sec;
@@ -199,8 +240,11 @@ impl Seats {
         let here = book.entry(ip).or_insert(Address { seats: 0, openings: burst, at: now });
         here.openings = (here.openings + now.duration_since(here.at).as_secs_f64() * self.refill_per_sec).min(burst);
         here.at = now;
-        if here.seats >= self.most_per_ip || here.openings < 1.0 {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
+        if here.seats >= self.most_per_ip {
+            return Err(Refusal::Address);
+        }
+        if here.openings < 1.0 {
+            return Err(Refusal::Rate);
         }
         here.openings -= 1.0;
         here.seats += 1;
@@ -273,9 +317,9 @@ mod tests {
         let (a, b): (IpAddr, IpAddr) = ("1.1.1.1".parse().unwrap(), "2.2.2.2".parse().unwrap());
         let first = seats.take(a, now).unwrap();
         let _second = seats.take(a, now).unwrap();
-        assert_eq!(seats.take(a, now).err(), Some(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(seats.take(a, now).err(), Some(Refusal::Address));
         let _third = seats.take(b, now).unwrap();
-        assert_eq!(seats.take(b, now).err(), Some(StatusCode::SERVICE_UNAVAILABLE));
+        assert_eq!(seats.take(b, now).err(), Some(Refusal::Busy));
         drop(first);
         assert!(seats.take(a, now + Duration::from_secs(1)).is_ok(), "a seat given back is free again");
     }
@@ -288,9 +332,9 @@ mod tests {
         for _ in 0..4 {
             drop(seats.take(ip, now).unwrap()); // opened and closed at once, as a loop would
         }
-        assert_eq!(seats.take(ip, now).err(), Some(StatusCode::TOO_MANY_REQUESTS), "the burst is spent");
+        assert_eq!(seats.take(ip, now).err(), Some(Refusal::Rate), "the burst is spent");
         assert!(seats.take(ip, now + Duration::from_millis(1100)).is_ok(), "one more a second later");
-        assert_eq!(seats.take(ip, now + Duration::from_millis(1200)).err(), Some(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(seats.take(ip, now + Duration::from_millis(1200)).err(), Some(Refusal::Rate));
     }
 
     #[test]
@@ -300,7 +344,7 @@ mod tests {
         let _one = seats.take("2001:db8:1:2::1".parse().unwrap(), now).unwrap();
         let _two = seats.take("2001:db8:1:2:ffff::9".parse().unwrap(), now).unwrap();
         let third = seats.take("2001:db8:1:2:abcd:1234:5678:9abc".parse().unwrap(), now);
-        assert_eq!(third.err(), Some(StatusCode::TOO_MANY_REQUESTS), "the same /64");
+        assert_eq!(third.err(), Some(Refusal::Address), "the same /64");
         assert!(seats.take("2001:db8:1:3::1".parse().unwrap(), now).is_ok(), "another /64");
         assert_eq!(bucket("::ffff:81.2.3.4".parse().unwrap()), "81.2.3.4".parse::<IpAddr>().unwrap());
     }

@@ -1,0 +1,25 @@
+# Dependabot proposes dependency updates as pull requests every week (ADR-017); Checks and the dependency audit run on
+# each. Minor and patch updates come grouped, one pull request per ecosystem; major ones each on their own.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /relay
+    schedule: {interval: weekly}
+    groups: {minor-and-patch: {update-types: [minor, patch]}}
+  - package-ecosystem: pip
+    directory: /web
+    schedule: {interval: weekly}
+    groups: {minor-and-patch: {update-types: [minor, patch]}}
+  - package-ecosystem: npm
+    directory: /world/renderer
+    schedule: {interval: weekly}
+    groups: {minor-and-patch: {update-types: [minor, patch]}}
+  - package-ecosystem: docker # the base images in deploy/Dockerfile.*
+    directory: /deploy
+    schedule: {interval: weekly}
+  - package-ecosystem: docker-compose # Postgres, Redis, Caddy and the monitoring's images
+    directory: /deploy
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions # the pinned actions in .github/workflows
+    directory: /
+    schedule: {interval: weekly}

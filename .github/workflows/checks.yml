@@ -1,0 +1,60 @@
+# Every pull request and every push to main: the relay's lints, and the deployment's configs as their own tools read
+# them (Caddy, Prometheus, Alertmanager, Compose). ADR-017. The test suites themselves are in tests.yml.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    name: Stream relay (clippy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lints, warnings as errors
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  deploy:
+    name: Deployment configs
+    runs-on: ubuntu-latest
+    env:
+      GODLING_DOMAIN: godling.example.com
+      GODLING_ISLAND_DOMAIN: island.godling.example.com
+      GODLING_SPECTATOR_TOKEN: checks-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Caddyfile, without and with Cloudflare's ranges
+        run: |
+          for ranges in "" "173.245.48.0/20 2400:cb00::/32"; do
+            docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" -e GODLING_DOMAIN -e GODLING_ISLAND_DOMAIN \
+              -e GODLING_SPECTATOR_TOKEN -e "GODLING_PROXY_RANGES=$ranges" caddy:2 \
+              caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done
+      - name: Prometheus config, alert rules and their tests
+        run: |
+          image=$(grep -o 'quay.io/prometheus/prometheus:[^ ]*' deploy/docker-compose.yml)
+          docker run --rm -v "$PWD/deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint promtool "$image" \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/deploy/monitoring:/m:ro" -w /m --entrypoint promtool "$image" test rules alerts.test.yml
+      - name: Alertmanager config, as start.sh writes it
+        run: |
+          image=$(grep -o 'quay.io/prometheus/alertmanager:[^ ]*' deploy/docker-compose.yml)
+          docker run --rm -v "$PWD/deploy/monitoring/alertmanager:/etc/alertmanager:ro" -e GODLING_ALERT_EMAIL=ops@example.com \
+            -e GODLING_EMAIL_HOST=smtp.example.com --entrypoint /bin/sh "$image" -c \
+            "sed 's|^exec /bin/alertmanager.*|amtool check-config /tmp/alertmanager.yml|' /etc/alertmanager/start.sh > /tmp/s.sh && sh /tmp/s.sh"
+      - name: Compose file
+        env:
+          GODLING_SECRET_KEY: checks-only
+          GODLING_DB_PASSWORD: checks-only
+          GODLING_PANEL_KEY: checks-only
+          DEEPSEEK_API_KEY: checks-only
+        run: docker compose -f deploy/docker-compose.yml config --quiet

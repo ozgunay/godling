@@ -116,6 +116,7 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
     let router = Router::new()
         .route(&format!("{base}/spectate/ws"), get(viewer::stream))
         .route(&format!("{base}/relay/status"), get(status))
+        .route("/metrics", get(metrics))
         .with_state(app);
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown)
@@ -125,4 +126,10 @@ pub async fn run(config: Config, listener: TcpListener, shutdown: impl Future<Ou
 /// GET `/relay/status`: the world, the stream, and how many watch (for the screen's watcher count and the admin).
 async fn status(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
     Json(app.hub.report())
+}
+
+/// GET `/metrics`: Prometheus' text format, scraped by the monitoring inside Compose's network (deploy/monitoring).
+/// Like the status, Caddy never passes it on from outside.
+async fn metrics(State(app): State<Arc<App>>) -> ([(axum::http::HeaderName, &'static str); 1], String) {
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")], app.hub.metrics(app.config.max_viewers))
 }

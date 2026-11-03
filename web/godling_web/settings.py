@@ -137,6 +137,10 @@ ACCOUNT_EMAIL_VERIFICATION = "mandatory"  # no signing in until the email is con
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_PREVENT_ENUMERATION = True  # don't tell who is registered
 ACCOUNT_ADAPTER = "apps.users.adapter.AccountAdapter"  # reserved usernames, disposable domains
+ACCOUNT_FORMS = {"signup": "apps.users.forms.SignupForm"}  # with Cloudflare Turnstile, when its keys are set
+# Cloudflare Turnstile on sign-up (ADR-017): on when both keys are set (Cloudflare's dashboard, Turnstile).
+GODLING_TURNSTILE_SITE_KEY = os.environ.get("GODLING_TURNSTILE_SITE_KEY", "")
+GODLING_TURNSTILE_SECRET_KEY = os.environ.get("GODLING_TURNSTILE_SECRET_KEY", "")
 ACCOUNT_LOGOUT_ON_GET = False  # sign out only by POST
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 ACCOUNT_EMAIL_SUBJECT_PREFIX = "[Godling] "
@@ -177,6 +181,14 @@ GODLING_PANEL_KEY = os.environ.get("GODLING_PANEL_KEY", "")
 GODLING_CURRENCY = os.environ.get("GODLING_CURRENCY", "eur")
 GODLING_STRIPE_SECRET_KEY = os.environ.get("GODLING_STRIPE_SECRET_KEY", "")
 GODLING_STRIPE_WEBHOOK_SECRET = os.environ.get("GODLING_STRIPE_WEBHOOK_SECRET", "")
+# Real money waits for an outside security review (ADR-017, deploy/security-review.md): with live Stripe keys the site
+# does not start until GODLING_SECURITY_REVIEW says whose review cleared it (a name, a date, the report).
+GODLING_SECURITY_REVIEW = os.environ.get("GODLING_SECURITY_REVIEW", "").strip()
+if GODLING_STRIPE_SECRET_KEY.startswith(("sk_live_", "rk_live_")) and not GODLING_SECURITY_REVIEW:
+    raise RuntimeError("Live Stripe keys need an outside security review first (deploy/security-review.md): set "
+                       "GODLING_SECURITY_REVIEW to who reviewed the site, when, and where the report is.")
+# The island as the public reaches it, on its own origin (ADR-014), e.g. https://island.godling.example/island (no
+# slash after /island: that is where the world serves its page under a base path); empty, the panel's own.
 # The island as the public reaches it, on its own origin (ADR-014) and with no token in it (ADR-015: Caddy and the
 # relay hold it), e.g. https://island.godling.example/island (no slash after /island: that is where the world serves
 # its page under a base path). Empty, the panel's own, which carries the token: development only.

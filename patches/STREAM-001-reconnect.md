@@ -21,6 +21,8 @@
 6. **The relay's news** (`{"type":"relay"}`) sets the status line ("The island is restarting…") and is passed on.
 7. **The renderer hears the stream's state**: `renderer.onConnection({state, world})` when it has one (live, connecting, reconnecting, paused). Godling's renderer passes it to the viewers' screen.
 8. **`?stream_port=`** points the socket at a relay on the page's own host (a local run, `run_godling.py --relay`); never another host.
+9. **Gzipped islands** (ADR-017): the page asks for them (`gz=1`, when the browser has `DecompressionStream`) and inflates one before handling anything that came after it, so messages are still handled in order.
+10. **A stalled page is not a dead stream** (ADR-017): a message's arrival is the heartbeat, however long handling it takes, and when the watchdog itself ran late (a long frame on a slow phone) it does not take the silence for a dead socket.
 
 ## Apply
 On top of v0, v1 and v2, in a clone at `8be90a0`:

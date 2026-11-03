@@ -1,0 +1,74 @@
+# Known vulnerabilities in what Godling ships (ADR-017): the relay's crates, the world's (Clawblox as the island image
+# builds it), the site's Python packages and the renderer's npm packages. Every Monday, when a dependency changes, and
+# by hand. Dependabot (.github/dependabot.yml) proposes the updates.
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - relay/Cargo.toml
+      - relay/Cargo.lock
+      - patches/**
+      - web/requirements.txt
+      - world/renderer/package.json
+      - world/renderer/package-lock.json
+      - .github/workflows/audit.yml
+  push:
+    branches: [main]
+    paths:
+      - relay/Cargo.toml
+      - relay/Cargo.lock
+      - patches/**
+      - web/requirements.txt
+      - world/renderer/package.json
+      - world/renderer/package-lock.json
+      - .github/workflows/audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.22.2
+      - name: Install cargo-audit
+        run: command -v cargo-audit || cargo install cargo-audit --version 0.22.2 --locked
+      - name: The relay
+        working-directory: relay
+        run: cargo audit
+      - name: The world (Clawblox at 8be90a0 with Godling's patches, as deploy/Dockerfile.island builds it)
+        run: |
+          git clone --quiet https://github.com/nacloos/clawblox.git /tmp/clawblox
+          git -C /tmp/clawblox checkout --quiet 8be90a0
+          for patch in patches/v*.patch; do git -C /tmp/clawblox apply "$PWD/$patch"; done
+          ignores=()
+          while read -r id; do ignores+=(--ignore "$id"); done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' \
+            -e 's/^[[:space:]]*\([^[:space:]]*\).*/\1/' patches/clawblox-audit-ignore.txt)
+          cd /tmp/clawblox && cargo audit "${ignores[@]}"
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit==2.10.1
+      - name: The site
+        run: pip-audit -r web/requirements.txt
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The renderer
+        working-directory: world/renderer
+        run: npm audit --audit-level=moderate
