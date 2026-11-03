@@ -248,7 +248,7 @@ Icons are 16-pixel grids (smaller for pips) drawn in code, every filled pixel ri
 Seven slots in a dark tray (0.78 alpha) whose bottom padding (2.1rem) holds the prices: Stone, Log, Regrow, Lightning, Meteor, Earthquake, Note. Each slot is an island block holding its icon at scale 3, its number key top-left in Silkscreen, its cooldown countdown bottom-right in teal, and its price under it in gold ("4 cr"; the note's "free" in paper). Hover, focus, open and aiming lift it 0.4rem with a 0.25rem gold outline; a call in flight bobs its icon. Harmful slots carry the red corner flag. A cooling slot greys its icon and sweeps a conic shadow by the share of the wait left. Number keys 1 to 7 focus the slots.
 
 ### Vitals
-Ten hearts and ten coconuts, each filling in halves (full, half, empty pip), hearts left and coconuts right above the hotbar, with states between them (Knocked down, Bracing, Cold, Wet) as small icon-and-word pairs.
+Ten hearts and ten coconuts, each filling in halves (full, half, empty pip), hearts left and coconuts right above the hotbar (coconuts fill from the right, so a half coconut keeps its right half; full, half and empty pips share one silhouette, and a full pip's rim is a colour that still reads on a dark sky), with states between them (Knocked down, Bracing, Cold, Wet) as small icon-and-word pairs.
 
 ### Cards / Containers (stone slabs)
 - **Corner Style:** square.
