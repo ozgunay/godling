@@ -60,16 +60,17 @@ Docker Compose, as AgentOp runs (ADR-013, ADR-014, ADR-015, ADR-017, ADR-018). E
 
 ## Cloudflare in front
 Why (ADR-017): one server cannot absorb a flood, and its address should not be public. Cloudflare's free plan takes the floods, hides the server, passes the stream's WebSockets through, does not bill traffic, and gives Turnstile for the sign-up form. Godling's own limits (the relay's, allauth's, the site's pace and credits) still do the rest: Cloudflare is the outer wall, not the only one.
-1. **Add the domain** to Cloudflare and set both names' DNS records to **Proxied** (the orange cloud).
-2. **SSL/TLS mode: Full (strict).** Caddy keeps its own Let's Encrypt certificates; leave Cloudflare's "Always Use HTTPS" off, since Caddy redirects to HTTPS itself.
-3. **Tell Caddy whom to believe.** Put Cloudflare's ranges in `.env`, then `docker compose up -d caddy`:
+1. **Add the domain** to Cloudflare and set both names' DNS records to **Proxied** (the orange cloud). Delete any records Cloudflare's scan copied from the registrar (a parking page), and never add a DNS-only (grey) record for the server: its address would be public.
+2. **SSL/TLS mode: Full (strict).** Caddy keeps its own Let's Encrypt certificates. Under SSL/TLS → Edge Certificates, set the **Minimum TLS Version to 1.2**, and leave **Always Use HTTPS off**: Caddy redirects to HTTPS itself, and renews its certificates over plain HTTP through Cloudflare.
+3. **Tell Caddy whom to believe.** Put Cloudflare's ranges in `.env`, then `docker compose up -d caddy`. (The IPv4 list does not end in a line break: fetched together, its last range and the IPv6 list's first run into one, and Caddy refuses to start.)
    ```bash
-   echo "GODLING_PROXY_RANGES=$(curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 | tr '\n' ' ')" >> .env
+   ranges=$(for v in v4 v6; do curl -fsS https://www.cloudflare.com/ips-$v; echo; done | tr -s '\n' ' ')
+   sed -i "s|^GODLING_PROXY_RANGES=.*|GODLING_PROXY_RANGES=$ranges|" .env
    ```
    Caddy then takes the viewer's address from Cloudflare's `CF-Connecting-IP`, only on connections from those ranges, and hands it on as the one address the site and the relay see. Without it, every viewer looks like Cloudflare, and they share one set of limits.
 4. **Close the server to everyone else.** Allow ports 80 and 443 only from Cloudflare's ranges, in your hosting provider's firewall (Hetzner Cloud Firewall, AWS security groups…). A firewall on the server itself (ufw) does not hold here: Docker opens published ports past it. Keep SSH open to your own address.
 5. **Turnstile** (Cloudflare dashboard → Turnstile → add a widget for the site's domain): put its site key and secret key in `GODLING_TURNSTILE_SITE_KEY` and `GODLING_TURNSTILE_SECRET_KEY`, then `docker compose up -d site`. The sign-up form then asks Cloudflare whether a person is signing up.
-6. **Check** from outside: `deploy/check.sh <domain> <island domain>`, and the ports test now shows the server's address closed: try it with `CHECK_IP=<server address>`.
+6. **Check** from outside: `CHECK_ORIGIN=<server address> deploy/check.sh <domain> <island domain>`. With Cloudflare in front, the certificates, the redirect and the TLS versions it sees are Cloudflare's, and it says which Cloudflare setting to change. `CHECK_ORIGIN` checks that the server itself answers nobody else, on any port. Its burst of 64 sockets is Cloudflare's to stop now, before the relay sees them.
 
 ## Monitoring and alerts
 - **Prometheus** reads the relay (viewers, refusals, resyncs, bytes sent), Caddy (requests, errors, sizes) and the server (CPU, memory, disk) every 15 s, and keeps 30 days.
@@ -130,6 +131,11 @@ The `backup` service (ADR-018) takes encrypted, deduplicated [restic](https://re
 - **Backups:** `docker compose logs backup` for what it did, `docker compose exec backup backup snapshots` for what the bucket holds, and `docker compose exec backup backup db` (or `run`, `prune`, `check`) to run one now; it exits non-zero if it failed. Restoring is above.
 
 ## Tested so far
+- **The real server** (3 November): a Hetzner CAX21 (Arm64: 4 vCPUs, 8 GB), Ubuntu 26.04, at `godling.world` with Cloudflare in front, and R2 for the backups and the replays.
+  - The images build on Arm in 7 minutes. The island's Chromium draws WebGL 2 through SwiftShader.
+  - Godling runs at 62 ticks a second on about 1.5 of the 4 cores (the world itself about 1.1), in 1.5 GB of memory with everything else.
+  - Caddy got its Let's Encrypt certificates through Cloudflare. The backups made their repository in R2, took the first snapshots, and the weekly check restored the database. Replay chunks go up to R2 and are read back at `replays.godling.world`.
+  - `deploy/check.sh` from another machine, through Cloudflare, with `CHECK_ORIGIN`: 52 checks pass. The server answers nothing from there, on any port. The 65th socket from one machine is refused by the relay ("Too many sockets from here"), though each claimed another address. The 4 failures were two Cloudflare settings, which `check.sh` names: Always Use HTTPS on, and TLS 1.1 allowed.
 - **The whole deployment under Docker** (Docker Desktop, 3 November; these images, both names under `*.localhost` with Caddy's own CA, and Mailpit as the SMTP server):
   - `deploy/check.sh` from another container, through the published ports as a visitor comes: 55 checks pass. HTTP sent to HTTPS; TLS 1.3 with a trusted certificate naming each domain; TLS 1.1 refused; no certificate for any other name; HSTS, framing and sniffing headers; every open and closed path of the island; the stream's door (101 from the island's page, 403 from another site's or with no Origin); and the 65th socket from one address refused, though each claimed another address. The three failures are this machine's, not the deployment's: a Postgres of the host's own on 5432, and the monitoring's loopback ports, which Docker Desktop's gateway reaches. Caddy's local certificates last 12 hours, so `CHECK_CERT_DAYS=0`.
   - The viewers' screen in headless Chromium: "Live, 1 watching"; the island in its frame from its own origin; its stream at `wss://…/spectate/ws?gz=1`: the whole island as one gzipped message of 17 KB, then updates; no errors.
@@ -143,4 +149,3 @@ The `backup` service (ADR-018) takes encrypted, deduplicated [restic](https://re
   - the site with the panel's key, its tests with the worker's tasks run inline;
   - gunicorn with whitenoise, with debug off;
   - SMTP sending, to a local SMTP server.
-- **Not yet:** a real server, with DNS, Let's Encrypt and Cloudflare in front: `deploy/check.sh` from another machine there.
