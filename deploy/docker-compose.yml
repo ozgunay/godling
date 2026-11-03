@@ -205,7 +205,7 @@ services:
   # The server itself (CPU, memory, disks), read through its root mounted read-only. Network totals are not taken
   # here: from a container they would be the container's own; the relay and Caddy count what goes to viewers.
   node-exporter:
-    image: quay.io/prometheus/node-exporter:v1.9.1
+    image: quay.io/prometheus/node-exporter:v1.12.1
     restart: unless-stopped
     command: ["--path.rootfs=/host", "--no-collector.netdev", "--no-collector.netstat"]
     pid: host
