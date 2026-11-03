@@ -238,6 +238,22 @@ mod tests {
     }
 
     #[test]
+    fn a_panic_elsewhere_does_not_lock_the_seats_up() {
+        let seats = Arc::new(Seats::new(10, 2, 60));
+        let held = seats.clone();
+        let _ = std::thread::spawn(move || {
+            let _book = held.book.lock().unwrap();
+            panic!("a task died holding the seats (this panic is the test's)");
+        })
+        .join();
+        assert!(seats.book.is_poisoned());
+        let seat = seats.take("1.1.1.1".parse().unwrap(), Instant::now()).expect("seats are still given");
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 1);
+        drop(seat);
+        assert_eq!(seats.taken.load(Ordering::Relaxed), 0, "and given back");
+    }
+
+    #[test]
     fn idle_addresses_are_forgotten_once_many_are_kept() {
         let seats = Arc::new(Seats::new(usize::MAX, 2, 60));
         let now = Instant::now();

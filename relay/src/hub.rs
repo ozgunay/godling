@@ -313,6 +313,20 @@ mod tests {
     }
 
     #[test]
+    fn a_panic_elsewhere_does_not_lock_the_hub_up() {
+        let hub = Arc::new(Hub::new(16, 8));
+        let held = hub.clone();
+        let _ = std::thread::spawn(move || {
+            let _inner = held.inner.lock().unwrap();
+            panic!("a task died holding the hub (this panic is the test's)");
+        })
+        .join();
+        assert!(hub.inner.is_poisoned());
+        seen(&hub);
+        assert_eq!(hub.report()["world"], "up", "the island is still kept, and told");
+    }
+
+    #[test]
     fn everyone_hears_how_many_watch() {
         let hub = Arc::new(Hub::new(16, 8));
         let (mut joined, _w) = hub.join(None);

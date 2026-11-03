@@ -458,6 +458,10 @@ async fn a_token_that_cannot_be_a_header_never_reaches_the_world() {
     let none = start_relay(world_port, |config| config.token = String::new()).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(relay_status(none).await["world"], "down");
+    // And a world's address that is no address: it keeps trying, and says the world is down.
+    let nowhere = start_relay(world_port, |config| config.upstream = "not an address".into()).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(relay_status(nowhere).await["world"], "down");
 }
 
 #[tokio::test]
@@ -483,6 +487,33 @@ async fn a_viewer_is_pinged_and_let_go_once_it_stops_answering() {
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert!(let_go(&mut watching, Duration::from_secs(5)).await, "let go once it stopped answering");
     assert_eq!(relay_status(relay).await["viewers"], 0);
+}
+
+#[tokio::test]
+async fn viewers_whose_connections_are_reset_are_let_go() {
+    let (world_port, _world) = start_world(island(1, &[1])).await;
+    let relay = start_relay(world_port, |config| config.ping_every = Duration::from_millis(1)).await;
+    let mut viewers = Vec::new();
+    for _ in 0..24 {
+        let mut watching = viewer(relay, "").await;
+        whole(&mut watching).await;
+        viewers.push(watching);
+    }
+    assert_eq!(relay_status(relay).await["viewers"], 24);
+    // Each drops its connection with a reset, not a close: the relay finds out by reading, or by its next ping.
+    for watching in viewers {
+        if let MaybeTlsStream::Plain(tcp) = watching.get_ref() {
+            tcp.set_zero_linger().unwrap();
+        }
+        drop(watching);
+    }
+    let gone = tokio::time::timeout(Duration::from_secs(5), async {
+        while relay_status(relay).await["viewers"] != 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(gone.is_ok(), "every one let go");
 }
 
 #[tokio::test]
