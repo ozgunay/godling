@@ -1,6 +1,7 @@
 import builtins
 import json
 import runpy
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -181,7 +182,11 @@ def test_mind_log_reactions_and_quakes(tmp_path):
 
 def test_report_and_main(tmp_path, monkeypatch, capsys):
     run = tmp_path / "run"
-    standard_recording(run)
+    rec = standard_recording(run)
+    db = sqlite3.connect(rec)  # the larger file by far, as a long run's is (small recordings are all four pages)
+    db.execute("INSERT INTO meta VALUES ('note', ?)", ("x" * 20_000,))
+    db.commit()
+    db.close()
     recording(run / "recordings" / "r0.clawrec", [(0, 0, {"players": [body(0)]})], [])  # smaller: not the one used
     standard_mind_log(run)
     (run / "world.log").write_text("SKY Meteor #1\nSKY Earthquake #3 over: woke 1, moved 1, fell 1\n")

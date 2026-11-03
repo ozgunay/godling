@@ -371,7 +371,8 @@ describe('the viewer screen', () => {
     await tick(0)
     expect(posts).toHaveLength(1)
     answers['api/note'] = { ok: false, text: 'Write something first.' }
-    await tick(181000)
+    vi.setSystemTime(Date.now() + 181000) // past its turn (the clock moved on, not every frame between)
+    await tick(1600)
     $('.b-note').requestSubmit()
     await tick(0)
     expect($('.b-note .n-hint').className).toBe('n-hint no')
