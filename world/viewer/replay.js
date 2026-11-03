@@ -54,7 +54,7 @@ const ago = (ms) => {
   if (s < 172800) return `${Math.round(s / 3600)} h ago`
   return `${Math.round(s / 86400)} days ago`
 }
-const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+export const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 
 export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView, tell, show, onChange }) {
   let on = false

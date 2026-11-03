@@ -1,5 +1,7 @@
 """Reading viewers' feedback: new first, filtered by kind and status, with the screen's facts when the viewer attached
 them and a link to write back."""
+from urllib.parse import quote
+
 from django.contrib import admin
 from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
@@ -31,7 +33,8 @@ class FeedbackAdmin(admin.ModelAdmin):
     def write_back(self, obj):
         if not obj.author or not obj.author.email:
             return "–"
-        return format_html('<a href="mailto:{}">{}</a>', obj.author.email, obj.author.email)
+        # Percent-encoded: a valid address may hold ? # or %, which a mailto URL would read as headers or a fragment.
+        return format_html('<a href="mailto:{}">{}</a>', quote(obj.author.email, safe="@"), obj.author.email)
 
     @admin.display(description="Their screen")
     def screen_shown(self, obj):

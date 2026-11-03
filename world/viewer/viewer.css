@@ -40,8 +40,10 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 /* The stage: the island fills it; the HUD floats over it and lets drags through to the camera */
 .stage { position: relative; width: 100vw; height: 100dvh; overflow: hidden; font-family: 'Tiny5', sans-serif; letter-spacing: 0.02em; }
 .island { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #0b0e10; }
+/* A part placed straight on the stage passes every click to the island, its own included: the first rule outranks the
+   second there. Only what sits inside a part takes clicks back, so anything clickable goes inside one. */
 .stage > :not(.island) { pointer-events: none; }
-.stage button, .stage input, .stage textarea, .stage a, .b-pop, .b-note, .b-account, .tip, .b-bottle { pointer-events: auto; }
+.stage button, .stage input, .stage textarea, .stage a, .b-pop, .b-note, .b-account, .b-bottle { pointer-events: auto; }
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* Island materials */
@@ -273,11 +275,18 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 
 /* ---- The bottle (beta): a bug, a question or an idea, corked and sent off the island to its makers ---- */
 .beta { font: 400 max(8px, 0.6rem)/1 'Silkscreen', monospace; font-style: normal; padding: 0.25rem 0.4rem; background: #2c3335; color: var(--mist); text-shadow: none; }
-.stage { --bottle-at: 1.1rem; } /* the bottle's bottom edge: the corner, or just above the dock when it reaches there */
-.stage.bottle-raised { --bottle-at: calc(var(--dock-h, 13rem) + 1.7rem); }
-.b-bottle-open {
-  position: absolute; z-index: 6; right: 1.5rem; bottom: var(--bottle-at); transition: transform 160ms var(--ease-out);
+/* One corner holds the panel above its opener, by layout, so the two never run into each other. Closed, it passes
+   under the pop-ups (a toast is brief, the bottle stays) and the dock; open, it is above everything. */
+.b-bottle-corner {
+  --bottle-at: 1.1rem; /* its bottom edge: the dock's, or just above the dock when the dock reaches the corner */
+  position: absolute; z-index: 0; top: 1.5rem; right: 1.5rem; bottom: var(--bottle-at);
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; gap: 0.7rem;
 }
+.b-bottle-corner.raised { --bottle-at: calc(var(--dock-h, 13rem) + 1.7rem); }
+.bottle-open .b-bottle-corner { z-index: 6; }
+.b-popups { z-index: 1; }
+.b-dock { z-index: 2; }
+.b-bottle-open { flex: none; transition: transform 160ms var(--ease-out); }
 .b-bottle-open .px { animation: bob 2.4s steps(2, jump-none) infinite; }
 .b-bottle-open:hover, .b-bottle-open:focus-visible, .b-bottle-open[aria-expanded='true'] { transform: translateY(-0.25rem); outline: 0.25rem solid var(--gold); outline-offset: 0.1rem; }
 .b-bottle-open:active { transform: translateY(0.1rem); }
@@ -285,8 +294,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 @keyframes bob { 50% { transform: translateY(-0.125rem); } }
 
 .b-bottle {
-  position: absolute; z-index: 6; right: 1.5rem; bottom: calc(var(--bottle-at) + 4.3rem); width: 31rem;
-  max-height: calc(100dvh - var(--bottle-at) - 6rem); overflow-y: auto;
+  flex: 0 1 auto; min-height: 0; width: 31rem; overflow-y: auto; /* as tall as the corner lets it, then it scrolls */
   padding: 0.8rem 0.9rem 0.9rem; text-shadow: var(--pixel-shadow); scrollbar-width: thin; scrollbar-color: var(--stone) transparent;
 }
 .b-bottle:focus { outline: none; }
@@ -305,7 +313,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 }
 .bt-kind input { position: absolute; opacity: 0; pointer-events: none; }
 .bt-kind:hover { filter: none; }
-.bt-kind:has(input:checked) { filter: none; transform: translateY(-0.25rem); outline: 0.25rem solid var(--gold); outline-offset: 0.06rem; }
+.bt-kind.on { filter: none; transform: translateY(-0.25rem); outline: 0.25rem solid var(--gold); outline-offset: 0.06rem; }
 .bt-kind:has(input:focus-visible) { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
 .b-bottle textarea {
   display: block; width: 100%; min-height: 6.5rem; max-height: 15rem; field-sizing: content; margin: 0; padding: 0.55rem 0.65rem; resize: none;
@@ -418,12 +426,13 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .r-span { flex: 1; }
   .replaying .b-hotbar, .replaying .b-purse { display: none; }
   /* The bottle: an icon at the right edge, just above the dock; open, a sheet over the dock */
-  .b-bottle-open { right: 0.75rem; bottom: calc(var(--dock-h, 13rem) + max(0.6rem, env(safe-area-inset-bottom)) + 0.5rem); }
+  .b-bottle-corner { top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.6rem); right: 0; bottom: 0; left: 0; gap: 0; }
+  .b-bottle-open { margin: 0 0.75rem calc(var(--dock-h, 13rem) + max(0.6rem, env(safe-area-inset-bottom)) + 0.5rem); }
   .b-bottle-open .beta { display: none; } /* the word goes as the camera buttons' words do */
-  .bottle-open .b-bottle-open { visibility: hidden; }
-  /* A compact sheet: the kinds one short row, the paper growing with the words, the facts on one line */
+  .bottle-open .b-bottle-open { display: none; }
+  /* A compact sheet: the kinds one short row, the paper growing with the words */
   .b-bottle {
-    left: 0; right: 0; bottom: 0; width: auto; max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top)) - 3.6rem);
+    align-self: stretch; width: auto;
     padding: 0.55rem 0.7rem max(0.65rem, env(safe-area-inset-bottom)); border-bottom: 0;
     background: var(--speckle) 0 0 / 1.5rem, #2c3133; /* opaque: the hotbar it covers never shows through */
   }
@@ -441,7 +450,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .bt-attach { flex: 1; gap: 0.45rem; font-size: 0.92rem; }
   .bt-attach .box { width: 1.3rem; height: 1.3rem; }
   .bt-attach .words { min-width: 0; padding-top: 0.1rem; }
-  .bt-attach .facts { margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bt-attach .facts { margin-top: 0.2rem; } /* every fact readable, so it may take two lines */
   .bt-hint:not(.no) { display: none; } /* the button says what it does; only a refusal needs words here */
   .bt-hint.no { flex: 1; font-size: 0.9rem; }
   .bt-sea { height: 3.6rem; margin: 0.5rem 0; }

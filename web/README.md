@@ -25,13 +25,18 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
 - **Feedback while in beta (the bottle):** a "Feedback" button in the screen's bottom-right corner (on a phone, a bottle
   icon above the hotbar) opens *Message in a bottle*. In it a viewer tells the makers about a bug, a question or an idea.
   Godling never reads these.
-  - Sending needs an account. A signed-out viewer's words wait in the browser while they sign in, and the bottle opens
-    again on the way back.
-  - "Attach what my screen shows" sends what the viewer sees listed under it: live or the past (and when), the island's
-    day and hour, the camera, the window's size, and the browser and system by name and major version. It is on by
-    default. The site keeps only those facts, each in the shape the screen sends it (`apps/feedback/views.py`).
+  - Sending needs an account. A signed-out viewer's words wait in the browser while they sign in; the sign-in brings
+    them back to the same screen (a moment of the past included) with the bottle open again. Unsent words belong to
+    whoever wrote them: another account, or signing out, clears them.
+  - "Attach what my screen shows" sends exactly what the viewer sees listed under it: the window's size and pixel
+    ratio, a touch screen, the browser and system by name and major version, the past and its moment when replaying,
+    the island's stream as the live badge says it, the island's day and time as its clock shows them (none while it
+    says "Out of reach"), and the camera. It is on by default. The site keeps only those facts, each in the shape the
+    screen sends it; anything malformed is refused or dropped, never an error (`apps/feedback/views.py`).
   - At most 2,000 characters, and a few messages an hour per viewer (the site rules).
-  - Each one is kept for staff and emailed, from the worker, to the inbox the site rules name.
+  - Each one is kept for staff and emailed to the inbox the site rules name, by a worker of its own (deploy/: `mailer`,
+    the "mail" queue), so a slow mail server never holds back a power.
+  - The bottle takes turns with the aim and the note: opening one closes the others.
 - **Signing up**, as AgentOp has it:
   - username, email and password;
   - the email must be confirmed before signing in;

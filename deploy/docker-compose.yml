@@ -94,6 +94,22 @@ services:
       redis:
         condition: service_healthy
 
+  # Emails viewers' feedback to the inbox the site rules name (apps.feedback.tasks), from a queue of its own ("mail"),
+  # so a slow mail server never holds back the worker that takes the powers.
+  mailer:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.site
+    restart: unless-stopped
+    command: ["celery", "-A", "godling_web", "worker", "--queues", "mail", "--hostname", "mailer@%h",
+              "--concurrency", "1", "--loglevel", "info"]
+    environment: *site-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   island:
     build:
       context: ..

@@ -21,9 +21,10 @@ class Feedback(models.Model):
     kind = models.CharField(max_length=10, choices=KINDS, default=BUG)
     text = models.TextField(max_length=TEXT_LIMIT)
     screen = models.JSONField(default=dict, blank=True,
-                              help_text="What the viewer's screen showed, attached when they chose to: live or replay, "
-                                        "the island's hour, the camera, the window's size, the browser and system. "
-                                        "Never more than that (views.screen_facts).")
+                              help_text="What the viewer's screen showed, attached when they chose to: live or the past "
+                                        "(and its moment), the island's day and time, the island's stream as the live "
+                                        "badge said it, the camera, the window's size and pixel ratio, a touch screen, "
+                                        "the browser and system. Never more than that (views.screen_facts).")
     status = models.CharField(max_length=10, choices=STATUSES, default=NEW)
     staff_note = models.TextField(blank=True, help_text="For staff only; the viewer never sees it.")
     created = models.DateTimeField(auto_now_add=True)
@@ -33,7 +34,11 @@ class Feedback(models.Model):
         verbose_name = verbose_name_plural = "feedback"
 
     def __str__(self):
-        return f"{self.get_kind_display()} from {self.author or 'a deleted account'}: {self.text[:60]}"
+        return f"{self.get_kind_display()} from {self.who}: {self.text[:60]}"
+
+    @property
+    def who(self):
+        return self.author.username if self.author else "a deleted account"
 
     def facts(self):
         """What the screen showed, as lines for staff (the admin and the email); [] when nothing was attached."""
@@ -45,9 +50,8 @@ class Feedback(models.Model):
             lines.append(f"Watching: the island's past{', at ' + at if at else ''}")
         elif s.get("view"):
             lines.append("Watching: live")
-        if "day" in s or "hour" in s:
-            hour = s.get("hour")
-            clock = f"{int(hour % 24):02d}:{int(hour % 1 * 60):02d}" if isinstance(hour, (int, float)) else ""
+        if "day" in s or "minute" in s:  # the island's clock as the screen showed it, in whole minutes
+            clock = f"{s['minute'] // 60:02d}:{s['minute'] % 60:02d}" if "minute" in s else ""
             lines.append("Island: " + ", ".join(p for p in (f"day {s['day']}" if "day" in s else "", clock) if p))
         if s.get("stream"):
             lines.append(f"Island stream: {s['stream']}")

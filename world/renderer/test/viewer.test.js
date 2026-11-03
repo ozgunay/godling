@@ -473,12 +473,15 @@ describe('the viewer screen', () => {
     const { $, posts, tick, stage } = screen
     const opener = $('.b-bottle-open')
     expect(opener.hidden).toBe(false)
+    // Inside one corner, never straight on the stage, where nothing takes a click (viewer.css).
+    expect(opener.parentElement.classList.contains('b-bottle-corner')).toBe(true)
+    expect($('.b-bottle').parentElement).toBe(opener.parentElement)
     opener.click()
     expect($('.b-bottle').hidden).toBe(false)
     expect(opener.getAttribute('aria-expanded')).toBe('true')
     expect(document.activeElement).toBe($('#bottle-text'))
-    expect($('.bt-hint').textContent).toBe('Sent from your account, ann.')
-    expect($('.facts').textContent).toBe('1024×768 · live · day 3 14:30 · follow camera')
+    expect($('.bt-hint').textContent).toBe('It goes from your account, ann.')
+    expect($('.facts').textContent).toBe('1024×768 at 1x · island live · day 3 14:30 · follow camera')
     expect($('#bottle-text').placeholder).toBe('What happened, and what did you expect instead?')
     $('.bt-send').click()
     await tick(0)
@@ -486,17 +489,20 @@ describe('the viewer screen', () => {
     expect(posts.some((p) => p.path === 'api/feedback')).toBe(false)
     $('.bt-kind input[value=question]').click()
     expect($('#bottle-text').placeholder).toBe('Ask the makers anything about Godling or the island.')
+    expect($('.bt-kind.on input').value).toBe('question') // the chosen tile, drawn without :has()
     $('.bt-kind input[value=bug]').click()
     $('#bottle-text').value = 'The log fell through the wall.'
     $('#bottle-text').dispatchEvent(new Event('input'))
+    expect($('.bt-hint').classList.contains('no')).toBe(false) // the refusal was about the words as they were
     expect($('.b-bottle .count').textContent).toBe('30/2,000')
-    expect(JSON.parse(localStorage.getItem('godling.bottle'))).toEqual({ kind: 'bug', text: 'The log fell through the wall.' })
+    expect(JSON.parse(localStorage.getItem('godling.bottle'))).toEqual({ kind: 'bug', text: 'The log fell through the wall.', owner: 'ann' })
     $('#bottle-text').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
     await tick(0)
     const sent = posts.find((p) => p.path === 'api/feedback')
     expect(sent.headers['X-CSRFToken']).toBe('abc123')
     expect(sent.body).toMatchObject({ kind: 'bug', text: 'The log fell through the wall.', screen: {
-      view: 'live', day: 3, hour: 14.5, camera: 'follow', stream: 'live', size: '1024x768', touch: false } })
+      view: 'live', day: 3, minute: 870, camera: 'follow', stream: 'live', size: '1024x768', pixels: 1 } })
+    expect(sent.body.screen.touch).toBeUndefined()
     expect($('.bt-write').hidden).toBe(true)
     expect($('.bt-sent').hidden).toBe(false)
     expect(document.activeElement).toBe($('.bt-back'))
@@ -519,7 +525,8 @@ describe('the viewer screen', () => {
     expect(screen.$('.bt-send').hidden).toBe(true)
     const signIn = screen.$('.bt-signin')
     expect(signIn.hidden).toBe(false)
-    expect(signIn.getAttribute('href')).toBe('/accounts/login/?next=%2F')
+    // Back to this very screen (a moment watched, ?t=, comes back too), with a mark that opens the bottle again.
+    expect(signIn.getAttribute('href')).toBe('/accounts/login/?next=%2F%3Fbottle%3D1')
     expect(screen.$('.bt-hint').textContent).toBe('Sign in to send it. Your words wait here meanwhile.')
     screen.$('.bt-kind input[value=idea]').click()
     screen.$('#bottle-text').value = 'A coconut power.'
@@ -529,8 +536,7 @@ describe('the viewer screen', () => {
     screen.$('.bt-write').requestSubmit() // signed out: nothing is sent
     await screen.tick(0)
     expect(screen.posts.some((p) => p.path === 'api/feedback')).toBe(false)
-    const kept = { 'godling.bottle': localStorage.getItem('godling.bottle'), 'godling.bottle.reopen': localStorage.getItem('godling.bottle.reopen') }
-    expect(kept['godling.bottle.reopen']).toBe('1')
+    const kept = { 'godling.bottle': localStorage.getItem('godling.bottle') }
     closePage()
 
     const answers = {
@@ -538,13 +544,15 @@ describe('the viewer screen', () => {
         : { ok: false, text: 'That is 6 messages this hour. The next can go in 12:00.', wait: 720 }),
       'api/replay/index': { body: { segments: [{ start: NOW * 1000 - 3600e3, end: NOW * 1000, live: true }] } },
     }
+    history.replaceState(null, '', '/?bottle=1') // where allauth sends the viewer back
     screen = await boot({ statuses: [panelStatus({ account: account() })], answers, stored: kept, phone: true })
     const { $, posts, tick, fromIsland, stage } = screen
     expect($('.b-bottle').hidden).toBe(false) // back from signing in: open again, words and kind kept
+    expect(location.search).toBe('') // the mark is taken off: a reload does not open it again
     expect(document.activeElement).toBe($('.b-bottle')) // on a phone, no keyboard before the viewer has read it
     expect($('#bottle-text').value).toBe('A coconut power.')
     expect($('.bt-kind input[value=idea]').checked).toBe(true)
-    expect(localStorage.getItem('godling.bottle.reopen')).toBe('')
+    expect(JSON.parse(localStorage.getItem('godling.bottle')).owner).toBe('ann') // the words are ann's now
     $('.bt-send').click()
     await tick(0)
     expect($('.bt-hint').textContent).toBe('That is 6 messages this hour. The next can go in 12:00.')
@@ -565,11 +573,92 @@ describe('the viewer screen', () => {
     const fromThePast = posts.filter((p) => p.path === 'api/feedback').at(-1).body.screen
     expect(fromThePast).toMatchObject({ view: 'replay', moment: NOW * 1000 - 600e3 })
     expect(fromThePast.day).toBeUndefined() // the live clock says nothing about the moment watched
-    expect($('.facts').textContent).toContain('the past')
+    expect($('.facts').textContent).toContain('the past, ')
+    history.replaceState(null, '', '/')
   })
 
-  it('the bottle reads a browser and a system plainly', async () => {
+  it('the bottle takes turns with the aim and the note, and keeps its keys', async () => {
+    const { $, slot, stage, told } = await boot({ statuses: [panelStatus({ account: account() })], stored: { 'godling.camera': 'free' } })
+    const opener = $('.b-bottle-open')
+    slot('Stone').click()
+    expect(stage.classList.contains('aiming')).toBe(true)
+    opener.click() // the aim gives way: no armed island under the bottle
+    expect(stage.classList.contains('aiming')).toBe(false)
+    expect(told.at(-1)).toMatchObject({ type: 'godling-aim', power: null })
+    slot('Note').click() // and the bottle gives way to the note, leaving the focus in it
+    expect($('.b-bottle').hidden).toBe(true)
+    expect($('.b-note').hidden).toBe(false)
+    expect(document.activeElement).toBe($('#note-text'))
+    opener.click()
+    expect($('.b-note').hidden).toBe(true)
+    slot('Stone').click()
+    expect($('.b-bottle').hidden).toBe(true)
+    slot('Stone').click() // no aim again
+    opener.click()
+    // The bottle is a dialog: a digit or a flying key pressed in it stays in it.
+    const send = $('.bt-send')
+    send.focus()
+    send.dispatchEvent(key('keydown', 'Digit2', { key: '2' }))
+    expect(document.activeElement).toBe(send)
+    const fly = key('keydown', 'KeyW', { key: 'w' })
+    $('.b-bottle').dispatchEvent(fly)
+    expect(fly.defaultPrevented).toBe(false)
+    expect(told.some((m) => m.type === 'godling-key')).toBe(false)
+    // Enter on a kind or on the checkbox means "this one", not "send".
+    for (const input of [$('.bt-attach input'), $('.bt-kind input[value=idea]')]) {
+      const enter = key('keydown', 'Enter', { key: 'Enter' })
+      input.dispatchEvent(enter)
+      expect(enter.defaultPrevented).toBe(true)
+    }
+    // Escape closes it from anywhere, the opener after it included.
+    opener.focus()
+    opener.dispatchEvent(key('keydown', 'Escape', { key: 'Escape' }))
+    expect($('.b-bottle').hidden).toBe(true)
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it("the bottle: whose words, the badge's word, no stale clock, a send that ends closed", async () => {
+    // Another account's unsent words never show; nor do anyone's after signing out.
+    let screen = await boot({ statuses: [panelStatus({ account: account() })],
+      stored: { 'godling.bottle': JSON.stringify({ kind: 'idea', text: "mara's own words", owner: 'mara' }) } })
+    expect(screen.$('#bottle-text').value).toBe('')
+    expect(JSON.parse(localStorage.getItem('godling.bottle'))).toMatchObject({ text: '', owner: 'ann' })
+    closePage()
+    screen = await boot({ statuses: [panelStatus({ account: account({ signedIn: false, username: '' }) })],
+      stored: { 'godling.bottle': JSON.stringify({ kind: 'bug', text: "ann's own words", owner: 'ann' }) } })
+    expect(screen.$('#bottle-text').value).toBe('')
+    closePage()
+
+    let release
+    const answers = { 'api/feedback': () => new Promise((done) => { release = done }) }
+    screen = await boot({ statuses: [panelStatus({ account: account(), world: false })], answers })
+    const { $, fromIsland, posts, tick } = screen
+    fromIsland({ type: 'godling-stream', state: 'live', world: 'down' }) // the badge says Restarting
+    $('.b-bottle-open').click()
+    // The badge's word, and no clock while the HUD's says "Out of reach".
+    expect($('.facts').textContent).toBe('1024×768 at 1x · island restarting · follow camera')
+    $('#bottle-text').value = 'It froze.'
+    $('#bottle-text').dispatchEvent(new Event('input'))
+    $('.bt-send').click()
+    await tick(0)
+    expect(posts.at(-1).body.screen).toEqual({ view: 'live', camera: 'follow', stream: 'restarting', size: '1024x768', pixels: 1 })
+    expect($('#bottle-text').readOnly).toBe(true) // nothing typed while it is on its way can be lost
+    $('.bt-close').click() // closed while on its way
+    release({ ok: true, text: 'Corked and sent.' })
+    await tick(0)
+    expect($('#bottle-text').readOnly).toBe(false)
+    $('.b-bottle-open').click()
+    expect($('.bt-sent').hidden).toBe(false) // its confirmation waited for the next look
+    expect(document.activeElement).toBe($('.bt-back'))
+    $('.bt-again').click()
+    $('#bottle-text').value = '\u{1F600}'
+    $('#bottle-text').dispatchEvent(new Event('input'))
+    expect($('.b-bottle .count').textContent).toBe('2/2,000') // as maxlength counts it
+  })
+
+  it('the bottle reads a browser and a system plainly, and lists every fact it sends', async () => {
     const { browserOf, systemOf, factsLine } = await import('../../viewer/feedback.js')
+    const { when } = await import('../../viewer/replay.js')
     const agents = {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0': ['Edge 142', 'Windows'],
       'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1': ['Safari 18', 'iOS'],
@@ -580,8 +669,11 @@ describe('the viewer screen', () => {
       'curl/8.0': ['', ''],
     }
     for (const [ua, [browser, system]] of Object.entries(agents)) expect([browserOf(ua), systemOf(ua)]).toEqual([browser, system])
-    expect(factsLine({ size: '375x812', browser: 'Safari 18', system: 'iOS', view: 'replay', camera: 'free' }))
-      .toBe('375×812 · Safari 18 · iOS · the past · free camera')
+    const moment = NOW * 1000
+    expect(factsLine({ size: '375x812', pixels: 3, touch: true, browser: 'Safari 18', system: 'iOS', view: 'replay',
+      moment, stream: 'live', camera: 'free' }))
+      .toBe(`375×812 at 3x, touch · Safari 18 on iOS · the past, ${when(moment)} · island live · free camera`)
+    expect(factsLine({ view: 'live', day: 3, minute: 5, stream: 'reconnecting' })).toBe('island reconnecting · day 3 00:05')
     expect(factsLine({})).toBe('')
   })
 })
