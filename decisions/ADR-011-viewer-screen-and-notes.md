@@ -64,6 +64,12 @@ The upstream spectator keys panned along fixed map axes and never climbed. They 
 - It takes over from wherever the camera is, so switching never jumps.
 - The viewer screen forwards its keys into the frame. With `?embed=1`, Follow follows the player named Godling, so no list click is needed. Without it, the standalone spectator page uses the free camera whenever nobody is followed.
 
+### The follow camera (`world/renderer/src/followcam.js`, 2026-11-03)
+The upstream follow camera kept a 60° view from top to bottom on every screen. A camera's angle across follows the screen's shape, so on a phone held upright it saw about 30° across, a quarter of a desktop's view. Godling filled the screen, and the HUD covered half of what was left. Our own follow camera replaces it:
+- **Framed for the screen.** On a wide screen it is where upstream's was: 20 behind, 6 up, 60°. On a tall one (width / height 0.55 or less) it opens to 75° and stands 25 behind and 9.5 up, which shows about 1.7 times as much across at Godling; an upright tablet gets a blend. The free camera gets the wider angle too.
+- **Composed like a game camera's.** It turns to keep Godling in the middle across, at 0.64 of the screen's height on a wide screen (as before) and 0.55 on a tall one: the open band between the phone HUD's feed and its hotbar.
+- While the engine's capture (Godling's own view) poses the camera through the upstream controller, that controller holds it.
+
 ### Aiming (`main.lua` `sky.aim`, `renderer/src/aim.js`, the screen's aim bar)
 - **Picking a power** (all but the earthquake and the note) puts the screen in aim mode.
   - A ring follows the pointer over the island, on whatever is there.

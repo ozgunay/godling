@@ -210,8 +210,11 @@ describe('the renderer', () => {
     const { ctx, cameraModes } = runtime()
     const r = createRenderer(ctx)
     expect(document.head.querySelector('style').textContent).toContain('visibility: hidden')
+    r.onResize({ width: 390, height: 844 }) // a phone held upright: our follow camera, framed for it (followcam.js)
     r.onState(island(0))
-    expect(cameraModes.update).toHaveBeenCalledWith(expect.objectContaining({ mode: 'follow' }))
+    expect(renders.camera.fov).toBe(75)
+    expect(renders.camera.position.toArray()).toEqual([0, 12, -25])
+    expect(cameraModes.update).not.toHaveBeenCalled() // upstream's only while the capture holds the camera
     const say = (data, source = screen) => {
       const event = new MessageEvent('message', { data })
       Object.defineProperty(event, 'source', { value: source })
@@ -219,15 +222,18 @@ describe('the renderer', () => {
     }
     say({ source: 'godling-viewer', type: 'godling-camera', mode: 'free' })
     say({ source: 'godling-viewer', type: 'godling-key', code: 'KeyW', down: true })
-    cameraModes.update.mockClear()
     r.onState(island(1))
-    expect(cameraModes.update).not.toHaveBeenCalled() // flying free now
+    r.onFrame({ dt: 0.1 })
+    expect(renders.camera.position.z).toBeGreaterThan(-25) // flying free now, ahead, not after Godling
+    expect(renders.camera.position.x).toBeCloseTo(0, 6)
     say({ source: 'godling-viewer', type: 'godling-key', code: 'KeyW', down: false })
     say({ source: 'godling-viewer', type: 'godling-camera', mode: 'follow' })
     say({ source: 'someone-else', type: 'godling-camera', mode: 'free' })
     say({ source: 'godling-viewer', type: 'godling-camera', mode: 'free' }, window) // not from the screen: ignored
     r.onState(island(2))
-    expect(cameraModes.update).toHaveBeenCalled()
+    r.onFrame({ dt: 0.1 })
+    expect(renders.camera.position.x).toBeGreaterThan(0.5) // following again, after Godling
+    expect(cameraModes.update).not.toHaveBeenCalled()
     say({ source: 'godling-viewer', type: 'godling-aim', power: 'Meteor' })
     ctx.canvas.dispatchEvent(pointer('pointermove', { x: 50, y: 50 }))
     ctx.canvas.dispatchEvent(pointer('pointerdown', { x: 50, y: 50 }))
