@@ -66,7 +66,7 @@ Being a god, it levitates what it carries above its head, which is how the world
 - Frames are chosen so each clip keeps just the action and the speed-up stays near 2x where the world allows; the lift and lowering must fit 1.0–1.2 s, so they run about 5x.
 - On every clip, `spread_arms` holds the arms a little out from the body. An adult's arm swing passes inside Godling's chubby torso, and a raised hand would vanish into the head.
 - A clip whose file is missing is left out (the build prints `SKIP`).
-- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 25 clips, `godling.glb` is about 900 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
+- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 27 clips, `godling.glb` is about 935 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
 - **Idle** is `happy_idle.fbx`. **Walk** is `happy_walk.fbx`, downloaded with "In Place". The build prints the walk's stride speed for the renderer's `WALK_STRIDE_SPEED`; Happy Walk's is 0.667.
 - **PickUp** is frames 40–370 of `picking_up.fbx`, retimed to 1.1 s, with its bend cut to 35%.
 - **Gestures**, each timed to the world (a strike at most every 0.8 s, a lift 1.0 s, a lowering 1.2 s, a rub for fire every 4 s or more). The Mixamo animation behind each:
@@ -82,6 +82,13 @@ Being a god, it levitates what it carries above its head, which is how the world
   - **Strike** (1.0 s) is a two-handed swing: wind up wide and high, come down in front with a bow, recover.
   - The posed **Climb** (1.0 s, loops) is hand over hand, the opposite knee stepping up.
 - The arms are 0.65× an adult's.
+- **A tool in the right hand.** The renderer draws a held tool at the middle of the right mitten (`world/renderer/src/hands.js`): its head points along the hand bone's X (towards the thumb), turned towards the bone's Y (along the fingers) by the tool's dip. The dips are 55° for the spear and 20° for the axe and hammer; `SPEAR_DIP` and `TOOL_DIP` in the build must match `IN_HAND` (a renderer test checks this).
+  - **IdleCarry and WalkCarry** are Idle and Walk with the right arm holding a tool at the side. The renderer plays them while a tool is in the hand.
+    - The upper arm hangs down, the elbow is bent, and the fist rests by the hip, turned so a spear points 10° above level (`CARRY_RISE`). The axe and hammer, dipped less, point 45° up.
+    - Only 12% of the clip's own arm motion is kept (`CARRY_KEEP`), so a 4.5-long spear no longer swings through Mixamo's full arm swing. Walking, it stays within 2–11° of level; before, it went from 50° below level to 3° above, and up to 73° off to the side.
+    - The rest of the body is the plain clip's, and the carry walk keeps the plain walk's stride.
+  - **Spear** (Bayonet Stab) holds the right hand with the fingers forward, so a spear in the renderer's grip pointed up at the thrust. Every frame, the build turns the hand about the wrist so the spear points ahead and level. Only that hand's rotation changes.
+  - A spear held ahead, carried or thrust, points 10° across the body (`ACROSS`), its butt out past the right hip as a bayonet's is. Pointing straight ahead, the butt grazed the torso as the walk swayed and the stab lunged; now it stays about 0.7 from the torso's middle.
 
 Preview stills of any clip, four moments each:
 ```powershell

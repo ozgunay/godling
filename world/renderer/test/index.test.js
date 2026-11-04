@@ -40,7 +40,7 @@ files['/assets/crater.glb'] = prop
 files['/assets/fish.glb'] = prop
 files['/assets/stone.glb'] = prop
 files['/assets/godling.glb'] = body
-files['/assets/handed.glb'] = () => handed({ clips: ['Idle', 'Walk'] })
+files['/assets/handed.glb'] = () => handed({ clips: ['Idle', 'Walk', 'IdleCarry', 'WalkCarry'] })
 
 function runtime() {
   const buffer = {
@@ -303,6 +303,9 @@ describe('the renderer', () => {
     await flush() // the models arrive
     frames(12, obs('Godling'))
     expect(hands()).toEqual([expect.objectContaining({ id: 3, body: 1, weight: 1 })])
+    const clips = (id) => globalThis.__godlingRenderer.animations().find((a) => a.id === id).weights
+    expect(clips(1)).toEqual({ IdleCarry: 1 }) // it carries the axe: the arm holds it still
+    expect(clips(2)).toEqual({ Idle: 1 }) // a model without carry clips keeps its own
     const [axe] = hands()
     expect(axe.at[1]).toBeLessThan(4) // in the hand at the body's side, not over its head at 6.5
     expect(Math.hypot(axe.at[0], axe.at[2])).toBeLessThan(2.5)
@@ -318,6 +321,7 @@ describe('the renderer', () => {
     expect(hands()[0].weight).toBeLessThan(1)
     frames(12, obs(null))
     expect(hands()).toEqual([])
+    expect(clips(1)).toEqual({ Idle: 1 })
     r.unmount()
   })
 

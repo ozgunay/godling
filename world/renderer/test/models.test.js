@@ -151,6 +151,34 @@ describe('characters', () => {
     expect(controller.debug()).toEqual([])
   })
 
+  it('with a tool in the hand, idles and walks with the carry clips, the two walks in step', async () => {
+    const { controller, root } = await setup(['Idle', 'Walk', 'IdleCarry', 'WalkCarry', 'Wave'])
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    controller.update(1, { dt: 0.2, carrying: true })
+    expect(weights(controller)).toEqual({ IdleCarry: 1 })
+    for (let i = 0; i < 4; i++) controller.update(1, { dt: 0.2, speed: 5, carrying: true })
+    expect(weights(controller)).toEqual({ WalkCarry: 1 })
+    controller.update(1, { dt: 0.05, speed: 5 }) // set down: the plain walk fades in, at the same point of the stride
+    const { weights: fading, times } = controller.debug()[0]
+    expect(fading.Walk).toBeGreaterThan(0.05)
+    expect(fading.WalkCarry).toBeGreaterThan(0.05)
+    expect(times.Walk).toBe(times.WalkCarry)
+    controller.update(1, { dt: 0.2, speed: 5 })
+    expect(weights(controller)).toEqual({ Walk: 1 })
+    controller.update(1, { dt: 0.2, carrying: true, attributes: { Gestures: 1, Gesture: 'Wave' } })
+    controller.update(1, { dt: 0.2, carrying: true, attributes: { Gestures: 2, Gesture: 'Wave' } })
+    expect(weights(controller)).toEqual({ Wave: 1 }) // a gesture plays over the carry as over the plain clips
+  })
+
+  it('a model without carry clips carries a tool in its plain Idle and Walk', async () => {
+    const { controller, root } = await setup(['Idle', 'Walk'])
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    controller.update(1, { dt: 0.2, carrying: true })
+    expect(weights(controller)).toEqual({ Idle: 1 })
+    controller.update(1, { dt: 0.2, speed: 5, carrying: true })
+    expect(weights(controller)).toEqual({ Walk: 1 })
+  })
+
   it('a model with only a walk walks when it stands too, and a new model replaces the old', async () => {
     const { controller, root } = await setup(['Walk'])
     controller.upsert({ entityId: 2, root, modelUrl: '/c.glb' })

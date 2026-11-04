@@ -15,7 +15,9 @@ Clips (60 fps), from the Mixamo sources (see CLIPS): Idle and Walk (in place: th
 one-shot gesture for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake,
 Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp) and for the earthquake (Stagger, GetUp, LookAround); loops for
 Jump, Fall, Climb and Brace. Strike (a two-handed overhead swing, 1.0 s) is posed by hand on the same rig, as is
-Climb when its source is missing.
+Climb when its source is missing. IdleCarry and WalkCarry are Idle and Walk with the right arm holding a tool
+steadily, for the renderer to play while one is in the hand; the Spear clip's hand is turned so the spear thrusts
+straight ahead (see "a tool in the right hand").
 
 Writes world/assets/godling.glb and art/godling.blend.
 """
@@ -407,6 +409,87 @@ def spread_arms(arm, action):
                 pb.keyframe_insert("rotation_quaternion", frame=f)
 
 
+# ---- a tool in the right hand ------------------------------------------------------------------
+# How the renderer holds a tool (world/renderer/src/hands.js IN_HAND): at the middle of the right mitten, its head
+# along the hand bone's X (towards the thumb) turned towards the bone's Y (along the fingers) by the tool's dip. The
+# hand's axes in the armature's space here are the ones the renderer sees. Keep these dips equal to IN_HAND's.
+SPEAR_DIP, TOOL_DIP = 55, 20  # the spear; the axe and hammer
+# Carrying (IdleCarry, WalkCarry): the clip's own body, but the right arm holds the tool steadily at the side, the
+# elbow bent and the fist by the hip, keeping only CARRY_KEEP of the clip's own arm motion. A long spear no longer
+# swings through Mixamo's full arm swing. The fist turns so a spear points CARRY_RISE degrees above level, ahead;
+# the axe and hammer, dipped less, point up the more (CARRY_RISE + SPEAR_DIP - TOOL_DIP).
+CARRY_ARM = (-0.35, -1, 0.05)  # the upper arm down, out past the torso
+CARRY_FOREARM = (-0.1, -0.35, 1)  # the forearm forward, a little down
+CARRY_RISE, CARRY_KEEP = 10, 0.12
+# A spear held ahead, carried or thrust, points this many degrees across the body, its butt out past the right hip
+# as a bayonet's is: straight ahead, the butt grazed the torso as the walk swayed and the stab lunged.
+ACROSS = 10
+
+
+def orient(pb, x_axis, y_axis):
+    """Turn a pose bone about its head so its Y axis points along `y_axis` and its X axis as near `x_axis` as that
+    allows (armature space)."""
+    head = pb.matrix.translation.copy()
+    y = Vector(y_axis).normalized()
+    x = (Vector(x_axis) - y * Vector(x_axis).dot(y)).normalized()
+    pb.matrix = Matrix.Translation(head) @ Matrix((x, y, x.cross(y))).transposed().to_4x4()
+    bpy.context.view_layer.update()
+
+
+def held_direction(pb, dip):
+    """Where the head of a tool held in this hand points (armature space)."""
+    m = pb.matrix.to_3x3()
+    return (m.col[0] * math.cos(math.radians(dip)) + m.col[1] * math.sin(math.radians(dip))).normalized()
+
+
+def carry_clip(arm, base, name):
+    """A copy of `base` with the right arm holding a tool at the side (CARRY_*)."""
+    action = base.copy()
+    action.name = name
+    action.use_fake_user = True
+    use_clip(arm, action)
+    scene = bpy.context.scene
+    upper, fore, hand = (arm.pose.bones[f"mixamorig:Right{b}"] for b in ("Arm", "ForeArm", "Hand"))
+    rise = math.radians(CARRY_RISE + SPEAR_DIP)  # the thumb's rise, for a spear CARRY_RISE above level
+    across = Quaternion((0, 1, 0), math.radians(ACROSS))  # +X is Godling's left: across, from the right hand
+    thumb = across @ Vector((0, math.sin(rise), math.cos(rise)))
+    fingers = across @ Vector((0, -math.cos(rise), math.sin(rise)))
+    first, last = (int(round(f)) for f in action.frame_range)
+    for f in range(first, last + 1):
+        scene.frame_set(f)
+        own = [pb.rotation_quaternion.copy() for pb in (upper, fore, hand)]
+        aim(upper, CARRY_ARM)
+        aim(fore, CARRY_FOREARM)
+        orient(hand, thumb, fingers)
+        for pb, q in zip((upper, fore, hand), own):
+            held = pb.rotation_quaternion.copy()
+            if held.dot(q) < 0:
+                q.negate()
+            pb.rotation_quaternion = held.slerp(q, CARRY_KEEP)
+            pb.keyframe_insert("rotation_quaternion", frame=f)
+        bpy.context.view_layer.update()
+    return action
+
+
+def level_spear(arm, action):
+    """The bayonet stab holds the right hand with the fingers forward, so a spear gripped as the renderer grips it
+    pointed up at the thrust. Every frame, turn the hand about the wrist so the spear points ahead, level: the stab
+    goes where Godling faces, ACROSS degrees across the body."""
+    use_clip(arm, action)
+    scene = bpy.context.scene
+    hand = arm.pose.bones["mixamorig:RightHand"]
+    ahead = Quaternion((0, 1, 0), math.radians(ACROSS)) @ Vector((0, 0, 1))  # +X is Godling's left
+    first, last = (int(round(f)) for f in action.frame_range)
+    for f in range(first, last + 1):
+        scene.frame_set(f)
+        m = hand.matrix.copy()
+        head = m.translation.copy()
+        turn = held_direction(hand, SPEAR_DIP).rotation_difference(ahead).to_matrix().to_4x4()
+        hand.matrix = Matrix.Translation(head) @ turn @ Matrix.Translation(-head) @ m
+        bpy.context.view_layer.update()
+        hand.keyframe_insert("rotation_quaternion", frame=f)
+
+
 def soften_hips(arm, action, keep):
     """Less forward pitch of the hips, with the thighs re-solved each frame so legs and feet stay put."""
     use_clip(arm, action)
@@ -757,6 +840,11 @@ def main():
         keep_frames(idle, 1, IDLE_FRAMES)
         ping_pong(idle, IDLE_FRAMES)
         clips.insert(0, idle)
+    by_name = {a.name: a for a in clips}
+    if "Spear" in by_name:
+        level_spear(arm, by_name["Spear"])
+    for base in ("Idle", "Walk"):  # what the renderer plays instead while a tool is in the hand
+        clips.append(carry_clip(arm, by_name[base], base + "Carry"))
     for action in clips:
         scale_hips(action, LEG)
         action.use_fake_user = True

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { createHands, GRAB_SECONDS, IN_HAND } from '../src/hands.js'
@@ -59,6 +61,13 @@ describe('a tool in the hand', () => {
     expect(hands.place(axe, null, served, GRAB_SECONDS, out)).toBe(false)
     expect(hands.has(5)).toBe(false)
     expect(hands.place(axe, null, served, 0.1, out)).toBe(false) // a tool nobody holds
+  })
+
+  it('grips as the art pipeline posed Godling for: its carry clips and spear thrust aim the hand for these dips', () => {
+    const art = readFileSync(resolve(process.cwd(), '../../art/build_godling.py'), 'utf8')
+    const [, spear, tool] = art.match(/^SPEAR_DIP, TOOL_DIP = (\d+), (\d+)/m)
+    expect(IN_HAND.Spear.dip).toBe(Number(spear))
+    expect([IN_HAND.Axe.dip, IN_HAND.Hammer.dip]).toEqual([Number(tool), Number(tool)])
   })
 
   it('leaves it to the world when no hand can take it', () => {

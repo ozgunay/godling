@@ -927,6 +927,12 @@ export function createRenderer(ctx) {
         bodyByName.set(player.name, player.root_part_id)
       }
     }
+    // The bodies with a tool in the hand (a Tool whose "HeldBy" names their player), for their carry clips (models.js).
+    const carrying = new Set()
+    for (const entity of obs.entities || []) {
+      const holder = entity.render?.role === 'Tool' ? entity.attributes?.HeldBy : undefined
+      if (bodyByName.has(holder)) carrying.add(bodyByName.get(holder))
+    }
 
     // A first-person camera (the server's capture of what Godling sees) sits inside the body's head: hide that
     // body, or its own head fills the view.
@@ -1035,6 +1041,7 @@ export function createRenderer(ctx) {
           speed,
           humanoidState: stateByRootPartId.get(entity.id) || null,
           attributes: attributesByRootPartId.get(entity.id) || {},
+          carrying: carrying.has(entity.id),
         })
         bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
       }
