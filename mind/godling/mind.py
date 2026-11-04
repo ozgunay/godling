@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from .learned import SkillError
 from .discovery import SIGHT
+from .house import assess
+from .structures import pieces_of, terrain_of
 from .world import CUBE, hdist
 
 ANSWER_SHAPE = {
@@ -148,10 +150,15 @@ def _how_it_feels(snap):
         parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
     if snap.wet >= 15:
         parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
+    if snap.sheltered == "house":
+        parts.append("You are inside a house: warm and dry, mending twice as fast while fed")
+    elif snap.sheltered:
+        parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else "")
+                     + (", which halves the cold; this is not a house, which would keep it off" if snap.cold else ""))
+    if snap.by_fire:
+        parts.append("A fire close by " + ("halves the cold" if snap.cold else "warms you"))
     if snap.cold:
         parts.append("You are cold, and it is wearing your health down")
-    if snap.sheltered:
-        parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else ""))
     return ". ".join(parts) + "." if parts else ""
 
 
@@ -227,12 +234,17 @@ Pieces you set down can be turned a quarter round or stood on end, and fastened 
 Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. Lightning, or a
 stone falling from the sky, hurts you if you are close when it strikes. Fed at least half full, you heal. You eat what
 you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Cooked fish fills you far more than raw.
-Fire is hard to make: wood rubbed hard and long against wood grows hot, and something dry and fine beside it may
-catch. Rain puts fires out, and nothing catches while it rains or while the wood is still damp after it.
+Fire is made as people make it without matches: hold your spear and rub it hard against a log lying on the ground,
+over and over, with something dry and fine right beside the log for tinder (a coconut's dry husk). The wood grows warm,
+then hot and smoking after a dozen rubs or so, and then the tinder may catch and set the log burning. A fire burns
+about ten minutes and uses its log up. Rain puts fires out, and nothing catches while it rains or while the wood is
+still damp after it.
 Days turn into nights; nights are dark and cold. The weather turns: showers, spells of rain that last for days,
-thunderstorms, fog some mornings. Rain soaks you and slows your walking. Being cold wears your health down and stops
-you healing. A roof over your head keeps the rain off; walls around you with a roof over you, or a fire close by,
-keep the cold off.
+thunderstorms, fog some mornings. Rain soaks you and slows your walking. The cold, at night or soaked in the rain,
+wears your health down and stops you mending. A roof over your head keeps the rain off and halves the cold; a fire
+close by halves it too. Only inside a house are you warm, whatever the night. A house is at least one clear space
+inside where you can stand, walls at least two blocks high all round it, one doorway you can walk through, and a roof
+over every space inside with more room under it than your height. Inside your house a fed body mends twice as fast.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before.
 Now and then the ground shakes. Loose pieces can fall; fastened pieces hold where they are, and a wide base stands
@@ -356,10 +368,18 @@ thought and in that project's intention."""
             if s.get("keep") and not s.get("auto"):
                 home = next((b for b, bs in builds.items() if set(s["cubes"]) <= set(bs["cubes"])), None)
                 (called[home] if home else alone).append(title)
+        pieces, terrain = (pieces_of(snap), terrain_of(snap)) if structures else ([], [])
+
+        def as_house(cubes):  # the house check (house.py, ADR-019): what it is short of, in words
+            verdict = assess(pieces, terrain, set(cubes))
+            if not verdict:
+                return ""
+            return f". It is {verdict}" if verdict.startswith("a house") else f". As a house: {verdict}"
         kept = "; ".join([f"{t}" + (f", which you call {' and '.join(called[t])}," if called[t] else "")
-                          + f" ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}" for t, s in builds.items()]
+                          + f" ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}{as_house(s['cubes'])}"
+                          for t, s in builds.items()]
                          + [f"{t} ({len(structures[t]['cubes'])} pieces): {self._layout(snap, structures[t]['cubes'])}"
-                            for t in alone]) or "none"
+                            f"{as_house(structures[t]['cubes'])}" for t in alone]) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
         cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in known_stacks for n in names[-1:]]
         cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]

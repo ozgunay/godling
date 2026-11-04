@@ -39,9 +39,13 @@ def test_weather_here():
     dry = snap([ground()])
     assert sk._weather_here(dry) == ""
     rain = {"Rain": 0.5}
-    assert "walls round you" in sk._weather_here(snap([ground()], clock=rain, attrs={"Sheltered": "enclosed"}))
+    assert sk._weather_here(snap([ground()], clock=rain, attrs={"Sheltered": "enclosed", "Cold": True})) == (
+        "; here you are under a roof with walls round you, out of the rain, but still cold: a roof only halves it")
+    assert sk._weather_here(snap([ground()], attrs={"Sheltered": "house"})) == (
+        "; here you are inside a house, out of the rain and the cold")
     assert sk._weather_here(snap([ground()], clock=rain, attrs={"Sheltered": "roof"})).endswith("out of the rain")
-    assert sk._weather_here(snap([ground()], clock=rain, attrs={"Sheltered": "roof", "Cold": True})).endswith("still cold")
+    assert sk._weather_here(snap([ground()], clock=rain, attrs={"Sheltered": "roof", "Cold": True})).endswith(
+        "still cold: a roof only halves it")
     assert sk._weather_here(snap([ground()], clock=rain)).endswith("nothing over your head")
     assert sk._weather_here(snap([ground()], attrs={"Cold": True})) == "; here you have nothing over your head, and cold"
 

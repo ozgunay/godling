@@ -371,7 +371,7 @@ def test_print_entry(capsys):
                   "could not brace", "INTEND a wall", "ok  jump: up", "FAIL jump: no",
                   "WAIT   body waited 4s", "REPLAN next plan discarded: r1", "CARRY  keeping the next plan although r2",
                   "BUBBLE fish, happy", "BUBBLE unreadable: ?", "FORGET skill a", "KEEP   skill b",
-                  "LEARN  new skill c(o) v2: d", "SLEEP  ships", "intentions: ['hut']", "BUILT  walls 1",
+                  "LEARN  new skill c(o) v2: d", "SLEEP  ships", "intentions: ['hut']", "BUILT  houses 0, walls 1",
                   "NOTICE something", "ERROR  oops", "CUSTOM"):
         assert words in out, words
     assert "0.5s" not in out

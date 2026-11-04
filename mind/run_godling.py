@@ -781,7 +781,7 @@ def print_entry(entry):
     elif kind == "sleep":
         print(f"[{stamp}] SLEEP  {entry.get('dream', '')}\n[{stamp}]        intentions: {[i['text'] for i in entry['intentions']]}", flush=True)
     elif kind == "structures":
-        print(f"[{stamp}] BUILT  walls {entry['walls']}, enclosures {entry['enclosures']} ({entry['roofed']} roofed), "
+        print(f"[{stamp}] BUILT  houses {entry.get('houses', 0)}, walls {entry['walls']}, enclosures {entry['enclosures']} ({entry['roofed']} roofed), "
               f"spans {entry['spans']}, posts {entry['posts']}, floors {entry['floors']}, largest {entry['largest_structure']} "
               f"pieces, tallest {entry['tallest']}, fastened {entry['fastened']}", flush=True)
     else:

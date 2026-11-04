@@ -169,7 +169,8 @@ class Snapshot:
         self.freed = attrs.get("Freed") or 0  # times the world moved the body out from inside a piece
         # Weather on the body (main.lua WEATHER): soaked 0-100, cold, out in the rain, and what shelters it.
         self.wet, self.cold, self.in_rain = attrs.get("Wet") or 0, bool(attrs.get("Cold")), bool(attrs.get("InRain"))
-        self.sheltered = attrs.get("Sheltered") or ""
+        self.sheltered = attrs.get("Sheltered") or ""  # "", "roof", "enclosed" or "house" (main.lua, ADR-019)
+        self.by_fire = bool(attrs.get("ByFire"))
         self.walk_speed = attrs.get("WalkSpeed")  # the pace now: a heavy load and the rain slow it
         fx, fz = attrs.get("ViewForwardX"), attrs.get("ViewForwardZ")  # which way the body faces
         self.facing = (fx, fz) if isinstance(fx, (int, float)) and isinstance(fz, (int, float)) else None

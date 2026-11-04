@@ -2023,6 +2023,8 @@ local FAINT_HUNGER, FAINT_HEALTH = 50, 30
 local HARM = {
     healWhenFed = 50, healSeconds = 1800,
     coldDrainSeconds = 2400, -- cold (WEATHER) takes a whole body's health in 40 minutes, and stops healing
+    coldHalves = 0.5, -- a fire close by halves the cold, and so does a roof over the head; only a house keeps it off
+    houseHeals = 2, -- inside a house a fed body mends twice as fast (ADR-019)
     lightning = 35, lightningRange = 7, -- from the struck palm's trunk
     meteor = 45, meteorRange = 6, -- from where the stone lands
 }
@@ -2100,9 +2102,9 @@ local function tickSurvival(dt)
                 s.health = s.health - dt * 100 / STARVE_SECONDS
             end
             if s.cold then
-                s.health = s.health - dt * 100 / HARM.coldDrainSeconds
+                s.health = s.health - dt * 100 / HARM.coldDrainSeconds * (s.coldPace or 1)
             elseif s.hunger >= HARM.healWhenFed and s.health < 100 then -- well fed and warm, a body mends
-                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds)
+                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and HARM.houseHeals or 1))
             end
             s.beat = s.beat + dt
             if s.health <= 0 then
@@ -2463,10 +2465,11 @@ end
 -- - In heavy rain thunderstorms break: lightning strikes a palm near Godling every few minutes.
 -- - Some mornings fog comes in from the sea and hides what is further than a stone's throw.
 -- - Out in the rain the body is slowed and gets soaked. Nights are cold, and so is being soaked in the rain; cold wears
---   health down and stops healing. A roof overhead keeps the rain off; a roof with walls on three sides, or a fire close
---   by, keeps the cold off. Rain puts every fire out, and leaves the wood too damp to light for a while after.
--- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, InRain, Sheltered ("",
--- "roof" or "enclosed") and its current WalkSpeed.
+--   health down and stops healing. A roof overhead keeps the rain off and halves the cold; a fire close by halves it
+--   too. Only inside a house (ADR-019) is the body warm, and there a fed body mends twice as fast. Rain puts every
+--   fire out, and leaves the wood too damp to light for a while after.
+-- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, ByFire, InRain,
+-- Sheltered ("", "roof", "enclosed": a roof with walls on three sides, or "house") and its current WalkSpeed.
 local stormStrike -- with the sky events below: lightning on a palm near Godling
 -- Rain, cold and shelter. Like the other newer sections, a function of its own, so its locals stay out of the main
 -- chunk's (Luau allows 200 locals in one function, and the world script has come close).
@@ -2569,6 +2572,62 @@ local tickWeather = (function()
         return sides >= 3 and "enclosed" or "roof"
     end
 
+    -- A house (ADR-019; mind/godling/house.py is the same check, held to the same layouts by the tests): the body
+    -- stands in a room of clear cells, each with a roof over it more than the body's height up, walls at least two
+    -- blocks high round the room, and one doorway it can walk through. Shelter is what the body feels where it
+    -- stands; a house is what was built, and only inside one is the body warm.
+    local HOUSE_MOST = 64 -- cells: more is open ground under something wide, not a house
+    local SIDES = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    local function houseAt(player, hrp)
+        local p = hrp.Position
+        local floor = p.Y - BODY_ABOVE_FEET
+        local function solid(c, lo, hi) -- anything held in place in the cell between these heights above the floor
+            return anchoredIn(player, Vector3.new(c[1] * GRID, floor + (lo + hi) / 2, c[2] * GRID),
+                Vector3.new(GRID - 0.2, hi - lo, GRID - 0.2))
+        end
+        local function clear(c) -- room to stand, on a floor
+            return not solid(c, 0.2, 5.02) and solid(c, -0.7, 0.05)
+        end
+        local function roofed(c)
+            return solid(c, 4.95, 15)
+        end
+        local function key(c)
+            return c[1] .. "," .. c[2]
+        end
+        local start = { math.floor(p.X / GRID + 0.5), math.floor(p.Z / GRID + 0.5) }
+        if not (clear(start) and roofed(start)) then
+            return false
+        end
+        local room, side, queue, n = { [key(start)] = true }, {}, { start }, 1
+        while #queue > 0 do
+            local c = table.remove(queue)
+            for _, d in ipairs(SIDES) do
+                local next = { c[1] + d[1], c[2] + d[2] }
+                local k = key(next)
+                if not room[k] and not side[k] then
+                    if clear(next) and roofed(next) then
+                        room[k], n = true, n + 1
+                        if n > HOUSE_MOST then
+                            return false
+                        end
+                        table.insert(queue, next)
+                    else
+                        side[k] = next
+                    end
+                end
+            end
+        end
+        local doors = 0
+        for _, c in pairs(side) do
+            if clear(c) then
+                doors = doors + 1
+            elseif not (solid(c, 0.2, 2.3) and solid(c, 2.7, 4.8)) then
+                return false -- a wall lower than two blocks
+            end
+        end
+        return doors == 1
+    end
+
     local function tickWeather(dt)
         weather.clock = weather.clock + dt
         weather.left = weather.left - dt
@@ -2606,6 +2665,9 @@ local tickWeather = (function()
             local s = hrp and surviving[player]
             if s then
                 local shelter = shelterOf(player, hrp)
+                if shelter ~= "" and houseAt(player, hrp) then
+                    shelter = "house"
+                end
                 local inRain = weather.rain > 0.3 and shelter == ""
                 local byFire = false
                 for fire in pairs(fires) do
@@ -2616,7 +2678,11 @@ local tickWeather = (function()
                 end
                 s.wet = math.clamp((s.wet or 0) + (inRain and step * 100 / WET_SECONDS
                     or -step * 100 / DRY_SECONDS * (byFire and FIRE_DRIES or 1)), 0, 100)
-                s.cold = not (byFire or shelter == "enclosed") and (night or (inRain and s.wet >= 50))
+                -- Night, or soaked in the rain, is cold; only a house keeps it off. A fire close by halves it, and so
+                -- does a roof over the head (ADR-019).
+                s.house = shelter == "house"
+                s.cold = not s.house and (night or (inRain and s.wet >= 50))
+                s.coldPace = (byFire and HARM.coldHalves or 1) * (shelter ~= "" and HARM.coldHalves or 1)
                 if player:GetAttribute("InRain") ~= inRain then
                     player:SetAttribute("InRain", inRain)
                     player:SetAttribute("RainPace", inRain and RAIN_PACE or 1)
@@ -2624,6 +2690,7 @@ local tickWeather = (function()
                 end
                 player:SetAttribute("Wet", math.floor(s.wet + 0.5))
                 player:SetAttribute("Cold", s.cold)
+                player:SetAttribute("ByFire", byFire)
                 player:SetAttribute("Sheltered", shelter)
             end
         end

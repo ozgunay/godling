@@ -122,6 +122,56 @@ T.test("shelter: a roof keeps the rain off; with walls round it, the cold too; a
     T.ok(x.surviving[g].wet < 50, "drying by the fire")
 end)
 
+-- A house (ADR-019): the one-cell hut of mind/tests/test_house.py, held by the world's own copy of the check (houseAt).
+T.test("a house: only inside one is the body warm at night, mending twice as fast; a roof or a fire halves the cold", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local spot = w.openSpot(10)
+    local cx, cz = math.floor(spot.X / 2.5 + 0.5) * 2.5, math.floor(spot.Z / 2.5 + 0.5) * 2.5
+    local g = w.godling(V.new(cx, 2.55, cz))
+    local n = 0
+    local function block(dx, dz, layer)
+        n = n + 1
+        return e.part("Block_" .. 900 + n, { Size = V.new(2.5, 2.5, 2.5),
+            Position = V.new(cx + dx * 2.5, (layer - 0.5) * 2.5, cz + dz * 2.5), Anchored = true,
+            attrs = { RenderRole = "PickupObject", IsPickupObject = true } })
+    end
+    for layer = 1, 3 do -- posts three blocks high, west and east
+        block(-1, 0, layer)
+        block(1, 0, layer)
+    end
+    local north = { block(0, 1, 1), block(0, 1, 2) } -- the doorway is south
+    local roof = e.part("Log_901", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(cx, 8.75, cz), Anchored = true,
+        attrs = { RenderRole = "Log", IsPickupObject = true } })
+    e.step(1400, 10) -- into the night
+    local s = x.surviving[g]
+    s.wet, s.hunger, s.health = 0, 100, 50
+    e.step(2, 1)
+    T.eq(g:GetAttribute("Sheltered"), "house")
+    T.eq(g:GetAttribute("Cold"), false, "warm in a house at night")
+    local function over(seconds)
+        local before = s.health
+        e.step(seconds, 1)
+        return s.health - before
+    end
+    T.near(over(10), 10 * 100 / 1800 * 2, 0.05, "mending twice as fast")
+    north[2]:Destroy() -- the north wall one block high: walls on three sides and a roof, but no house
+    e.step(2, 1)
+    T.eq(g:GetAttribute("Sheltered"), "enclosed")
+    T.eq(g:GetAttribute("Cold"), true, "cold, under a roof")
+    T.near(over(10), -10 * 100 / 2400 * 0.5, 0.02, "a roof halves the cold")
+    local log = e.part("Log_902", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(cx + 2, 1.25, cz - 6), Anchored = true,
+        attrs = { RenderRole = "Log", IsPickupObject = true } })
+    x.lightFire(log)
+    e.step(2, 1)
+    T.eq(g:GetAttribute("ByFire"), true)
+    T.near(over(10), -10 * 100 / 2400 * 0.25, 0.02, "and a fire close by halves it again")
+    roof:Destroy()
+    e.step(2, 1)
+    T.eq(g:GetAttribute("Sheltered"), "")
+    T.near(over(10), -10 * 100 / 2400 * 0.5, 0.02, "out in the open, a fire alone halves it")
+end)
+
 -- Many days of weather, with Godling on the beach by the raft: it rains and dries, a wet spell sets in, storms
 -- strike palms near it, fog comes some mornings, logs wash up, and a ship passes far out.
 T.test("the weather over nine days, the driftwood, and a passing ship", function()

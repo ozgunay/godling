@@ -69,9 +69,14 @@ def test_island_map_and_feelings():
     feels = _how_it_feels(snap([ground()], clock={"Rain": 0.5, "WindX": 0.8},
                                attrs={"InRain": True, "Wet": 80, "Cold": True, "Sheltered": "enclosed"}))
     assert feels == ("A storm wind is blowing. It is raining, and you are out in it: it slows your walking. You are soaked "
-                     "through (80%). You are cold, and it is wearing your health down. You stand under a roof with walls "
-                     "around you.")
+                     "through (80%). You stand under a roof with walls around you, which halves the cold; this is not a "
+                     "house, which would keep it off. You are cold, and it is wearing your health down.")
     assert "You are wet (20%)" in _how_it_feels(snap([ground()], attrs={"Wet": 20, "Sheltered": "roof"}))
+    # ADR-019: only a house keeps the cold off; a fire close by halves it, or warms by day.
+    assert _how_it_feels(snap([ground()], attrs={"Sheltered": "house", "ByFire": True})) == (
+        "You are inside a house: warm and dry, mending twice as fast while fed. A fire close by warms you.")
+    assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
+        "A fire close by halves the cold. You are cold, and it is wearing your health down.")
 
 
 def test_prompts(world, tmp_path):
@@ -84,6 +89,11 @@ def test_prompts(world, tmp_path):
     assert "- Palms (2, about 10 tall): Palm_2 (10, 10), Palm_10 (12, 12)" in system
     assert "- Trees (1, about 10 tall): Tree_x (-12, 12)" in system
     assert "- Peak: centre" in system and "- Quarry: centre" in system
+    # ADR-019: what a house is, what keeps the cold off, and how fire is made, as plain facts of the world.
+    assert "A house is at least one clear space" in system and "one doorway you can walk through" in system
+    assert "Inside your house a fed body mends twice as fast." in system
+    assert "hold your spear and rub it hard against a log lying on the ground" in system
+    assert "a coconut's dry husk" in system
     assert '"agenda"' in system
     one = make_mind(world, tmp_path, FakeLLM(), agenda=False)
     flat = one.system_prompt(s)
@@ -262,6 +272,9 @@ def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
     assert "Stacks: none." in text
     assert ("build at (10.0, 0.0) (10 pieces): layer 1: (7.5, -2.5), (7.5, 0.0), (7.5, 2.5), (10.0, -2.5), "
             "(10.0, 2.5), (12.5, -2.5), (12.5, 0.0), (12.5, 2.5); layer 2: (7.5, -2.5), (12.5, 2.5)") in text
+    # A closed ring one block high (two corners higher): no house yet, and the check says why.
+    assert (". As a house: there is no doorway to walk in by; the wall is lower than two blocks at (7.5, 0.0), "
+            "(10.0, -2.5), (10.0, 2.5), (12.5, 0.0); there is no roof over the cell inside, at (10.0, 0.0)") in text
     r = body.run("pick_up", {"object": "Block_2"})
     assert not r.ok and r.summary == ("Block_2 is part of build at (10.0, 0.0), which you built; release that first "
                                       "if you mean to take it apart")

@@ -101,12 +101,13 @@ def _weather_here(snap):
     """How the weather finds the body where it now stands, when it rains or the body is cold (ADR-010). Walking and
     waiting say it, so a step meant to keep dry or warm shows whether it did: run n8's own shelter_wait reported
     success 119 times, and not once was the body out of the rain."""
-    if snap.rain < 0.3 and not snap.cold:
+    if snap.rain < 0.3 and not snap.cold and snap.sheltered != "house":
         return ""
-    if snap.sheltered == "enclosed":
-        return "; here you are under a roof with walls round you, out of the rain and the cold"
-    if snap.sheltered == "roof":
-        return "; here you are under a roof, out of the rain" + (", but still cold" if snap.cold else "")
+    if snap.sheltered == "house":  # ADR-019: only a house keeps the cold off
+        return "; here you are inside a house, out of the rain and the cold"
+    if snap.sheltered in ("roof", "enclosed"):
+        return ("; here you are under a roof" + (" with walls round you" if snap.sheltered == "enclosed" else "")
+                + ", out of the rain" + (", but still cold: a roof only halves it" if snap.cold else ""))
     return ("; here you are out in the rain with nothing over your head" if snap.rain >= 0.3
             else "; here you have nothing over your head") + (", and cold" if snap.cold else "")
 
