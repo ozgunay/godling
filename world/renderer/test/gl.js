@@ -55,6 +55,7 @@ export async function threeWithFakeGL() {
     render(scene, camera) {
       renders.count += 1
       renders.camera = camera
+      renders.renderer = this
       this.last = { scene, camera }
     }
 

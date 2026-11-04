@@ -14,6 +14,7 @@ import { createRain } from './rain.js'
 import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
 import { createBlasts } from './blast.js'
+import { createLightning } from './lightning.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
@@ -399,7 +400,8 @@ export function createRenderer(ctx) {
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.2
+  const EXPOSURE = 1.2
+  renderer.toneMappingExposure = EXPOSURE
   renderer.outputColorSpace = THREE.SRGBColorSpace
   let viewport = { width: 1, height: 1, dpr: globalThis.devicePixelRatio || 1 }
   const applyResolution = () => {
@@ -500,6 +502,11 @@ export function createRenderer(ctx) {
   const dust = createDust(scene, tier)
   // Meteors: the blast where one lands (a Blast_<n> marker), and the trail of one falling (blast.js).
   const blasts = createBlasts(scene, tier, { onMaterial })
+  // Lightning: a strike where a SkyBolt_<n> marker appears (lightning.js), lighting the ground with the meteor's
+  // flash light. `?bolt=4` strikes near the camera's target every 4 seconds, to look.
+  const lightning = createLightning(scene, tier, { light: blasts.light })
+  const boltEvery = Number(params.get('bolt'))
+  let nextBolt = 1
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
   let worldQuake = Number.isFinite(forcedQuake) ? forcedQuake : 0
   let quakeNow = worldQuake
@@ -721,6 +728,8 @@ export function createRenderer(ctx) {
       }
       case 'SkyShadow':
         return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
+      case 'SkyFlash': // a lightning strike's marker: the bolt is drawn by lightning.js, the part itself never
+        return { kind: 'none' }
       case 'Blast': // a meteor's contact point: its explosion is drawn by blast.js, the part itself never
         return { kind: 'none' }
       case 'Crater': { // lying on the ground, its foot on it (as crater.glb, whose base is the ground)
@@ -929,6 +938,7 @@ export function createRenderer(ctx) {
         quakePhase = String(entity.attributes?.QuakePhase ?? '')
       }
       blasts.watch(entity, dt)
+      lightning.watch(entity)
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -1031,6 +1041,7 @@ export function createRenderer(ctx) {
     bubbles.prune(activeIds)
     dust.prune(activeIds)
     blasts.prune(activeIds)
+    lightning.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -1153,9 +1164,16 @@ export function createRenderer(ctx) {
     fish.update(swimming, sea, elapsed)
     dust.update({ time: elapsed, daylight: sky.daylight })
     ambient.intensity += blasts.update({ time: elapsed, dt, daylight: sky.daylight, wind: wind.now, camera })
+    if (boltEvery > 0 && elapsed >= nextBolt) {
+      nextBolt = elapsed + boltEvery
+      const angle = elapsed * 2.3
+      lightning.strike(cameraTarget.x + Math.cos(angle) * 12, 0, cameraTarget.z + Math.sin(angle) * 12, Math.floor(elapsed * 1000))
+    }
+    ambient.intensity += lightning.update({ time: elapsed, daylight: sky.daylight })
+    renderer.toneMappingExposure = EXPOSURE * lightning.exposure()
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
-    shake.apply(camera, Math.min(1, quakeNow + blasts.jolt(camera.position)), elapsed)
+    shake.apply(camera, Math.min(1, quakeNow + blasts.jolt(camera.position) + lightning.jolt(camera.position)), elapsed)
     renderer.render(scene, camera)
     shake.restore(camera)
     globalThis.__godlingRenderer?.afterDraw?.(elapsed) // for checks: the frame is still in the canvas here
@@ -1173,6 +1191,7 @@ export function createRenderer(ctx) {
     delay: () => stateBuffer.delayMs(), // how far behind the stream it is drawn, in ms
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
+    lightning: () => lightning.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
     bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
@@ -1255,6 +1274,7 @@ export function createRenderer(ctx) {
       fish.dispose()
       dust.dispose()
       blasts.dispose()
+      lightning.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()
