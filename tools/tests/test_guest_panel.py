@@ -93,18 +93,39 @@ def test_mind_status(tmp_path, monkeypatch):
         {"kind": "glance", "text": "Block_1 is gone", "turned": False},
         {"kind": "glance", "text": "never noticed"},
         {"kind": "decision", "time": 6, "thought": "go to www.evil.com", "needs": ""},
+        {"kind": "learn", "time": 7, "name": "hop", "does": "hops to www.evil.com"},
+        {"kind": "project", "phase": "start", "time": 8, "intention": "visit www.evil.com", "goal": ""},
     ]
     log.write_text("first line is cut off\n" + "\n".join(json.dumps(e) for e in entries) + "\nnot json\n")
     out = gp.mind_status(tmp_path)
-    assert out["thought"] == "…" and out["needs"] == "" and out["intention"] == "eat"
+    assert out["thought"] == "…" and out["needs"] == "" and out["intention"] == "…"
+    assert out["now"] == {"time": 8, "text": "…", "step": 1, "of": 0}  # what Godling does now is cleaned too
     assert out["bubble"] == {"thing": "fish", "feeling": "hungry"}
     feed = out["feed"]
-    assert [f["who"] for f in feed] == ["godling", "sky", "notice", "godling"]
+    assert [f["who"] for f in feed] == ["godling", "sky", "notice", "godling", "godling"]
+    assert feed[-1] == {"time": 7, "who": "godling", "about": "learned", "text": "…", "name": "hop"}
     assert feed[1]["glance"] == 90 and feed[2]["glance"] == 0
     assert gp.mind_status(tmp_path) is out  # the log has not grown: not read again
     monkeypatch.setitem(gp._mind_seen, "key", None)
     monkeypatch.setattr(gp, "LOG_TAIL_BYTES", 10)  # only the tail is read
     assert gp.mind_status(tmp_path)["feed"] == []
+
+
+def test_replay_tracks_are_cleaned_as_the_live_mind_is(tmp_path):
+    t = 1_793_700_000  # seconds
+    day, hour = gp.replay.day_hour(t * 1000)
+    tracks = tmp_path / f"replay/tracks/{day}/{hour}.jsonl"
+    tracks.parent.mkdir(parents=True)
+    entries = [{"time": t, "kind": "decision", "thought": "fine", "needs": "www.evil.com"},
+               {"time": t + 1, "kind": "learn", "name": "hop", "does": "hops to www.evil.com"},
+               {"time": t + 2, "kind": "sleep", "dream": "a dream of www.evil.com"},
+               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False}]
+    tracks.write_text("".join(json.dumps(e) + "\n" for e in entries))
+    got = gp.replay_tracks(tmp_path, (t - 10) * 1000, (t + 10) * 1000)["entries"]
+    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got] == [
+        ("fine", "…", None, None, None), (None, None, "…", None, None), (None, None, None, "…", None),
+        (None, None, None, None, "…")]
+    assert got[1]["name"] == "hop"
 
 
 # ---- the sky player ------------------------------------------------------------------------------------------------
@@ -214,8 +235,11 @@ def test_status_with_godling():
     island = gp.Island(FakeSky(), 180, 60)
     island.clock = {"TimeOfDay": 12, "Day": 3, "Rain": 0.5, "WindX": 3, "WindZ": 4, "QuakePhase": "rumble",
                     "GodlingHealth": 90, "GodlingHunger": 40, "GodlingCold": 1, "GodlingBracing": True}
+    assert island.status("")["clock"]["at"] is None  # never read: the screen dates its lines from the status's time
+    island.clock_at = 1_793_700_000.5  # when the Clock was read, for the screen to date its lines from
     s = island.status("")
-    assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble"}
+    assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble",
+                          "at": 1_793_700_000.5}
     assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False}
     assert s["notes"]["wait"] == 0
 

@@ -48,7 +48,7 @@ DECOR_ROLES = ("Crater", "SandMark")  # anchored and walked through by design
 NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch")  # name prefixes the world counts on from
 
 CONSOLE = {"decision": "THINK", "skill": "  DO", "event": "NOTICE", "sleep": "SLEEP", "llm": None, "error": "ERROR",
-           "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None}
+           "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None, "thinking": None}
 
 
 def main():
@@ -427,6 +427,8 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
                 plan_in_background(snap)
             waited = time.time()
             future, state["future"] = state["future"], None
+            if not future.done():  # the body stands until its mind has thought: the viewers' screen says so
+                log(kind="thinking")
             watch_while_thinking(future, world, attention, skills)
             thought = future.result()
             gap = time.time() - waited
@@ -456,7 +458,8 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         elapsed = time.time() - began
         stats["projects"] += 1
         state["agenda_busy"] += elapsed
-        log(kind="project", phase="end", goal=project["goal"], ok=ok, seconds=round(elapsed, 2))
+        log(kind="project", phase="end", goal=project["goal"], intention=project["intention"], ok=ok,
+            seconds=round(elapsed, 2))
         if any("interrupted:" in r.summary for r in results):
             state["agenda"].clear()  # something salient happened: rethink from reality
             if state["future"] is not None:
