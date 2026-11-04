@@ -19,6 +19,7 @@ import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
 import { createHands, IN_HAND } from './hands.js'
+import { createCutaway, CUTAWAY_ROLES } from './cutaway.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
 import { createStateBuffer } from './buffer.js'
@@ -612,6 +613,8 @@ export function createRenderer(ctx) {
   })
   const characters = createCharacterController(models)
   const hands = createHands(characters)
+  const cutaway = createCutaway() // building pieces left out of the picture while they hide the body followed
+  const nowhere = new THREE.Matrix4().makeScale(0, 0, 0) // an instance drawn at no size: not drawn
   // The runtime serves asset://name.glb from the folder it puts in each entity's model_url: learn it from one of them.
   let assetBase = null
   const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
@@ -941,6 +944,7 @@ export function createRenderer(ctx) {
     const landKey = []
     const swimming = []
     const toHand = [] // tools in a hand, or on their way in or out
+    const building = [] // building pieces drawn this frame, for the cutaway
     // The bodies, posed after the loop: by then it is known which hold a tool (a Tool whose "HeldBy" names their
     // player), for their carry clips (models.js). Only a kind hands.js draws in the hand (IN_HAND) counts: any other
     // stays where the world carries it, over the head.
@@ -1004,10 +1008,15 @@ export function createRenderer(ctx) {
         if (holder !== undefined && IN_HAND[entity.attributes?.ToolKind]) carrying.add(holder)
         if (holder !== undefined || hands.has(entity.id)) {
           toHand.push({ record, entity, holder })
-        } else if (moved || record.fresh !== false || record.swims) {
-          // A swimming fish sits on the water as it is drawn now, its back out and its belly under.
-          const water = record.swims ? sea.surfaceAt(position[0], position[2]) : null
-          placeSlots(record, servedMatrix(position, rotation, water == null ? position[1] : water + 0.02, entityMatrix))
+        } else {
+          if (shown && CUTAWAY_ROLES.has(role) && entity.size) {
+            building.push({ id: entity.id, position, size: entity.size, rotation })
+          }
+          if (moved || record.fresh !== false || record.swims) {
+            // A swimming fish sits on the water as it is drawn now, its back out and its belly under.
+            const water = record.swims ? sea.surfaceAt(position[0], position[2]) : null
+            placeSlots(record, servedMatrix(position, rotation, water == null ? position[1] : water + 0.02, entityMatrix))
+          }
         }
         const colorKey = entity.render?.color ? entity.render.color.join(',') : ''
         if (colorKey !== record.color) {
@@ -1132,6 +1141,26 @@ export function createRenderer(ctx) {
       }
     }
 
+    // The roof off (cutaway.js): while the camera follows a body, what of a building close by hides it is not drawn.
+    // Not from inside the body's head (Godling's own eyes, the capture), nor for a free camera.
+    const inHead = cameraModes?.spectator?.state?.poseOverride || cameraModes?.spectator?.state?.attach
+    const followed = cameraMode === 'follow' && !inHead && followTarget?.root_part_id !== hiddenBodyId ? followTarget : null
+    const cut = cutaway.update({
+      body: followed && Array.isArray(followed.position)
+        ? { position: followed.position, sheltered: Boolean(followed.attributes?.Sheltered) }
+        : null,
+      camera: camera.position.toArray(),
+      pieces: building,
+      dt,
+    })
+    for (const id of cut.hidden) {
+      for (const s of records.get(id)?.slots || []) instancer.setMatrix(s.slot, nowhere)
+    }
+    for (const id of cut.restored) {
+      const record = records.get(id)
+      if (record?.position) placeSlots(record, servedMatrix(record.position, record.rotation, record.position[1], entityMatrix))
+    }
+
     return { seaLevel, land, landKey: landKey.join(';'), cameraTarget, swimming }
   }
 
@@ -1231,6 +1260,7 @@ export function createRenderer(ctx) {
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
     hands: () => hands.info(), // tools in hands, or on their way in or out
+    cutaway: () => cutaway.hidden(), // building pieces left out of the picture now (cutaway.js)
     state: () => latestObs, // the island as last drawn: between two updates, as interpolated
     delay: () => stateBuffer.delayMs(), // how far behind the stream it is drawn, in ms
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
@@ -1307,6 +1337,7 @@ export function createRenderer(ctx) {
       instancer.clear()
       characters.clear()
       hands.clear()
+      cutaway.clear()
       bubbles.dispose()
       models.dispose()
       kit.dispose()
