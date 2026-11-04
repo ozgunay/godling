@@ -17,6 +17,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - The sizes below that predate ADR-005 have been rescaled in `main.lua`.
 - **Human-paced body (ADR-003 O2).**
   - A picked-up block rises into the hands over `LIFT_SECONDS` (1.0 s). Upstream it snaps there.
+  - A held piece is carried over the head (`HOLD_OFFSET`, 4 above the body's middle), where the mind looks for what it holds and where it keeps the rain off (`Sheltered`). While held it names its holder in `HeldBy` (the player's name), so the renderer can draw a tool in the hand instead. The island save drops `HeldBy`.
   - A placed block is lowered into place over `PLACE_SECONDS` (1.2 s). Upstream it takes 0.3 s.
   - Walking pace is set per run (`--walk-speed`, default 5).
   - The jump is a person's hop: `JUMP_POWER` 15 lifts the body about 0.6. Upstream's jump is about 6.6.
@@ -160,6 +161,10 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Brace (crouched, holding on) loops while `Bracing` is true; without the clip the body stays in Idle. Climb wins over Brace, and while either holds, nothing else plays.
     - Knocked down by an earthquake (`KnockedDown`), the body stays in Stagger's last pose until it is false, and WakeUp gets it up.
     - `__godlingRenderer.animations()` lists each character's one-shot and clip weights, for checking a new model.
+  - **Tools in the hand** (`hands.js`): a `Tool` whose `HeldBy` names a player is drawn on that body's right hand bone (`mixamorigRightHand`), not over its head where the world carries it.
+    - The grip is the middle of the right mitten, measured once from the model's rest pose (`models.js`). Each `ToolKind` has its own grip in `IN_HAND`: where the fist closes on the handle, and how far the head dips. The head points past the thumb.
+    - A tool picked up eases from where the world has it into the hand over 0.4 s, and back out when set down. A model without the hand bone draws tools where the world has them, as does a body hidden in a first-person capture.
+    - `__godlingRenderer.hands()` lists the tools in hands, for checks.
   - **Models** (`models.js`): each loads once.
     - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.
     - Animated ones (Godling) get their own mixer. The clips follow the attributes above, and Walk plays at the body's real speed.

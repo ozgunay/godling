@@ -35,7 +35,8 @@ def snapshot():
         return {k: {"type": "Number" if isinstance(v, (int, float)) and not isinstance(v, bool) else
                     "Bool" if isinstance(v, bool) else "String", "value": v} for k, v in kw.items()}
     return {"instance": {"workspace_children": [
-        {"name": "Block_12", "class_name": "Part", "part": part(1), "attributes": attrs(RenderRole="PickupObject", Fastened=True)},
+        {"name": "Block_12", "class_name": "Part", "part": part(1), "attributes": attrs(RenderRole="PickupObject", Fastened=True,
+                                                                                                 HeldBy="Godling")},
         {"name": "Stone_3", "class_name": "Part", "part": part(2), "attributes": attrs(RenderRole="Stone", SkyId=9)},
         {"name": "Crater_1", "class_name": "Part", "part": part(3, True, False), "attributes": attrs(RenderRole="Crater")},
         {"name": "Meteor_2", "class_name": "Part", "part": part(4, True, False), "attributes": attrs(RenderRole="Stone")},
@@ -57,7 +58,7 @@ def test_island_of_keeps_what_a_restart_needs():
     island = rg.island_of(snapshot())
     names = [p["name"] for p in island["pieces"]]
     assert names == ["Crater_1", "Block_12", "Mark_x", "Stone_3"]  # craters first, then by kind and number
-    assert island["pieces"][1]["attrs"] == {"RenderRole": "PickupObject", "Fastened": True}
+    assert island["pieces"][1]["attrs"] == {"RenderRole": "PickupObject", "Fastened": True}  # no hand holds it now
     assert [f["name"] for f in island["felled"]] == ["Stump_4"] and "FelledAt" not in island["felled"][0]["attrs"]
     assert island["counters"] == {"Sky": 9, "Block": 12, "Stone": 3, "Meteor": 2} or island["counters"]["Block"] == 12
     assert island["clock"] == pytest.approx(2400 + 13 / 24 * 2400 - 7 / 24 * 2400)

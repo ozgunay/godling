@@ -18,6 +18,7 @@ import { createLightning } from './lightning.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
+import { createHands } from './hands.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
 import { createStateBuffer } from './buffer.js'
@@ -610,6 +611,7 @@ export function createRenderer(ctx) {
     onMaterial,
   })
   const characters = createCharacterController(models)
+  const hands = createHands(characters)
   // The runtime serves asset://name.glb from the folder it puts in each entity's model_url: learn it from one of them.
   let assetBase = null
   const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
@@ -633,6 +635,7 @@ export function createRenderer(ctx) {
   const tmpForward = new THREE.Vector3(0, 0, 1)
   const anchorPos = new THREE.Vector3(0, 4, 0)
   const entityMatrix = new THREE.Matrix4()
+  const heldMatrix = new THREE.Matrix4()
   const partMatrix = new THREE.Matrix4()
   const color = new THREE.Color()
   let lastStateMs = performance.now()
@@ -894,17 +897,34 @@ export function createRenderer(ctx) {
     return new THREE.Vector3(sumX / count, sumY / count, sumZ / count)
   }
 
+  // Where the world has a part: its position, its rotation's rows if it has one, and the height to draw it at.
+  function servedMatrix(position, rotation, y, out) {
+    if (!rotation) return out.makeTranslation(position[0], y, position[2])
+    return out.set(
+      rotation[0][0], rotation[0][1], rotation[0][2], position[0],
+      rotation[1][0], rotation[1][1], rotation[1][2], y,
+      rotation[2][0], rotation[2][1], rotation[2][2], position[2],
+      0, 0, 0, 1,
+    )
+  }
+
+  function placeSlots(record, matrix) {
+    for (const s of record.slots) instancer.setMatrix(s.slot, partMatrix.multiplyMatrices(matrix, s.local))
+  }
+
   // Returns the sea level and the island's footprint for the sea.
   function updateScene(obs, dt) {
     const activeIds = new Set()
     const stateByRootPartId = new Map()
     const attributesByRootPartId = new Map()
+    const bodyByName = new Map() // a player's name -> its body's id, for a piece's "HeldBy"
     for (const player of obs.players || []) {
       if (typeof player.root_part_id === 'number' && typeof player.humanoid_state === 'string') {
         stateByRootPartId.set(player.root_part_id, player.humanoid_state)
       }
       if (typeof player.root_part_id === 'number') {
         attributesByRootPartId.set(player.root_part_id, player.attributes || {})
+        bodyByName.set(player.name, player.root_part_id)
       }
     }
 
@@ -918,6 +938,7 @@ export function createRenderer(ctx) {
     const land = []
     const landKey = []
     const swimming = []
+    const toHand = [] // tools in a hand, or on their way in or out
 
     for (const entity of obs.entities || []) {
       activeIds.add(entity.id)
@@ -971,21 +992,14 @@ export function createRenderer(ctx) {
         dust.watch(entity, dt, quakeNow, lastSeaLevel)
       }
       if (record.kind === 'parts') {
-        if (moved || record.fresh !== false || record.swims) {
+        // A tool in a hand is placed after the loop, once every body is posed for this frame.
+        const holder = role === 'Tool' ? entity.attributes?.HeldBy : undefined
+        if (holder !== undefined || hands.has(entity.id)) {
+          toHand.push({ record, entity, holder })
+        } else if (moved || record.fresh !== false || record.swims) {
           // A swimming fish sits on the water as it is drawn now, its back out and its belly under.
           const water = record.swims ? sea.surfaceAt(position[0], position[2]) : null
-          const y = water == null ? position[1] : water + 0.02
-          if (rotation) {
-            entityMatrix.set(
-              rotation[0][0], rotation[0][1], rotation[0][2], position[0],
-              rotation[1][0], rotation[1][1], rotation[1][2], y,
-              rotation[2][0], rotation[2][1], rotation[2][2], position[2],
-              0, 0, 0, 1,
-            )
-          } else {
-            entityMatrix.makeTranslation(position[0], y, position[2])
-          }
-          for (const s of record.slots) instancer.setMatrix(s.slot, partMatrix.multiplyMatrices(entityMatrix, s.local))
+          placeSlots(record, servedMatrix(position, rotation, water == null ? position[1] : water + 0.02, entityMatrix))
         }
         const colorKey = entity.render?.color ? entity.render.color.join(',') : ''
         if (colorKey !== record.color) {
@@ -1032,6 +1046,16 @@ export function createRenderer(ctx) {
       }
     }
 
+    // Tools in hands (hands.js), in the hand of the body whose player's name the piece gives, unless that body is not
+    // drawn (the camera inside its head): then where the world carries it, over the head and out of that view.
+    for (const { record, entity, holder } of toHand) {
+      const body = bodyByName.get(holder)
+      const served = servedMatrix(entity.position, entity.rotation, entity.position[1], entityMatrix)
+      const kept = hands.place({ id: entity.id, kind: entity.attributes?.ToolKind, size: entity.size },
+        body !== undefined && body !== hiddenBodyId ? body : null, served, dt, heldMatrix)
+      placeSlots(record, kept ? heldMatrix : served)
+    }
+
     for (const [id, record] of records.entries()) {
       if (!activeIds.has(id)) {
         release(record)
@@ -1039,6 +1063,7 @@ export function createRenderer(ctx) {
       }
     }
     bubbles.prune(activeIds)
+    hands.prune(activeIds)
     dust.prune(activeIds)
     blasts.prune(activeIds)
     lightning.prune(activeIds)
@@ -1187,6 +1212,7 @@ export function createRenderer(ctx) {
     sky,
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
+    hands: () => hands.info(), // tools in hands, or on their way in or out
     state: () => latestObs, // the island as last drawn: between two updates, as interpolated
     delay: () => stateBuffer.delayMs(), // how far behind the stream it is drawn, in ms
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
@@ -1262,6 +1288,7 @@ export function createRenderer(ctx) {
       colliderDebugObjects.clear()
       instancer.clear()
       characters.clear()
+      hands.clear()
       bubbles.dispose()
       models.dispose()
       kit.dispose()
