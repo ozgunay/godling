@@ -157,14 +157,30 @@ describe('the viewer screen', () => {
     expect($('.b-note .get').textContent).toMatch(/^Next note in 0:/)
   })
 
+  it('lets the viewer see inside the building Godling is in, or not, and remembers it', async () => {
+    const { $, view, told } = await boot()
+    const inside = $('.b-camera').querySelectorAll('button')[2]
+    expect(inside.textContent).toBe('See inside')
+    expect(inside.getAttribute('aria-pressed')).toBe('true') // on unless turned off
+    view.dispatchEvent(new Event('load'))
+    expect(told).toContainEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
+    inside.click()
+    expect(inside.getAttribute('aria-pressed')).toBe('false')
+    expect(localStorage.getItem('godling.cutaway')).toBe('off')
+    expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: false })
+    inside.click()
+    expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
+  })
+
   it('switches the camera, remembers it, and forwards the flying keys to the island', async () => {
     const { $, view, told } = await boot()
     const [follow, free] = $('.b-camera').querySelectorAll('button')
     expect(follow.getAttribute('aria-pressed')).toBe('true')
     view.dispatchEvent(new Event('load'))
-    expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-camera', mode: 'follow' })
+    const wish = { source: 'godling-viewer', type: 'godling-camera', mode: 'follow' }
+    expect(told).toContainEqual(wish)
     // to the island's own origin only, never to whatever page the frame was sent to instead
-    expect(view.contentWindow.postMessage).toHaveBeenLastCalledWith(told.at(-1), 'http://island')
+    expect(view.contentWindow.postMessage).toHaveBeenCalledWith(wish, 'http://island')
     free.click()
     expect(free.getAttribute('aria-pressed')).toBe('true')
     expect(localStorage.getItem('godling.camera')).toBe('free')

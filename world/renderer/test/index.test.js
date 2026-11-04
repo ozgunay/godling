@@ -369,9 +369,32 @@ describe('the renderer', () => {
     cameraModes.spectator.state.attach = null
     frames(10, hut('enclosed'))
     expect(debug.cutaway()).toContain(10)
-    frames(20, { ...hut('enclosed'), selected_player_id: null }) // nobody followed: a free camera
+    frames(10, { ...hut('enclosed'), selected_player_id: null }) // nobody followed: the free camera looks for Godling
+    expect(debug.cutaway()).toContain(10)
+    const away = hut('enclosed')
+    away.players[0].position = [40, 2.5, 40] // Godling far from the hut: the hut is drawn whole
+    frames(20, { ...away, selected_player_id: null })
     expect(debug.cutaway()).toEqual([])
     r.unmount()
+  })
+
+  it('draws every piece when the viewer turns the cutaway off', () => {
+    history.replaceState(null, '', '/?cutaway=off')
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const state = {
+      selected_player_id: 'p1',
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0], attributes: { Sheltered: 'roof' } }],
+      entities: [part(2, 'Ground', [0, -0.5, 0], [100, 1, 100]), part(1, 'Body', [0, 2.5, 0], [2, 5, 2], { rotation: I }),
+        part(10, 'Log', [0, 8.75, 0], [7.5, 2.5, 2.5])],
+    }
+    for (let i = 0; i < 10; i++) {
+      r.onState(state)
+      r.onFrame({ dt: 0.05 })
+    }
+    expect(globalThis.__godlingRenderer.cutaway()).toEqual([])
+    r.unmount()
+    history.replaceState(null, '', '/')
   })
 
   it('plays a lightning marker as a strike: the part never drawn, the picture flashing and settling', () => {

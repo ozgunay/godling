@@ -200,6 +200,10 @@ const DRAW = {
   eye() {
     return outline(rows(['....wwww....', '..wwwwwwww..', '.wwwccccwww.', 'wwwcckkccwww', '.wwwccccwww.', '..wwwwwwww..', '....wwww....']))
   },
+  roofOff() { // a hut with its roof lifted off, Godling inside: the cutaway
+    return outline(rows(['....bbb....', '..bbbbbbb..', 'bbbbbbbbbbb', '...........', 's.........s', 's...www...s',
+      's...wkw...s', 's...www...s', 'sssssssssss']))
+  },
   move() {
     return outline(rows(['.....w.....', '....www....', '.....w.....', '..w..w..w..', '.wwwwwwwww.', '..w..w..w..', '.....w.....', '....www....', '.....w.....']))
   },

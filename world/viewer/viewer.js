@@ -53,6 +53,7 @@ const stage = document.getElementById('stage')
 stage.classList.add('hud-block')
 let status = null
 let camera = store.get('godling.camera') === 'free' ? 'free' : 'follow'
+let inside = store.get('godling.cutaway') !== 'off' // see Godling through its own roof and walls (cutaway.js)
 const seen = new Set() // pop-ups already shown
 const cooling = {} // power id -> when the world lets it be called again (ms)
 let noteReadyAt = 0
@@ -102,6 +103,7 @@ function tellView(message) {
 }
 view.addEventListener('load', () => {
   tellView({ type: 'godling-camera', mode: camera })
+  tellView({ type: 'godling-cutaway', on: inside })
   past?.reloading() // the island's page says when it can hear the screen (godling-ready)
 })
 
@@ -124,7 +126,13 @@ for (const [b, mode] of [[followBtn, 'follow'], [freeBtn, 'free']]) {
   b.type = 'button'
   b.addEventListener('click', () => setCamera(mode))
 }
-cameraGroup.append(followBtn, freeBtn)
+// "See inside": the parts of Godling's building that would hide it (its roof, a wall in front) are left out of the
+// picture, with either camera. Off, every piece is drawn, to look at the building itself.
+const insideBtn = el('button', 'cam', `${icon('roofOff', 2)}<span>See inside</span>`)
+insideBtn.type = 'button'
+insideBtn.title = 'Leave out the roof and walls that hide Godling'
+insideBtn.addEventListener('click', () => setInside(!inside))
+cameraGroup.append(followBtn, freeBtn, insideBtn)
 statusBar.append(cameraGroup)
 stage.append(statusBar)
 const camHint = text('p', 'b-camhint', matchMedia('(pointer: coarse)').matches
@@ -141,6 +149,14 @@ function setCamera(mode) {
   tellView({ type: 'godling-camera', mode })
 }
 setCamera(camera)
+
+function setInside(on) {
+  inside = on
+  store.set('godling.cutaway', on ? 'on' : 'off')
+  insideBtn.setAttribute('aria-pressed', String(on))
+  tellView({ type: 'godling-cutaway', on })
+}
+setInside(inside)
 
 // ---- top-left: Godling's mind -------------------------------------------------------------
 
@@ -618,6 +634,7 @@ addEventListener('message', (event) => {
   } else if (data.type === 'godling-aim-cancel') endAim()
   else if (data.type === 'godling-ready') { // the island's page can hear the screen now: its camera, and the past
     tellView({ type: 'godling-camera', mode: camera })
+    tellView({ type: 'godling-cutaway', on: inside })
     past?.heard(data)
   } else if (String(data.type).startsWith('godling-replay')) past?.heard(data)
   else if (data.type === 'godling-stream') {

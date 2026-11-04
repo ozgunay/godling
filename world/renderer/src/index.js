@@ -566,6 +566,8 @@ export function createRenderer(ctx) {
   const freeCam = createFreeCamera(THREE, camera, ctx.canvas)
   const embedded = params.get('embed') === '1' && globalThis.parent !== globalThis
   let cameraWish = embedded ? 'follow' : null
+  // The roof off (cutaway.js), unless the viewer turns it off (the screen's "See inside", or ?cutaway=off).
+  let cutawayWish = params.get('cutaway') !== 'off'
   // Aiming a sky power (aim.js): the screen says which power; the ring follows the pointer; the spot goes back.
   const godlingAt = new THREE.Vector3()
   let godlingSeen = false
@@ -584,6 +586,7 @@ export function createRenderer(ctx) {
       const data = event.data
       if (event.source !== globalThis.parent || data?.source !== 'godling-viewer') return
       if (data.type === 'godling-camera') cameraWish = data.mode === 'free' ? 'free' : 'follow'
+      else if (data.type === 'godling-cutaway') cutawayWish = Boolean(data.on)
       else if (data.type === 'godling-key') freeCam.key(String(data.code), Boolean(data.down))
       else if (data.type === 'godling-aim') (data.power ? aim.start(String(data.power)) : aim.stop())
       else if (data.type === 'godling-replay') replay?.command(data)
@@ -1141,10 +1144,12 @@ export function createRenderer(ctx) {
       }
     }
 
-    // The roof off (cutaway.js): while the camera follows a body, what of a building close by hides it is not drawn.
-    // Not from inside the body's head (Godling's own eyes, the capture), nor for a free camera.
+    // The roof off (cutaway.js): what of a building close by hides the body the camera follows is not drawn; with the
+    // free camera, what hides Godling, the one viewers look for. Not from inside a body's head (Godling's own eyes, the
+    // capture), and not when the viewer turns it off.
     const inHead = cameraModes?.spectator?.state?.poseOverride || cameraModes?.spectator?.state?.attach
-    const followed = cameraMode === 'follow' && !inHead && followTarget?.root_part_id !== hiddenBodyId ? followTarget : null
+    const watched = cameraMode === 'follow' ? (inHead ? null : followTarget) : godling
+    const followed = cutawayWish && watched?.root_part_id !== hiddenBodyId ? watched : null
     const cut = cutaway.update({
       body: followed && Array.isArray(followed.position)
         ? { position: followed.position, sheltered: Boolean(followed.attributes?.Sheltered) }
