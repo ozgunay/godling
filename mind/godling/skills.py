@@ -727,6 +727,81 @@ class Skills:
             return f"{name} is gone (fell into the sea)"
         return f"{name} came to rest at ({obj.pos[0]:.2f}, {obj.pos[1]:.2f}, {obj.pos[2]:.2f}), {self._resting_on(snap, obj)}"
 
+    # ---- beams: a long piece laid flat, up off the ground -----------------------------------------------
+    # A roof, a lintel or a bridge is a log across two supports. It stays up only if both its ends lie on something
+    # of the same height; in runs hut1-hut3 seven of seventeen raised logs fell or tilted, set a cell off their
+    # posts, turned the wrong way, or across posts of unequal height, and the report said only "not resting on
+    # anything". Now the hands find the supports, as a person feels for the post under the beam's end: aimed within a
+    # cell or a quarter turn of two supports of the same height, the log is set on them. And when one falls anyway,
+    # the report says what was under each end.
+    @staticmethod
+    def _beam_ends(centre, size):
+        """The centres of the end cells of a long piece lying flat (along x or along z)."""
+        half = (max(size[0], size[2]) - CUBE) / 2
+        x, _, z = centre
+        return ((x - half, z), (x + half, z)) if size[0] >= size[2] else ((x, z - half), (x, z + half))
+
+    def _under_ends(self, snap, centre, size):
+        """What lies under each end of a beam at `centre`: [(x, z, top, entity)], the highest thing no higher than its
+        bottom (top and entity None over the sea)."""
+        bottom = centre[1] - size[1] / 2
+        return [(x, z, *snap.surface(x, z, below=bottom + 0.25)) for x, z in self._beam_ends(centre, size)]
+
+    @staticmethod
+    def _ends_text(ends, bottom):
+        words = []
+        for x, z, top, e in ends:
+            where = f"its end at ({x:.1f}, {z:.1f})"
+            if e is None or e.role == "Ground":
+                words.append(f"{where} had nothing under it but the ground")
+            elif top < bottom - 0.3:
+                words.append(f"{where} hung {bottom - top:.2f} above {e.name} (top {top:.2f})")
+            else:
+                words.append(f"{where} lay on {e.name} (top {top:.2f})")
+        return "; ".join(words)
+
+    def _raised_beam(self, snap, target, size, upright):
+        """Whether this is a long piece laid flat, up off the ground (a beam), rather than one lying on the ground."""
+        if upright or max(size[0], size[2]) < CUBE + 0.1:
+            return False
+        floor = snap.ground_top(target[0], target[2]) or 0.0
+        return target[1] - size[1] / 2 > floor + CUBE / 2
+
+    def _beam_on_supports(self, snap, held, target, turn, size):
+        """Where to set a beam so that both its ends rest on something of the same height: where it was aimed if they
+        do there, else the nearest of a cell either way or a quarter turn that does (nothing in the way). Supports may
+        be at most one layer below where it was aimed. Returns (target, turn, size, what it did, in words)."""
+        bottom = target[1] - size[1] / 2
+
+        def rests(centre, sz):
+            ends = self._under_ends(snap, centre, sz)
+            tops = [top for _, _, top, e in ends]
+            if any(e is None or e.role == "Ground" for _, _, _, e in ends):
+                return None
+            if max(tops) - min(tops) > 0.3 or min(tops) < bottom - CUBE - 0.3:
+                return None
+            return ends
+
+        if rests(target, size):
+            return target, turn, size, ""
+        other = 0 if turn == 90 else 90
+        options = [(turn, dx, dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        options += [(other, dx, dz) for dx, dz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))]
+        for t, dx, dz in options:
+            sz = turned_size(held.local_size, t, False)
+            ends = rests((target[0] + dx * CUBE, target[1], target[2] + dz * CUBE), sz)
+            if not ends:
+                continue
+            centre = (target[0] + dx * CUBE, max(top for _, _, top, _ in ends) + sz[1] / 2 + 0.03, target[2] + dz * CUBE)
+            if self._overlapping(snap, centre, sz, ignore={held.name}):
+                continue
+            props = ends[0][3].name if ends[0][3] is ends[1][3] else f"{ends[0][3].name} and {ends[1][3].name}"
+            aimed = (f"you aimed it at ({target[0]:.1f}, {target[1]:.2f}, {target[2]:.1f}) along "
+                     f"{'z' if turn == 90 else 'x'}, where " + self._ends_text(self._under_ends(snap, target, size), bottom))
+            moved = f"so your hands set it along {'z' if t == 90 else 'x'} with its ends on {props} instead"
+            return centre, t, sz, f" ({aimed}; {moved})"
+        return target, turn, size, ""
+
     # ---- skills ------------------------------------------------------------------------
     def skill_walk_to(self, x, z):
         x, z = float(x), float(z)
@@ -1267,6 +1342,10 @@ class Skills:
         if held.name.startswith(SNAPPED_KINDS):  # it will settle into the grid: plan for the cell it lands in
             target = (grid(target[0]), target[1], grid(target[2]))
         size = turned_size(held.local_size, turn, upright)
+        beam = not self._lifting and self._raised_beam(snap, target, size, upright)
+        snapped = ""
+        if beam:  # a log up off the ground: onto the supports its ends are aimed at, within a cell or a quarter turn
+            target, turn, size, snapped = self._beam_on_supports(snap, held, target, turn, size)
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
         stepped, floor = "", None
@@ -1289,6 +1368,7 @@ class Skills:
                     snap = self._move_once(*stand, 0.2, ignore={held.name})
                 except Stuck:
                     snap = self._observe()
+        under = self._under_ends(snap, target, size) if beam else None  # to say why, if it does not stay up
         snap = self.world.act("Place", {"position": list(target), "rotation": _rotation(turn, upright)})
         sink = self._sink(snap, target, size, held.name) if snap.last_result == "PlaceFailed:Occupied" else None
         if sink is not None:
@@ -1302,7 +1382,11 @@ class Skills:
                 why = f"that space is taken by {', '.join(blocking) or 'something'}"
             return Result(False, "place_at", f"place rejected: {why}", {"object": held.name})
         snap = self._settle(PLACE_SECONDS + 0.7)
-        said = self._describe(snap, held.name) + _orientation(turn, upright)
+        said = self._describe(snap, held.name) + _orientation(turn, upright) + snapped
+        now = snap.entities.get(held.name)
+        if beam and now is not None and (now.pos[1] < target[1] - 0.6 or "not resting" in said):
+            said += (f"; it did not stay up there: {self._ends_text(under, target[1] - size[1] / 2)}. A beam stays up "
+                     "only with both ends on something of the same height")
         if stepped:  # and back down again, as a person would: the mind never asked to stand up there
             down = self._hop_down(snap, floor[0], floor[1], self._level(snap), floor[2], walk_on=False)
             said += stepped + (", and stepped back down" if down.ok else f"; {down.summary}")

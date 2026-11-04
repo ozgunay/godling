@@ -141,6 +141,61 @@ def test_pen_of_its_own_build_still_lets_it_out(make):
     assert not asked.ok and "which you built; release that first" in asked.summary
 
 
+# ---- beams ------------------------------------------------------------------------------------------------------
+def posts(left=2, right=2):
+    """Two posts of blocks two cells apart, at x -2.5 and 2.5, `left` and `right` blocks high."""
+    return ([block(f"Block_{i + 1}", -2.5, 1.25 + 2.5 * i, 0) for i in range(left)]
+            + [block(f"Block_{i + 11}", 2.5, 1.25 + 2.5 * i, 0) for i in range(right)])
+
+
+def holding_log(make, things):
+    island, body = make(things + [ent("Log_1", (0, 1.25, 12), (7.5, 2.5, 2.5))])
+    island.me = [0, 2.55, 6]
+    island.held = "Log_1"
+    return island, body
+
+
+@pytest.mark.parametrize("aim, turn, why", [
+    ((0, 6.25, 0), 90, "along z, where its end at (0.0, -2.5) had nothing under it but the ground"),  # turned wrong
+    ((2.5, 6.25, 0), 0, "along x, where its end at (0.0, 0.0) had nothing under it but the ground"),  # a cell off
+])
+def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
+    island, body = holding_log(make, posts())
+    r = body.run("place_at", {"x": aim[0], "y": aim[1], "z": aim[2], "turn": turn})
+    assert r.ok
+    place = [d for a, d in island.acts if a == "Place"][-1]
+    assert place["position"] == pytest.approx([0, 5.0 + 1.25 + 0.03, 0])
+    assert place["rotation"] == pytest.approx(sk._rotation(0, False))
+    assert r.summary.startswith("Log_1 came to rest at (0.00, 6.28, 0.00), across Block_2 and Block_12")
+    assert f"(you aimed it at ({aim[0]:.1f}, 6.25, 0.0) {why}" in r.summary
+    assert r.summary.endswith("; so your hands set it along x with its ends on Block_2 and Block_12 instead)")
+
+
+def test_a_beam_aimed_right_goes_where_it_was_aimed(make):
+    island, body = holding_log(make, posts())
+    r = body.run("place_at", {"x": 0, "y": 6.25, "z": 0})
+    assert [d for a, d in island.acts if a == "Place"][-1]["position"] == pytest.approx([0, 6.25, 0])
+    assert r.ok and "across Block_2 and Block_12" in r.summary and "you aimed it" not in r.summary
+
+
+def test_a_beam_that_falls_says_what_was_under_its_ends(make):
+    # Posts of unequal height: nothing to set it on, and it tilts off the lower one.
+    island, body = holding_log(make, posts(2, 1))
+    island.on_act["Place"] = lambda d: island.ents["Log_1"].update(position=[0, 3.2, 0])
+    r = body.run("place_at", {"x": 0, "y": 6.25, "z": 0})
+    assert r.ok and "you aimed it" not in r.summary
+    assert r.summary.endswith("; it did not stay up there: its end at (-2.5, 0.0) lay on Block_2 (top 5.00); its end at "
+                              "(2.5, 0.0) hung 2.50 above Block_11 (top 2.50). A beam stays up only with both ends on "
+                              "something of the same height")
+
+
+def test_a_log_laid_on_the_ground_is_no_beam(make):
+    island, body = holding_log(make, posts())
+    r = body.run("place_at", {"x": 0, "y": 1.25, "z": -10, "turn": 90})
+    assert r.ok and [d for a, d in island.acts if a == "Place"][-1]["position"] == pytest.approx([0, 1.25, -10])
+    assert "aimed" not in r.summary and "stay up" not in r.summary
+
+
 # ---- reaching high -------------------------------------------------------------------------------------------
 def test_reach_high_skips_what_cannot_be_stood_on(make):
     things = [block("Block_1", -3, 1.25, 3), ent("Coconut_1", (10, 1, 0), (2, 2, 2)),
