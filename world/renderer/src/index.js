@@ -18,7 +18,7 @@ import { createLightning } from './lightning.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
-import { createHands } from './hands.js'
+import { createHands, IN_HAND } from './hands.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
 import { createStateBuffer } from './buffer.js'
@@ -908,6 +908,9 @@ export function createRenderer(ctx) {
     )
   }
 
+  // The player a Tool names as holding it (its "HeldBy", main.lua pickupBlock); undefined for anything else.
+  const heldBy = (entity) => (entity.render?.role === 'Tool' ? entity.attributes?.HeldBy : undefined)
+
   function placeSlots(record, matrix) {
     for (const s of record.slots) instancer.setMatrix(s.slot, partMatrix.multiplyMatrices(matrix, s.local))
   }
@@ -928,10 +931,13 @@ export function createRenderer(ctx) {
       }
     }
     // The bodies with a tool in the hand (a Tool whose "HeldBy" names their player), for their carry clips (models.js).
+    // Only a kind hands.js draws in the hand (IN_HAND): any other stays where the world carries it, over the head.
     const carrying = new Set()
     for (const entity of obs.entities || []) {
-      const holder = entity.render?.role === 'Tool' ? entity.attributes?.HeldBy : undefined
-      if (bodyByName.has(holder)) carrying.add(bodyByName.get(holder))
+      const holder = heldBy(entity)
+      if (holder !== undefined && IN_HAND[entity.attributes?.ToolKind] && bodyByName.has(holder)) {
+        carrying.add(bodyByName.get(holder))
+      }
     }
 
     // A first-person camera (the server's capture of what Godling sees) sits inside the body's head: hide that
@@ -999,7 +1005,7 @@ export function createRenderer(ctx) {
       }
       if (record.kind === 'parts') {
         // A tool in a hand is placed after the loop, once every body is posed for this frame.
-        const holder = role === 'Tool' ? entity.attributes?.HeldBy : undefined
+        const holder = heldBy(entity)
         if (holder !== undefined || hands.has(entity.id)) {
           toHand.push({ record, entity, holder })
         } else if (moved || record.fresh !== false || record.swims) {

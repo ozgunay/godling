@@ -179,6 +179,15 @@ describe('characters', () => {
     expect(weights(controller)).toEqual({ Walk: 1 })
   })
 
+  it('a model with a carry idle but no plain one stands in the carry idle alone while it carries', async () => {
+    const { controller, root } = await setup(['Walk', 'IdleCarry', 'WalkCarry'])
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    for (let i = 0; i < 4; i++) controller.update(1, { dt: 0.2, carrying: true })
+    expect(weights(controller)).toEqual({ IdleCarry: 1 }) // not WalkCarry as well, as if it had no idle at all
+    for (let i = 0; i < 4; i++) controller.update(1, { dt: 0.2 })
+    expect(weights(controller)).toEqual({ Walk: 1 }) // set down: no plain idle, so it walks on the spot
+  })
+
   it('a model with only a walk walks when it stands too, and a new model replaces the old', async () => {
     const { controller, root } = await setup(['Walk'])
     controller.upsert({ entityId: 2, root, modelUrl: '/c.glb' })

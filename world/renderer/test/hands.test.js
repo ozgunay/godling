@@ -64,7 +64,7 @@ describe('a tool in the hand', () => {
   })
 
   it('grips as the art pipeline posed Godling for: its carry clips and spear thrust aim the hand for these dips', () => {
-    const art = readFileSync(resolve(process.cwd(), '../../art/build_godling.py'), 'utf8')
+    const art = readFileSync(resolve(import.meta.dirname, '../../../art/build_godling.py'), 'utf8') // from any cwd
     const [, spear, tool] = art.match(/^SPEAR_DIP, TOOL_DIP = (\d+), (\d+)/m)
     expect(IN_HAND.Spear.dip).toBe(Number(spear))
     expect([IN_HAND.Axe.dip, IN_HAND.Hammer.dip]).toEqual([Number(tool), Number(tool)])

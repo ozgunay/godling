@@ -12,9 +12,10 @@ import * as THREE from 'three'
 // length back from its middle towards the butt (the axe's and hammer's coral grips); up: the handle's height off
 // the part's middle, as a share of its height (the axe's blade rises above the handle); dip: degrees the head
 // turns down towards the fingers, as a relaxed wrist lets it.
-// The spear is held a little ahead of its middle and dipped well down: so its point stays out of the sand as the
-// arm swings in Walk, and comes nearly level in the Spear clip's thrust (the bayonet stab holds the hand with the
-// fingers forward, so a spear straight through the fist would point at the sky).
+// The spear is held a little ahead of its middle and dipped well down. The art pipeline poses Godling for these dips
+// (art/build_godling.py SPEAR_DIP and TOOL_DIP): the carry clips (IdleCarry, WalkCarry) turn the fist so a carried
+// spear points just above level, and the Spear clip's hand is turned so the thrust is level. Change a dip here and
+// godling.glb must be rebuilt with the build's dip changed to match (a test checks they agree).
 export const IN_HAND = {
   Axe: { along: 0.4, up: -0.21, dip: 20 },
   Hammer: { along: 0.39, up: 0, dip: 20 },

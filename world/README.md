@@ -160,7 +160,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Jump and Fall loop while the body is jumping or falling, if the model has them. Climb loops while `Climbing` is true.
     - Brace (crouched, holding on) loops while `Bracing` is true; without the clip the body stays in Idle. Climb wins over Brace, and while either holds, nothing else plays.
     - Knocked down by an earthquake (`KnockedDown`), the body stays in Stagger's last pose until it is false, and WakeUp gets it up.
-    - `__godlingRenderer.animations()` lists each character's one-shot and clip weights, for checking a new model.
+    - `__godlingRenderer.animations()` lists each character's one-shot, its clip weights and how far into each clip it is (`times`), for checking a new model.
   - **Tools in the hand** (`hands.js`): a `Tool` whose `HeldBy` names a player is drawn on that body's right hand bone (`mixamorigRightHand`), not over its head where the world carries it.
     - The grip is the middle of the right mitten, measured once from the model's rest pose (`models.js`). Each `ToolKind` has its own grip in `IN_HAND`: where the fist closes on the handle, and how far the head dips. The head points past the thumb.
     - A tool picked up eases from where the world has it into the hand over 0.4 s, and back out when set down. A model without the hand bone draws tools where the world has them, as does a body hidden in a first-person capture.

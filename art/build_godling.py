@@ -482,11 +482,7 @@ def level_spear(arm, action):
     first, last = (int(round(f)) for f in action.frame_range)
     for f in range(first, last + 1):
         scene.frame_set(f)
-        m = hand.matrix.copy()
-        head = m.translation.copy()
-        turn = held_direction(hand, SPEAR_DIP).rotation_difference(ahead).to_matrix().to_4x4()
-        hand.matrix = Matrix.Translation(head) @ turn @ Matrix.Translation(-head) @ m
-        bpy.context.view_layer.update()
+        aim(hand, ahead, held_direction(hand, SPEAR_DIP))
         hand.keyframe_insert("rotation_quaternion", frame=f)
 
 
@@ -556,12 +552,14 @@ POSE_ORDER = ("Spine1", "LeftArm", "LeftForeArm", "RightArm", "RightForeArm", "L
               "RightUpLeg", "RightLeg")
 
 
-def aim(pb, target):
-    """Turn a pose bone about its head so it points along `target` (armature space)."""
+def aim(pb, target, current=None):
+    """Turn a pose bone about its head so it points along `target` (armature space): the bone itself (its Y), or
+    `current`, a direction that turns with it (a tool in the hand: held_direction)."""
     m = pb.matrix.copy()
     head = m.translation.copy()
-    current = (m.to_3x3() @ Vector((0, 1, 0))).normalized()
-    turn = current.rotation_difference(Vector(target).normalized()).to_matrix().to_4x4()
+    if current is None:
+        current = m.to_3x3() @ Vector((0, 1, 0))
+    turn = Vector(current).normalized().rotation_difference(Vector(target).normalized()).to_matrix().to_4x4()
     pb.matrix = Matrix.Translation(head) @ turn @ Matrix.Translation(-head) @ m
     bpy.context.view_layer.update()
 

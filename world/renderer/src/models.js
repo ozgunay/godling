@@ -249,7 +249,7 @@ export function createCharacterController(models) {
     blend(state.brace, bracing ? 1 : 0, 10)
     const walk = carrying && state.walkCarry ? state.walkCarry : state.walk
     const idle = carrying && state.idleCarry ? state.idleCarry : state.idle
-    const walking = moving || !state.idle
+    const walking = moving || !idle // a model with no idle (for this hand) walks when it stands too
     const standing = !(moving || playing || holding || inAir)
     for (const action of [state.walk, state.walkCarry]) blend(action, walking && action === walk ? 1 : 0, 8)
     for (const action of [state.idle, state.idleCarry]) blend(action, standing && action === idle ? 1 : 0, 8)
