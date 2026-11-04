@@ -346,6 +346,7 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
   let nextChunk = 0
 
   // The flash's light, there from the start (a light added later would recompile every material), dark until a blast.
+  // A lightning strike lights the ground with it too (lightning.js), after the blasts each frame.
   const light = tier.blastLight ? new THREE.PointLight(0xffd29a, 0, 80, 1.5) : null
   if (light) scene.add(light)
 
@@ -465,6 +466,7 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
   }
 
   return {
+    light, // null on a tier without it
     // Each frame, for each entity: Blast markers, craters and falling meteors. Before the hidden check: a marker may
     // be invisible.
     watch(entity, dt) {

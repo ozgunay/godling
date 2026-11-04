@@ -289,6 +289,23 @@ const DRAW = {
     rect(g, 4, 9, 4, 1, 's'); rect(g, 4, 10, 4, 1, 'S'); rect(g, 5, 11, 2, 1, 'd')
     return outline(g)
   },
+  think() { // Godling thinking: its thought bubble, as over its head on the island
+    const g = grid(14, 14)
+    disc(g, 4.6, 5, 2.6, 'w')
+    disc(g, 8.4, 4, 3, 'w')
+    disc(g, 10.8, 6.4, 2.1, 'w')
+    rect(g, 3, 6, 9, 2, 'w')
+    rect(g, 3, 8, 9, 1, 'W')
+    disc(g, 3, 10.6, 1, 'w')
+    dots(g, [[1, 12]], 'w')
+    return outline(g)
+  },
+  more() { // the feed unfolds downwards
+    return outline(rows(['.........', '.ww...ww.', '.www.www.', '..wwwww..', '...www...', '....w....', '.........']))
+  },
+  less() {
+    return outline(rows(['.........', '....w....', '...www...', '..wwwww..', '.www.www.', '.ww...ww.', '.........']))
+  },
   close() {
     return outline(rows(['ww...ww', 'www.www', '.wwwww.', '..www..', '.wwwww.', 'www.www', 'ww...ww']))
   },

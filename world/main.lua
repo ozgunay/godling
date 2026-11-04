@@ -801,7 +801,9 @@ local SKY_SHADOW_CLEARANCE = 3 -- a stone lands only while nobody stands this cl
 local SKY_PLAYER = "Sky"
 local SKY_PARKING = Vector3.new(0, -40, 0)
 local SKY_GIFT_HEIGHT = 12 -- dropped stones and logs fall from here
-local SKY_FLASH_SECONDS = 0.5 -- how long a lightning bolt shows
+-- How long a lightning bolt's marker stays. The renderer plays the strike when it first sees the marker (about a
+-- second of it), so the marker only has to be seen once: long enough for a replay played fast, or a slow frame.
+local SKY_FLASH_SECONDS = 3
 -- Models from the art pipeline (asset://name.glb); nil draws a plain coloured part.
 local ART = { Hammer = "asset://hammer.glb", Quarry = "asset://quarry.glb", Stone = "asset://stone.glb",
     Axe = "asset://axe.glb", Log = "asset://log.glb", Ladder = "asset://ladder.glb", Boulder = "asset://boulder.glb",
@@ -3461,6 +3463,12 @@ local function lightningOn(t, from)
     local p = t.part.Position
     local bolt = skyMarker("SkyBolt_" .. skyCounter, Vector3.new(0.35, 30, 0.35), Vector3.new(p.X, 15, p.Z),
         Color3.fromRGB(255, 244, 170), "SkyFlash")
+    -- For the renderer: where it strikes (the palm's foot), and the strike's id, which shapes the bolt the same for
+    -- every viewer. No SkyEvent: the mind would take the marker for a thing the sky left.
+    bolt:SetAttribute("SkyId", skyCounter)
+    bolt:SetAttribute("StrikeX", p.X)
+    bolt:SetAttribute("StrikeY", p.Y - t.part.Size.Y / 2)
+    bolt:SetAttribute("StrikeZ", p.Z)
     table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
     local mark = skyMark("Lightning", skyCounter)
     local names = fellTree(t.part, from, function(log)

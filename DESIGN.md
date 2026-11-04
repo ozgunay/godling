@@ -171,12 +171,12 @@ A dark slate-and-ink HUD lit by three saturated signals (gold, teal, red) and on
 ### Neutral
 - **Ink** (ink): every border, the icon outline, the pixel text shadow, kbd keycaps, the theme colour.
 - **White** (white): all HUD text over stone and dark bands; the focus ring.
-- **Mist** (mist): secondary text on stone (the "watching" label, pop-up verbs, hints, disabled button text).
-- **Fog** (fog): times, quiet labels, the purse's small print, placeholders.
+- **Mist** (mist): secondary text on stone (the "watching" label, pop-up verbs, hints, disabled button text), and Godling's quieter lines: what it could not finish or stopped, and "Thinking…".
+- **Fog** (fog): times, quiet labels, the purse's small print, placeholders, the fold's label, and the agenda count or feeling at the end of the Now line.
 - **Island Stone** (stone): the solid body of slots and the camera switch under the moss lip.
 - **Stone Panel** (stone-panel): the translucent body of every stone slab (live bar, clock, pop-ups, purse, aim bar, note composer, tooltip).
 - **Moss** (moss) and **Deep Moss** (moss-deep): the moss lip on slots and camera buttons (a light band over a darker band), and the caret on paper.
-- **Dark Band** (glass and the same base at 0.7 to 0.85 alpha): unbevelled reading bands behind feed lines, the needs objective, the hotbar tray, the said-once line and the camera hint, dark enough to read over a bright sky.
+- **Dark Band** (glass and the same base at 0.7 to 0.85 alpha): unbevelled reading bands behind feed lines, the fold, the Now line and the needs objective, the hotbar tray, the said-once line and the camera hint, dark enough to read over a bright sky.
 - **Paper** (paper), **Paper Ink** (paper-ink), **Paper Shade** (paper-shade): the note slip and the note textarea; paper-shade is the slip's inner bevel.
 - **Empty Pip** (pip-empty): empty heart and coconut pips, a disabled button, the offline live dot.
 - **Night Well** (night-well): the page and the frame behind the island before it loads.
@@ -198,10 +198,10 @@ The root size scales with the viewport so the HUD keeps its proportions on a 16:
 ### Hierarchy
 - **Display** (400, 2.1rem, 1): the watcher count, tabular figures, in gold.
 - **Headline** (400, 1.5 to 1.65rem, 1): the live bar ("LIVE" uppercase, tracked 0.08em) and the clock.
-- **Title** (400, 1.25 to 1.4rem, 1.2 to 1.3): feed lines, the needs objective, pop-up heads, the note label, tooltip titles.
+- **Title** (400, 1.25 to 1.4rem, 1.2 to 1.3): feed lines, the Now line and the needs objective, pop-up heads, the note label, tooltip titles.
 - **Body** (400, 1.05 to 1.2rem, 1.2 to 1.35): tooltip text, note text, paper slips, aim words, the said-once line, prices under slots.
 - **Body small** (400, 0.95 to 1rem, 1 to 1.3): states beside the hearts, pop-up after-lines, hints, cooldown countdowns, purse print.
-- **Label** (Silkscreen 400, 0.6 to 0.75rem, 1, tabular where numeric): kbd keys, feed times, the note counter, tooltip terms and the kind chip.
+- **Label** (Silkscreen 400, 0.6 to 0.75rem, 1, tabular where numeric): kbd keys, feed times, the fold ("2 more", "Less"), the Now line's "2 of 5" or feeling, the note counter, tooltip terms and the kind chip.
 
 ### Named Rules
 **The One Weight Rule.** Tiny5 ships one weight. Hierarchy comes from size, colour and case, never from bold.
@@ -212,8 +212,8 @@ The root size scales with the viewport so the HUD keeps its proportions on a 16:
 
 The island is a full-bleed frame (100vw by 100dvh); the HUD is absolutely positioned over it.
 
-- **Desktop:** edges at 1.5rem. Top centre: the live bar. Top left: the feed (five lines, older words fading to no less than 0.62 opacity while their band stays dark) with the needs objective under it, width `min(36rem, 50vw - 12rem)`. Top right: the clock above the camera switch, with the free-camera hint under them. Right, from 12.4rem down: pop-ups, 26rem wide, four at most. Bottom centre (1.1rem up): the dock, stacking the aim bar or note composer, the said-once line, the vitals row (hearts left, states centre, coconuts right) and the belt (the hotbar of seven 5.6rem slots plus the purse).
-- **Phone (max-width 760px):** edges at 0.75rem, respecting safe-area insets. One top row of 3.1rem pieces: live bar left (the eye stands for "watching"), clock and icon-only camera buttons right. The feed shows three lines; one pop-up at a time sits over the feed and hides it, never over Godling. The dock spans the width: the slots share the row as squares (aspect-ratio 1) with icons at 62% and no keys, the purse goes above the hotbar as one line, and tooltips are not shown. Inputs drop to 16px so iOS does not zoom.
+- **Desktop:** edges at 1.5rem. Top centre: the live bar. Top left, width `min(36rem, 50vw - 12rem)`: the mind, folded by default as a game folds its quest tracker (user, 2026-11-03). Folded, it is the fold, the newest thought cut to two lines, and for 15 s each new line (two at most), then the Now line and the needs objective. Unfolded, the feed shows five lines (older words fading to no less than 0.62 opacity while their band stays dark; the newest thought always bright and three lines long). Top right: the clock above the camera switch, with the free-camera hint under them. Right, from 12.4rem down: pop-ups, 26rem wide, four at most. Bottom centre (1.1rem up): the dock, stacking the aim bar or note composer, the said-once line, the vitals row (hearts left, states centre, coconuts right) and the belt (the hotbar of seven 5.6rem slots plus the purse).
+- **Phone (max-width 760px):** edges at 0.75rem, respecting safe-area insets. One top row of 3.1rem pieces: live bar left (the eye stands for "watching"), clock and icon-only camera buttons right. The mind folds as on desktop, with one new line at a time; unfolded, the feed shows three lines (one of them the world's at most), and the Now line keeps to one. One pop-up at a time sits over the mind and hides it, never over Godling. The dock spans the width: the slots share the row as squares (aspect-ratio 1) with icons at 62% and no keys, the purse goes above the hotbar as one line, and tooltips are not shown. Inputs drop to 16px so iOS does not zoom.
 - **Rhythm:** gaps step through 0.12 to 1rem; panels pad 0.4 to 0.9rem. Line text clamps to two lines with a word-cut ellipsis.
 
 ## Elevation & Depth
@@ -264,8 +264,16 @@ Used for the live bar, clock, purse, pop-ups, aim bar, note composer and tooltip
 ### Camera switch
 Two block buttons (Follow Godling; Free camera with W A S D keycaps). The pressed one has a 0.25rem gold outline; the other is desaturated (0.6) and dimmed (0.85) until hovered. In free mode a hint fades in beneath. On phones they are icon-only.
 
-### Feed and needs
-Each line is a dark band: a Silkscreen island time, a speaker icon (Godling, the sky, a notice) and up to two lines of Tiny5. Godling's own words are in quotes and white; sky lines are gold; notice lines are teal; the waiting line is mist. The needs objective is a bordered dark band with an icon chosen from the need, "Needs" in gold, and the first need.
+### The mind: feed, Now and needs
+What Godling thinks and does, read from its log (`mind/godling/replay.py` reduce_status, live and in replay alike).
+- **Fold:** a small dark band over the feed with a chevron and a Silkscreen label in fog: "2 more" folded, "Less" unfolded. Folded is the default; the viewer's choice is kept in their browser. It hides when folding hides nothing.
+- **Lines:** each a dark band: a Silkscreen island time (fixed when the line is first drawn), an icon and up to two lines of Tiny5. Godling's thoughts are in quotes and white beside its face; what it could not finish ("Couldn't finish: …", a cross) and what it stopped to think again ("Stopped to think again: …", a pause) are mist; a skill it taught itself ("Learned “lift on top”: …", the bulb) and a dream ("Dreamt: …", the moon) are white. Sky lines are gold; notice lines are teal; the waiting line is mist.
+- **Cut lines:** a line its clamp cuts at the feed's present width (measured, and again on a resize) ends in an ellipsis and a chevron, and opens in full on a click or a tap (one at a time; the chevron turns over). The full words are always in the page for screen readers.
+- **Godling first:** at most two of the five lines (one of a phone's three) are the world's, and the newest thought always stays, however many lines came after it.
+- **Fresh lines:** folded, a line newer than 15 s shows beside the newest thought and fades out over its last seconds, as a game's chat line does; one a viewer opened stays until they close it. With no thought in the feed, the newest line stands in for it.
+- **Times:** a line's island time is worked out from when the world's clock was read (the panel's `clock.at`), once, so it neither jumps between polls nor goes wrong while the world is away.
+- **Now:** a bordered dark band like the needs objective: the play icon, "Now" in white and the project under way in Godling's words, with "2 of 5" in fog for its place in the agenda. While its body stands until its mind has thought, the thought-bubble icon bobs and the words, in mist, read "Thinking about a tower…" (the bubble's picture) with its feeling in fog. Hidden between projects and when it began more than ten minutes ago.
+- **Needs:** a bordered dark band with an icon chosen from the need, "Needs" in gold, and the first need.
 
 ### Pop-ups
 Stone slabs that slide in from the right (2.5rem, unblurring, 420ms) and out (380ms), each with a block tile holding the power's icon, "**name** did what" (name in gold, verb in mist) and an after-line in fog. A note's pop-up replaces the after-line with a paper slip quoting the note. They stay 9s (notes 14s).
@@ -285,7 +293,7 @@ A stone bar over the hotbar while a power is aimed: the power's icon and what a 
 A dark band (0.85 alpha) above the hotbar that rises in (240ms) with a refusal or a nudge and leaves after 6s; refusals are refusal pink.
 
 ### Motion
-One easing for everything that moves (ease-out, `cubic-bezier(0.16, 1, 0.3, 1)`): 160ms slot lift, 240ms hints and the said-once line, 420ms pop-ups. Blinks and bobs are stepped or short. Under reduced motion, animations stop and transitions drop to 1ms with no blur.
+One easing for everything that moves (ease-out, `cubic-bezier(0.16, 1, 0.3, 1)`): 160ms slot lift, 240ms hints and the said-once line, 420ms pop-ups. Blinks and bobs are stepped or short; the thinking bubble bobs in two steps (1.2s). A fresh line in the folded feed fades out over the last 15% of its 15 s. Under reduced motion, animations stop and transitions drop to 1ms with no blur.
 
 ## Do's and Don'ts
 

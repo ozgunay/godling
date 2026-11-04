@@ -359,7 +359,11 @@ class ScreenTests(TestCase):
         note = Note.objects.create(author=author, text="buy cheap gold at the beach")
         self.status["popups"] = [{"id": 7, "kind": "note", "name": "mara_k", "text": note.text, "time": 0,
                                   "ref": note.pk}]
-        self.status["mind"] = {"feed": [{"who": "notice", "text": f"A paper glider … It reads: '{note.text}'"}]}
+        self.status["mind"] = {"feed": [{"who": "notice", "text": f"A paper glider … It reads: '{note.text}'"},
+                                        {"who": "godling", "text": f"Should I {note.text}?"},
+                                        {"who": "godling", "about": "learned", "name": "hop", "text": "hops"}],
+                               "now": {"time": 1, "text": f"Do as the note says: {note.text}", "step": 1, "of": 2},
+                               "needs": f"{note.text}, and logs", "thought": f"Should I {note.text}?"}
         self.client.force_login(author)
         popup = self.client.get("/api/status").json()["popups"][0]
         self.assertEqual(popup["noteId"], note.pk)  # so viewers can report it
@@ -376,6 +380,10 @@ class ScreenTests(TestCase):
         status = self.client.get("/api/status").json()
         self.assertEqual(status["popups"], [])
         self.assertIn("hidden", status["mind"]["feed"][0]["text"])
+        self.assertEqual(status["mind"]["now"], {"time": 1, "text": "…", "step": 1, "of": 2})  # what it does now, too
+        # Godling's own words are held back as a replay holds them back, never shown as the note's notice
+        self.assertEqual([f["text"] for f in status["mind"]["feed"][1:]], ["…", "hops"])
+        self.assertEqual((status["mind"]["needs"], status["mind"]["thought"]), ("…", "…"))
 
     def report_as(self, user, note):
         self.client.force_login(user)
@@ -482,7 +490,9 @@ class ReplayTests(TestCase):
              {"time": t, "kind": "event", "sky": "Note", "text": 'A paper glider drifted down. It reads: "visit my page soon"'},
              {"time": t, "kind": "event", "sky": "Note", "text": 'A paper glider drifted down. It reads: "hello island"'},
              {"time": t, "kind": "decision", "thought": "The note says Buy Cheap Gold", "needs": "logs"},
-             {"time": t, "kind": "decision", "thought": "Someone wants me to visit my page soon", "needs": ""}],
+             {"time": t, "kind": "decision", "thought": "Someone wants me to visit my page soon", "needs": ""},
+             {"time": t, "kind": "learn", "name": "hop", "does": "hop, then buy cheap gold"},
+             {"time": t, "kind": "sleep", "dream": "I dreamt someone said: buy cheap gold"}],
             [{"time": t, "id": 1, "kind": "note", "name": "mara", "text": "hello island", "ref": kept.pk},
              {"time": t, "id": 2, "kind": "note", "name": "mara", "text": "buy cheap gold", "ref": hidden.pk},
              {"time": t, "id": 3, "kind": "note", "name": "sam", "text": "visit my page soon", "ref": deleted_id},
@@ -497,6 +507,8 @@ class ReplayTests(TestCase):
         self.assertEqual(tracks["entries"][3]["thought"], "…")  # whatever the case
         self.assertEqual(tracks["entries"][3]["needs"], "logs")
         self.assertEqual(tracks["entries"][4]["thought"], "…")  # a deleted note's words too
+        self.assertEqual((tracks["entries"][5]["name"], tracks["entries"][5]["does"]), ("hop", "…"))  # what it learned
+        self.assertEqual(tracks["entries"][6]["dream"], "…")  # and dreamt
 
     def test_a_short_hidden_note_hides_no_other_words(self):
         Note.objects.create(author=make_user("mara"), text="no", status=Note.HIDDEN)

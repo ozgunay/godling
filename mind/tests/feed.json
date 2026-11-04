@@ -1,0 +1,79 @@
+{
+  "about": "Mind log entries and what the screen shows of them: reduce_status (mind/godling/replay.py) and reduceStatus (world/viewer/replay.js) must both read them so (mind/tests/test_replay_feed.py, world/renderer/test/feed.test.js). Times are seconds.",
+  "entries": [
+    {"time": 100.0, "kind": "thinking"},
+    {"time": 104.0, "kind": "thinking"},
+    {"time": 118.0, "kind": "decision", "thought": "Twelve blocks and no tool yet. First the raft wreck.", "needs": "a hammer; logs",
+     "projects": [{"intention": "Look over the raft wreck for tools", "goal": "Know what the raft left me", "steps": [{"skill": "walk_to"}]},
+                  {"intention": "Haul a stone block to the shore", "goal": "A block on the sand", "steps": [{"skill": "pick_up"}]},
+                  {"intention": "", "goal": "A two-block column", "steps": [{"skill": "stack_on"}]},
+                  {"intention": "Think it over", "goal": "", "steps": []}]},
+    {"time": 118.1, "kind": "project", "phase": "start", "goal": "Know what the raft left me", "intention": "Look over the raft wreck for tools"},
+    {"time": 119.0, "kind": "bubble", "ok": true, "thing": "raft", "feeling": "curious"},
+    {"time": 120.0, "kind": "event", "text": "A log washed up on the beach: Log_1 lies at (42, -168)"},
+    {"time": 120.1, "kind": "glance", "text": "A log washed up on the beach: Log_1 lies at (42, -168)", "turned": false, "degrees": 42},
+    {"time": 125.7, "kind": "project", "phase": "end", "goal": "Know what the raft left me", "intention": "Look over the raft wreck for tools", "ok": true},
+    {"time": 125.8, "kind": "project", "phase": "start", "goal": "A block on the sand", "intention": "Haul a stone block to the shore"},
+    {"time": 140.0, "kind": "project", "phase": "end", "goal": "A block on the sand", "intention": "Haul a stone block to the shore", "ok": false},
+    {"time": 140.1, "kind": "project", "phase": "start", "goal": "A two-block column", "intention": ""},
+    {"time": 151.0, "kind": "event", "text": "A stone from the sky blasted at (-100, -13)", "sky": "Meteor"},
+    {"time": 151.1, "kind": "glance", "text": "A stone from the sky blasted at (-100, -13)", "turned": true, "degrees": 120},
+    {"time": 151.2, "kind": "project", "phase": "end", "goal": "A two-block column", "ok": false},
+    {"time": 151.3, "kind": "plan_discarded"},
+    {"time": 151.4, "kind": "thinking"},
+    {"time": 160.0, "kind": "event", "text": "A new object, Coconut_1, appeared at (-101, -68)"},
+    {"time": 161.0, "kind": "event", "text": "A new object, Coconut_2, appeared at (-106, -59)"},
+    {"time": 162.0, "kind": "event", "text": "Volleyball is gone from the world"},
+    {"time": 163.0, "kind": "event", "text": "A log dropped from the sky", "sky": "Log"},
+    {"time": 170.0, "kind": "learn", "name": "lift_on_top", "does": "Fetch the nearest free block and set it on top of the stack $object belongs to"},
+    {"time": 170.1, "kind": "learn", "name": "wait_a_bit"},
+    {"time": 170.2, "kind": "decision", "thought": "Twelve blocks and no tool yet. First the raft wreck.", "needs": "a hammer", "agenda": 2},
+    {"time": 170.3, "kind": "project", "phase": "start", "goal": "Coconuts to eat", "intention": "Shake the two palms for coconuts"},
+    {"time": 175.0, "kind": "bubble", "ok": false},
+    {"time": 2500.0, "kind": "sleep", "dream": "I dreamt of a ship with sails like palm leaves."},
+    {"time": 2500.1, "kind": "sleep"}
+  ],
+  "status": {
+    "thought": "Twelve blocks and no tool yet. First the raft wreck.",
+    "needs": "a hammer",
+    "intention": "Shake the two palms for coconuts",
+    "bubble": {"thing": "raft", "feeling": "curious"},
+    "now": {"time": 170.3, "text": "Shake the two palms for coconuts", "step": 1, "of": 2},
+    "feed": [
+      {"time": 118.0, "who": "godling", "text": "Twelve blocks and no tool yet. First the raft wreck."},
+      {"time": 140.0, "who": "godling", "about": "failed", "text": "Haul a stone block to the shore"},
+      {"time": 151.2, "who": "godling", "about": "stopped", "text": "A two-block column"},
+      {"time": 161.0, "who": "notice", "text": "A new object, Coconut_2, appeared at (-106, -59)", "glance": null},
+      {"time": 162.0, "who": "notice", "text": "Volleyball is gone from the world", "glance": null},
+      {"time": 163.0, "who": "sky", "text": "A log dropped from the sky", "glance": null},
+      {"time": 170.0, "who": "godling", "about": "learned", "text": "Fetch the nearest free block and set it on top of the stack $object belongs to", "name": "lift_on_top"},
+      {"time": 170.1, "who": "godling", "about": "learned", "text": "", "name": "wait_a_bit"},
+      {"time": 2500.0, "who": "godling", "about": "dream", "text": "I dreamt of a ship with sails like palm leaves."}
+    ]
+  },
+  "feed_kept": 9,
+  "world_kept": 3,
+  "after_the_first_start": {"upto": 4, "now": {"time": 118.1, "text": "Look over the raft wreck for tools", "step": 1, "of": 3}},
+  "while_thinking": {"upto": 16, "now": {"time": 151.4, "thinking": true}},
+  "at_the_start": {"upto": 2, "now": {"time": 100.0, "thinking": true}},
+  "crowded": {
+    "about": "Plans that keep failing never push the newest thought out of the feed",
+    "feed_kept": 3,
+    "world_kept": 1,
+    "entries": [
+      {"time": 1.0, "kind": "decision", "thought": "Plan.", "needs": ""},
+      {"time": 2.0, "kind": "project", "phase": "start", "goal": "a", "intention": "A"},
+      {"time": 3.0, "kind": "project", "phase": "end", "goal": "a", "intention": "A", "ok": false},
+      {"time": 4.0, "kind": "project", "phase": "start", "goal": "b", "intention": "B"},
+      {"time": 5.0, "kind": "project", "phase": "end", "goal": "b", "intention": "B", "ok": false},
+      {"time": 6.0, "kind": "project", "phase": "start", "goal": "c", "intention": "C"},
+      {"time": 7.0, "kind": "project", "phase": "end", "goal": "c", "intention": "C", "ok": false},
+      {"time": 8.0, "kind": "event", "text": "Rain began"}
+    ],
+    "feed": [
+      {"time": 1.0, "who": "godling", "text": "Plan."},
+      {"time": 7.0, "who": "godling", "about": "failed", "text": "C"},
+      {"time": 8.0, "who": "notice", "text": "Rain began", "glance": null}
+    ]
+  }
+}

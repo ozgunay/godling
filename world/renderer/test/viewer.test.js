@@ -1,6 +1,9 @@
 // The viewer screen (world/viewer/viewer.js) as a viewer meets it: it loads, polls the panel (or the accounts site)
 // every 1.5 s, and answers clicks, keys and the island's messages. fetch is answered here; timers are fake.
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as icons from '../../viewer/icons.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const NOW = 1_800_000_000 // seconds, the panel's clock
 
@@ -12,6 +15,7 @@ function panelStatus(more = {}) {
     notes: { limit: 140, every: 180, queue: 0, wait: 0 },
     mind: {
       thought: 'Two logs now.', needs: '3 logs for the gate lintel; a stone', intention: 'carry logs',
+      now: { time: NOW - 5, text: 'Carry logs to the gate at (3,4)', step: 2, of: 4 },
       feed: [
         { time: NOW - 60, who: 'godling', text: 'Two logs now. One more and the gate gets its lintel.' },
         { time: NOW - 50, who: 'notice', text: 'A log washed up on the beach: Log_7 lies at (12, -4)' },
@@ -104,18 +108,23 @@ describe('the viewer screen', () => {
   afterEach(closePage)
 
   it('shows the island, the clock, Godling\'s mind and body, and what viewers did', async () => {
-    const { stage, view, $ } = await boot()
+    const { stage, view, $, tick } = await boot()
     expect(view.src).toBe('http://island/?spectator_token=t&embed=1')
     expect($('.b-live .word').textContent).toBe('Live')
     expect($('.b-live .n').textContent).toBe('1,284')
     expect($('.b-clock .day').textContent).toBe('Day 3')
     expect($('.b-clock .time').textContent).toBe('14:30')
-    const lines = [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
-    expect(lines).toContain('A note drifted down: "hi"')
-    expect(lines).toContain('Godling was hurt by lightning striking close by')
-    expect(lines).toContain('Godling has grown cold')
-    expect(lines.some((l) => l.startsWith('A block moved') && l.endsWith('…'))).toBe(true)
-    expect(lines.some((l) => l.includes('yourself'))).toBe(false)
+    // Folded at first: the newest thought; unfolded, two of the world's lines at most, the newest
+    const texts = () => [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
+    expect(texts()).toEqual(['“Two logs now. One more and the gate gets its lintel.”'])
+    expect($('.b-fold').textContent).toBe('2 more')
+    $('.b-fold').click()
+    expect(texts()).toEqual(['“Two logs now. One more and the gate gets its lintel.”', 'Godling has grown cold',
+      expect.stringMatching(/^A block moved and on .*…$/)])
+    expect($('.b-feed .latest .text').textContent).toBe(texts()[0])
+    await tick(0)
+    expect($('.b-now .what').textContent).toBe('Carry logs to the gate')
+    expect($('.b-now .aside').textContent).toBe('2 of 4')
     expect($('.b-objective .what').textContent).toBe('3 logs for the gate lintel')
     expect($('.b-vitals .states').textContent).toContain('Knocked down')
     expect($('.b-vitals .states').textContent).toContain('Wet')
@@ -444,6 +453,178 @@ describe('the viewer screen', () => {
     expect($('.b-purse').textContent).toContain('12credits')
   })
 
+  it('says what the world did in plain words, about Godling, two of its lines at a time', async () => {
+    const world = panelStatus().mind.feed.slice(1)
+    const statuses = [[0, 1], [2, 3], [4, 5]].map((pair) => panelStatus({ mind: { feed: pair.map((i) => world[i]) } }))
+    const { stage, tick } = await boot({ statuses, stored: { 'godling.mind': 'open' } })
+    const seen = []
+    for (let i = 0; i < statuses.length; i++) {
+      seen.push(...[...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent))
+      await tick(1500)
+    }
+    expect(seen).toEqual(['A log washed up on the beach', 'A note drifted down: "hi"',
+      'Godling was hurt by lightning striking close by', 'Godling has grown cold',
+      expect.stringMatching(/^A block moved/)]) // the line about "you" with no rewrite is left out
+  })
+
+  it('says what Godling could not finish, learned and dreamt, and opens a long thought in full', async () => {
+    const long = 'I am not found yet, and the tallest thing I can raise from the sand is a column on the raft shore: '
+      + 'anything on that beach is what a passing ship sees first. Also: my last pick up failed because the spot I aimed '
+      + 'at was inside Block_11, so I will stand clear and place by exact height instead of climbing, and fasten each '
+      + 'block as it lands.'
+    const lift = { time: NOW - 60, who: 'godling', about: 'learned', name: 'lift_on_top',
+      text: 'Fetch the nearest free block and set it on top of the stack $object belongs to' }
+    const dream = { time: NOW - 40, who: 'godling', about: 'dream', text: 'Ships with sails like palm leaves.' }
+    const thought = { time: NOW - 30, who: 'godling', text: long }
+    const first = panelStatus({ mind: { needs: '', feed: [
+      { time: NOW - 90, who: 'godling', text: 'An older thought, cut to two lines in the feed, if it runs long enough to.' },
+      { time: NOW - 80, who: 'godling', about: 'failed', text: 'Stack a second block on the one at (-107.5,-40)' },
+      { time: NOW - 70, who: 'godling', about: 'stopped', text: 'Fasten the column' }, lift, dream, thought] } })
+    const then = panelStatus({ mind: { needs: '', feed: [lift, dream, thought,
+      { time: NOW - 25, who: 'godling', about: 'learned', name: 'wait_a_bit', text: '' },
+      { time: NOW - 20, who: 'notice', text: 'Volleyball is gone from the world' }] } })
+    // The page lays its lines out: a line longer than about 150 characters is more than its clamp holds
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function () { return this.textContent.length > 150 ? 90 : 40 })
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(() => 40)
+    const { stage, $, tick } = await boot({ statuses: [first, then], stored: { 'godling.mind': 'open' } })
+    const texts = () => [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
+    expect(texts()).toEqual(['Couldn’t finish: stack a second block on the one', 'Stopped to think again: fasten the column',
+      'Learned “lift on top”: Fetch the nearest free block and set it on top of the stack the object belongs to',
+      'Dreamt: Ships with sails like palm leaves.', `“${long.replace('Block_11', 'a block')}”`])
+    expect(stage.querySelectorAll('.b-feed .failed, .b-feed .stopped')).toHaveLength(2)
+    const open = $('.b-feed .latest .open') // the newest thought, too long for its three lines
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+    expect(open.classList.contains('cut')).toBe(true) // so it shows its chevron
+    expect($('.b-feed .dream .open').classList.contains('cut')).toBe(false) // whole in its lines: no chevron
+    expect(stage.querySelector('.b-feed .line:not(.latest):not(.dream) .open')).not.toBeNull()
+    const chevron = open.querySelector('svg').outerHTML
+    open.click()
+    expect($('.b-feed .latest .open').getAttribute('aria-expanded')).toBe('true')
+    expect($('.b-feed .latest .open').classList.contains('cut')).toBe(true) // opened, it shows the chevron to close
+    expect($('.b-feed .latest .open svg').outerHTML).not.toBe(chevron) // it points the other way
+    expect($('.b-feed .latest').classList.contains('opened')).toBe(true)
+    $('.b-feed .latest .open').focus()
+    await tick(1500) // a new line: the feed is drawn again, the thought stays open and keeps the focus
+    expect(texts().slice(-2)).toEqual(['Learned “wait a bit”', 'Volleyball is gone from the world'])
+    expect(document.activeElement).toBe($('.b-feed .latest .open'))
+    expect($('.b-feed .latest').classList.contains('opened')).toBe(true)
+    $('.b-feed .latest .open').click()
+    expect($('.b-feed .latest .open').getAttribute('aria-expanded')).toBe('false')
+    const learned = stage.querySelector('.b-feed .learned .open') // an older long line opens too
+    learned.click()
+    expect(learned.isConnected).toBe(false)
+    expect($('.b-feed .learned .open').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('folds the feed as a game folds its quest tracker: the newest thought, and each new line for a while', async () => {
+    const mind = { needs: '', feed: [
+      { time: NOW - 60, who: 'godling', text: 'An older thought.' },
+      { time: NOW - 40, who: 'godling', text: 'The newest thought.' },
+      { time: NOW - 30, who: 'godling', about: 'failed', text: 'Haul a block' },
+      { time: NOW - 9, who: 'notice', text: 'Volleyball is gone from the world' },
+      { time: NOW - 6, who: 'godling', about: 'failed', text: 'Climb the ladder' },
+      { time: NOW - 3, who: 'godling', about: 'learned', name: 'hop', text: '' },
+    ] }
+    const { stage, $, tick } = await boot({ statuses: [panelStatus({ mind }), panelStatus({ mind, now: NOW + 20 })] })
+    const texts = () => [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
+    // The two newest lines for a while, fading as they go, beside the newest thought
+    expect(texts()).toEqual(['“The newest thought.”', 'Couldn’t finish: climb the ladder', 'Learned “hop”'])
+    expect([...stage.querySelectorAll('.b-feed .fresh')].map((l) => l.style.animationDelay)).toEqual(['-6s', '-3s'])
+    expect($('.b-fold').getAttribute('aria-expanded')).toBe('false')
+    expect($('.b-fold').textContent).toBe('2 more')
+    expect($('.b-fold').getAttribute('aria-label')).toBe('Show 2 more of what Godling thought and noticed')
+    await tick(1500) // twenty seconds on: they have faded
+    expect(texts()).toEqual(['“The newest thought.”'])
+    expect($('.b-fold').textContent).toBe('4 more')
+    $('.b-fold').click()
+    expect(texts()).toHaveLength(5)
+    expect(stage.querySelector('.b-feed .fresh')).toBeNull()
+    expect([$('.b-fold').textContent, $('.b-fold').getAttribute('aria-expanded')]).toEqual(['Less', 'true'])
+    expect(localStorage.getItem('godling.mind')).toBe('open') // the viewer's choice, kept for the next visit
+    $('.b-fold').click()
+    expect(texts()).toEqual(['“The newest thought.”'])
+    expect(localStorage.getItem('godling.mind')).toBe('folded')
+  })
+
+  it('folded, keeps a new line a viewer opened to read, and with no thought shows the newest line', async () => {
+    const learned = { time: NOW - 5, who: 'godling', about: 'learned', name: 'lift_on_top',
+      text: 'Fetch the nearest free block and set it on top of the stack $object belongs to' }
+    const feed = [{ time: NOW - 40, who: 'godling', text: 'A thought.' }, learned]
+    const { stage, $, tick } = await boot({ statuses: [panelStatus({ mind: { needs: '', feed } }),
+      panelStatus({ mind: { needs: '', feed }, now: NOW + 30 }),
+      panelStatus({ mind: { needs: '', feed: [learned, { time: NOW - 2, who: 'notice', text: 'Rain began' }] }, now: NOW + 60 })] })
+    $('.b-feed .learned .open').click()
+    expect(stage.querySelector('.b-feed .learned').classList.contains('fresh')).toBe(false) // opened, it no longer fades
+    await tick(1500) // thirty seconds on: no longer new, but opened
+    expect(stage.querySelector('.b-feed .learned .open').getAttribute('aria-expanded')).toBe('true')
+    $('.b-feed .learned .open').click() // closed: it folds away
+    expect(stage.querySelector('.b-feed .learned')).toBeNull()
+    await tick(1500) // no thought in the feed: the newest line, never "waking up"
+    expect([...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)).toEqual(['Rain began'])
+    expect(stage.querySelector('.b-feed .waiting')).toBeNull()
+  })
+
+  it('dates lines by when the world\'s clock was read, right while the world is away', async () => {
+    const feed = [{ time: NOW - 60, who: 'godling', text: 'A thought.' }]
+    const away = panelStatus({ world: false, clock: { hour: 14.5, day: 3, at: NOW - 120 }, mind: { needs: '', feed } })
+    const { $ } = await boot({ statuses: [away] })
+    // The clock read 14:30 two minutes ago, the line came one minute after that: 14:30 + 60 s of island time
+    expect($('.b-feed time').textContent).toBe('15:06')
+  })
+
+  it('works on phones whose browsers predate findLast and at (Safari 15.4)', async () => {
+    const sources = ['viewer.js', 'replay.js'].map((name) => readFileSync(resolve(process.cwd(), '../viewer', name), 'utf8'))
+    for (const source of sources) expect(source).not.toMatch(/\.(findLast|findLastIndex|at)\(/)
+    const findLast = Object.getOwnPropertyDescriptor(Array.prototype, 'findLast')
+    delete Array.prototype.findLast
+    try {
+      const { $, tick } = await boot({ statuses: [panelStatus()], stored: { 'godling.mind': 'open' } })
+      await tick(1500) // still polling: the feed and the Now line drawn
+      expect($('.b-feed .latest .text').textContent).toBe('“Two logs now. One more and the gate gets its lintel.”')
+      expect($('.b-now .what').textContent).toBe('Carry logs to the gate')
+    } finally {
+      Object.defineProperty(Array.prototype, 'findLast', findLast)
+    }
+  })
+
+  it('keeps the newest thought in the feed, however much came of the plan since', async () => {
+    const failed = (i) => ({ time: NOW - 50 + i, who: 'godling', about: 'failed', text: `Try ${i}` })
+    const feed = [{ time: NOW - 60, who: 'godling', text: 'One plan.' }, ...[1, 2, 3, 4, 5].map(failed)]
+    const { stage, $ } = await boot({ statuses: [panelStatus({ mind: { needs: '', feed } })], stored: { 'godling.mind': 'open' } })
+    expect([...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)).toEqual(['“One plan.”',
+      'Couldn’t finish: try 2', 'Couldn’t finish: try 3', 'Couldn’t finish: try 4', 'Couldn’t finish: try 5'])
+    expect($('.b-feed .line').classList.contains('latest')).toBe(true)
+  })
+
+  it('says what Godling is doing now, or that it stands thinking, and never what is long past', async () => {
+    const at = (now, bubble) => panelStatus({ mind: { feed: [], needs: '', now, bubble } })
+    const { $, tick } = await boot({ statuses: [
+      at({ time: NOW - 5, text: 'Haul a stone block to (12,-4)', step: 2, of: 5 }),
+      at({ time: NOW - 40, thinking: true }, { thing: 'tower', feeling: 'focused' }),
+      at({ time: NOW - 40, thinking: true }, { thing: 'unicorn', feeling: 'calm' }),
+      at({ time: NOW - 5, text: 'Look around', step: 1, of: 1 }),
+      at({ time: NOW - 700, text: 'Long gone', step: 1, of: 2 }),
+      at(null),
+    ] })
+    const drawn = (name) => Object.assign(document.createElement('i'), { innerHTML: icons.icon(name, 2) }).innerHTML
+    const now = () => [$('.b-now').hidden, $('.b-now').classList.contains('thinking'), $('.b-now .what')?.textContent,
+      $('.b-now .aside')?.textContent]
+    expect(now()).toEqual([false, false, 'Haul a stone block', '2 of 5'])
+    expect($('.b-now svg').outerHTML).toBe(drawn('play'))
+    expect($('.b-fold').hidden).toBe(true) // nothing more to unfold
+    await tick(1500)
+    expect(now()).toEqual([false, true, 'Thinking about a tower…', 'focused'])
+    expect($('.b-now svg').outerHTML).toBe(drawn('think'))
+    await tick(1500)
+    expect(now()).toEqual([false, true, 'Thinking…', 'calm'])
+    await tick(1500)
+    expect(now()).toEqual([false, false, 'Look around', undefined]) // a plan of one says no count
+    await tick(1500)
+    expect($('.b-now').hidden).toBe(true) // ten minutes on one project: the mind has stopped, not "now"
+    await tick(1500)
+    expect($('.b-now').hidden).toBe(true)
+  })
+
   it('picks an icon for what Godling needs', async () => {
     const needs = ['a stone wall', 'two coconuts', 'a warm fire', 'a friend']
     const { $, tick } = await boot({ statuses: needs.map((n) => panelStatus({ mind: { feed: [], needs: n } })) })
@@ -459,7 +640,10 @@ describe('the viewer screen', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('private') })
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('private') })
     const { stage, slot, $ } = await boot({ phone: true })
+    expect(stage.querySelectorAll('.b-feed .line')).toHaveLength(1) // folded, as nothing could be kept
+    $('.b-fold').click()
     expect(stage.querySelectorAll('.b-feed .line').length).toBeLessThanOrEqual(3)
+    expect(stage.querySelectorAll('.b-feed .line:not(.godling)')).toHaveLength(1) // one of the world's lines
     expect(stage.querySelectorAll('.b-pop')).toHaveLength(1)
     slot('Stone').dispatchEvent(new MouseEvent('mouseenter'))
     expect($('.b-tip')).toBeNull()

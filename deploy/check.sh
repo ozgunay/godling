@@ -8,7 +8,11 @@
 #   CHECK_CERT_DAYS=0 deploy/check.sh …        days a certificate must still be good for (default 14; a local Caddy CA
 #                                              signs for 12 hours at a time, Let's Encrypt for 90 days)
 #   CHECK_PER_ADDRESS=64 deploy/check.sh …     the relay's RELAY_MAX_PER_IP (default 64): that many sockets are held
+#   CHECK_ORIGIN=203.0.113.7 deploy/check.sh … with Cloudflare in front: the server's own address, which must answer
+#                                              nobody but Cloudflare (its ports are checked from here, all closed)
 #
+# With Cloudflare in front (ADR-017), the names reach Cloudflare, not the server: the certificate, the redirect and the
+# TLS versions seen are Cloudflare's, and so are the open ports, so those are checked on CHECK_ORIGIN instead.
 # Needs curl and openssl. Prints PASS or FAIL per check and exits with the number of failures.
 set -u
 SITE=${1:?site domain}
@@ -31,7 +35,9 @@ done
 CURL=("${BASE[@]}" -o /dev/null)
 status() { "${CURL[@]}" -w '%{http_code}' "$@"; }
 header() { "${CURL[@]}" -D - -o /dev/null "${@:2}" | tr -d '\r' | grep -i "^$1:" | head -1 | cut -d' ' -f2-; }
-TARGET=${IP:-$(getent hosts "$SITE" | awk '{print $1; exit}')}
+# An IPv4 address first: many machines resolve IPv6 but cannot reach it.
+TARGET=${IP:-$(getent ahostsv4 "$SITE" | awk '{print $1; exit}')}
+TARGET=${TARGET:-$(getent hosts "$SITE" | awk '{print $1; exit}')}
 CAFILE=()
 [ -n "${CHECK_CA:-}" ] && CAFILE=(-CAfile "$CHECK_CA")
 tls() { # server name, then extra openssl options: the handshake's first lines
@@ -42,21 +48,34 @@ if [ -z "$TARGET" ] || ! timeout 5 bash -c "</dev/tcp/$TARGET/443" 2>/dev/null; 
   exit "$FAILS"
 fi
 
-echo "== HTTPS ($SITE, $ISLAND at $TARGET)"
+CLOUDFLARE=
+[ "$(header server "https://$SITE/")" = cloudflare ] && CLOUDFLARE=1
+EDGE="Cloudflare: SSL/TLS → Edge Certificates"
+
+echo "== HTTPS ($SITE, $ISLAND at $TARGET${CLOUDFLARE:+, Cloudflare in front})"
 for host in "$SITE" "$ISLAND"; do
-  expect 308 "$(status "http://$host/")" "http://$host/ sends you to HTTPS"
+  got=$(status "http://$host/")
+  if [ "$got" = 308 ]; then pass "http://$host/ sends you to HTTPS (308)"
+  elif [ -n "$CLOUDFLARE" ] && [ "$got" = 301 ]; then
+    fail "http://$host/: Cloudflare redirects (301), not Caddy: turn off its Always Use HTTPS ($EDGE): Caddy renews its certificates over plain HTTP"
+  else fail "http://$host/ sends you to HTTPS: expected 308, got $got"; fi
   out=$(tls "$host" -tls1_3)
   if grep -q "Verify return code: 0 (ok)" <<<"$out"; then pass "$host: TLS 1.3, a certificate the client trusts"
   else fail "$host: no trusted TLS 1.3 handshake: $(grep -m1 -E 'Verify return code|error|alert' <<<"$out")"; fi
   note "$(grep -m1 -E '^New, ' <<<"$out")"
-  cert=$(tls "$host" | openssl x509 -noout -ext subjectAltName -enddate 2>/dev/null)
-  if grep -q "DNS:$host" <<<"$cert"; then pass "$host: the certificate names $host"; else fail "$host: the certificate does not name it"; fi
+  # Its names, one a line: the name itself, or a wildcard one level up (Cloudflare's *.<domain>) covers it.
+  names=$(tls "$host" | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed 's/^ *//')
+  parent=${host#*.}
+  if grep -qxF "DNS:$host" <<<"$names"; then pass "$host: the certificate names it"
+  elif [[ "$parent" == *.* ]] && grep -qxF "DNS:*.$parent" <<<"$names"; then pass "$host: the certificate names it (*.$parent)"
+  else fail "$host: the certificate does not name it"; fi
   days=${CHECK_CERT_DAYS:-14}
   if tls "$host" | openssl x509 -noout -checkend $((days * 86400)) >/dev/null 2>&1; then pass "$host: the certificate is good for $days days or more"
   else fail "$host: the certificate ends within $days days"; fi
   old=$(tls "$host" -tls1_1 -cipher 'DEFAULT:@SECLEVEL=0')
   if grep -q "no protocols available" <<<"$old"; then note "$host: this openssl cannot offer TLS 1.1 at all: not checked"
   elif grep -q "Cipher is (NONE)\|alert\|wrong version" <<<"$old"; then pass "$host: TLS 1.1 refused"
+  elif [ -n "$CLOUDFLARE" ]; then fail "$host: TLS 1.1 accepted, by Cloudflare: set its Minimum TLS Version to 1.2 ($EDGE)"
   else fail "$host: TLS 1.1 accepted"; fi
 done
 for name in unknown.invalid ""; do
@@ -101,39 +120,60 @@ ws() { # Origin, then extra curl options: the handshake's status
 expect 101 "$(ws "https://$ISLAND" --max-time 3)" "the island's page opens the stream"
 expect 403 "$(ws "https://elsewhere.example")" "another site's page may not"
 expect 403 "$(ws "")" "nor a script that sends no Origin"
-# Each socket claims another address (X-Forwarded-For, CF-Connecting-IP); the relay must count them all as ours, so
-# one more than its per-address limit is refused, for holding too many or for opening them too fast (either way, ours).
+# Each socket claims another address (X-Forwarded-For, and CF-Connecting-IP unless Cloudflare is in front: it refuses
+# a request that brings its own); the relay must count them all as ours, so one more than its per-address limit is
+# refused, for holding too many or for opening them too fast (either way, ours). Which ones the pace refuses depends on
+# timing, so every socket's answer counts: believed claims would open all of them.
 most=${CHECK_PER_ADDRESS:-64}
 claimed() { printf '198.51.%d.%d' $(($1 / 250)) $(($1 % 250 + 1)); }
-held=()
+claim() { printf -- '-H\nX-Forwarded-For: %s\n' "$1"; [ -n "$CLOUDFLARE" ] || printf -- '-H\nCF-Connecting-IP: %s\n' "$1"; }
+codes=$(mktemp -d)
 for ((i = 1; i <= most; i++)); do
-  "${CURL[@]}" --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
-    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" -H "X-Forwarded-For: $(claimed "$i")" \
-    -H "CF-Connecting-IP: $(claimed "$i")" --max-time $((8 + most / 20)) "https://$ISLAND/island/spectate/ws" &
-  held+=($!)
+  mapfile -t claims < <(claim "$(claimed "$i")")
+  "${CURL[@]}" -w '%{http_code}' --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" "${claims[@]}" \
+    --max-time $((8 + most / 20)) "https://$ISLAND/island/spectate/ws" > "$codes/$i" &
 done
 sleep $((2 + most / 20))
+mapfile -t claims < <(claim 203.0.113.99)
 extra=$("${BASE[@]}" -w ' %{http_code}' --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: https://$ISLAND" \
-  -H "X-Forwarded-For: 203.0.113.99" -H "CF-Connecting-IP: 203.0.113.99" --max-time 3 "https://$ISLAND/island/spectate/ws")
-kill "${held[@]}" 2>/dev/null; wait "${held[@]}" 2>/dev/null
-if [[ "$extra" == *"Too many sockets from here."*429 ]]; then pass "claimed addresses are not believed: socket $((most + 1)) from here is refused"
-elif [[ "$extra" == *"Connecting too often"*429 ]]; then pass "claimed addresses are not believed: socket $((most + 1)) is refused for its pace"
-elif [[ "$extra" == *429 ]]; then pass "socket $((most + 1)) from here is refused (${extra: -3})"
-else fail "socket $((most + 1)), with yet another claimed address, got through: ${extra: -3} (is CHECK_PER_ADDRESS the relay's limit?)"; fi
+  "${claims[@]}" --max-time 3 "https://$ISLAND/island/spectate/ws" | tr -d '\0')
+wait # the held sockets end at their --max-time, and only then write their status
+opened=$(cat "$codes"/* | grep -o 101 | wc -l)
+refused=$(cat "$codes"/* | grep -o 429 | wc -l)
+rm -rf "$codes"
+[ "${extra: -3}" = 429 ] && refused=$((refused + 1))
+if [ "$refused" -gt 0 ]; then
+  why=$(grep -o -E "Too many sockets from here|Connecting too often" <<<"$extra")
+  pass "claimed addresses are not believed: of $((most + 1)) sockets from here, $refused refused${why:+ ($why)}, $opened held"
+else fail "all $((most + 1)) sockets from here opened, each claiming another address (is CHECK_PER_ADDRESS the relay's limit?)"; fi
 
-echo "== Ports on $TARGET (from outside, only 80 and 443)"
-for port in 80 443; do
-  if timeout 3 bash -c "</dev/tcp/$TARGET/$port" 2>/dev/null; then pass "$port open"; else fail "$port closed"; fi
-done
-for port in 2019 2020 5432 6379 8000 8080 8081 8082 9090 9093 9100; do
-  if timeout 3 bash -c "</dev/tcp/$TARGET/$port" 2>/dev/null; then
-    case "$TARGET:$port" in
-      127.*:9090|127.*:9093) note "$port open on loopback: the monitoring's pages, for an SSH tunnel" ;;
-      *) fail "$port open" ;;
-    esac
-  else pass "$port closed"; fi
-done
+closed() { # an address, then the ports that must not answer from here
+  local address=$1 port
+  for port in "${@:2}"; do
+    if timeout 3 bash -c "</dev/tcp/$address/$port" 2>/dev/null; then
+      case "$address:$port" in
+        127.*:9090|127.*:9093) note "$port open on loopback: the monitoring's pages, for an SSH tunnel" ;;
+        *) fail "$port open" ;;
+      esac
+    else pass "$port closed"; fi
+  done
+}
+INSIDE=(2019 2020 5432 6379 8000 8080 8081 8082 9090 9093 9100)
+if [ -z "$CLOUDFLARE" ]; then
+  echo "== Ports on $TARGET (from outside, only 80 and 443)"
+  for port in 80 443; do
+    if timeout 3 bash -c "</dev/tcp/$TARGET/$port" 2>/dev/null; then pass "$port open"; else fail "$port closed"; fi
+  done
+  closed "$TARGET" "${INSIDE[@]}"
+elif [ -n "${CHECK_ORIGIN:-}" ]; then
+  echo "== Ports on the server, $CHECK_ORIGIN (from here, none: only Cloudflare may reach 80 and 443)"
+  closed "$CHECK_ORIGIN" 80 443 "${INSIDE[@]}"
+else
+  echo "== Ports"
+  note "$TARGET is Cloudflare's, and so are the ports it answers on. CHECK_ORIGIN=<the server's address> checks the server's."
+fi
 
 echo
 [ "$FAILS" -eq 0 ] && echo "All checks passed." || echo "$FAILS check(s) failed."
