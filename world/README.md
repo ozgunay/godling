@@ -164,7 +164,8 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - **Tools in the hand** (`hands.js`): a `Tool` whose `HeldBy` names a player is drawn on that body's right hand bone (`mixamorigRightHand`), not over its head where the world carries it.
     - The grip is the middle of the right mitten, measured once from the model's rest pose (`models.js`). Each `ToolKind` has its own grip in `IN_HAND`: where the fist closes on the handle, and how far the head dips. The head points past the thumb.
     - A tool picked up eases from where the world has it into the hand over 0.4 s, and back out when set down. A model without the hand bone draws tools where the world has them, as does a body hidden in a first-person capture.
-    - While a body holds a tool, it plays `IdleCarry` and `WalkCarry` in place of Idle and Walk, if its model has them: the right arm holds the tool steadily at the side instead of swinging it (`art/build_godling.py`). The two walks keep in step, so picking up or setting down never jumps the stride.
+    - While its body climbs (`Climbing`), both hands are on the ladder: the tool eases back over the head, where the world carries it, and into the hand again once the body steps off.
+    - While a body holds a tool, each loop plays as its carry clip, if its model has a carry layer for that loop (`IdleCarry`, `WalkCarry`, `JumpCarry`, `FallCarry`, `BraceCarry`: `art/build_godling.py`). A layer holds only the right arm, holding the tool steadily instead of swinging it; on load, `models.js` lays it over its loop (`withCarryLayers`). A loop and its carry clip keep in step, so picking up or setting down a tool never jumps the stride.
     - `__godlingRenderer.hands()` lists the tools in hands, for checks.
   - **Models** (`models.js`): each loads once.
     - A prop's "bounds" material (two specks that set its box, from `art/build_props.py`) counts for fitting but is not drawn.

@@ -280,8 +280,8 @@ describe('the renderer', () => {
     const r = createRenderer(ctx)
     const tool = (id, kind, position, holder) => part(id, 'Tool', position, [0.4, 0.4, 1], { rotation: I,
       attributes: { ToolKind: kind, ...(holder ? { HeldBy: holder } : {}) } })
-    const obs = (holder) => ({
-      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0] },
+    const obs = (holder, attributes = {}) => ({
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0], attributes },
         { id: 'p2', name: 'Plain', root_part_id: 2, position: [9, 2.5, 0] },
         { id: 'p3', name: 'Torchbearer', root_part_id: 7, position: [-9, 2.5, 0] }],
       entities: [
@@ -320,6 +320,12 @@ describe('the renderer', () => {
     cameraModes.spectator.state.attach = null
     frames(12, obs('Godling'))
     expect(hands()).toHaveLength(1)
+    // Climbing, both hands are on the ladder: the axe floats over the head meanwhile, and comes back to the hand after.
+    frames(12, obs('Godling', { Climbing: true }))
+    expect(hands()).toEqual([])
+    expect(clips(1)).toEqual({ Idle: 1 }) // its hand is empty: no carry clip (this stand-in has no Climb to play)
+    frames(12, obs('Godling'))
+    expect(hands()).toEqual([expect.objectContaining({ id: 3, body: 1, weight: 1 })])
     // Set down: out of the hand, then where the world has it.
     frames(2, obs(null))
     expect(hands()[0].weight).toBeLessThan(1)

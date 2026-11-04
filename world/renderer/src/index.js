@@ -930,16 +930,6 @@ export function createRenderer(ctx) {
         bodyByName.set(player.name, player.root_part_id)
       }
     }
-    // The bodies with a tool in the hand (a Tool whose "HeldBy" names their player), for their carry clips (models.js).
-    // Only a kind hands.js draws in the hand (IN_HAND): any other stays where the world carries it, over the head.
-    const carrying = new Set()
-    for (const entity of obs.entities || []) {
-      const holder = heldBy(entity)
-      if (holder !== undefined && IN_HAND[entity.attributes?.ToolKind] && bodyByName.has(holder)) {
-        carrying.add(bodyByName.get(holder))
-      }
-    }
-
     // A first-person camera (the server's capture of what Godling sees) sits inside the body's head: hide that
     // body, or its own head fills the view.
     const attach = cameraModes?.spectator?.state?.attach
@@ -951,6 +941,11 @@ export function createRenderer(ctx) {
     const landKey = []
     const swimming = []
     const toHand = [] // tools in a hand, or on their way in or out
+    // The bodies, posed after the loop: by then it is known which hold a tool (a Tool whose "HeldBy" names their
+    // player), for their carry clips (models.js). Only a kind hands.js draws in the hand (IN_HAND) counts: any other
+    // stays where the world carries it, over the head.
+    const bodies = []
+    const carrying = new Set() // the holders' names
 
     for (const entity of obs.entities || []) {
       activeIds.add(entity.id)
@@ -1006,6 +1001,7 @@ export function createRenderer(ctx) {
       if (record.kind === 'parts') {
         // A tool in a hand is placed after the loop, once every body is posed for this frame.
         const holder = heldBy(entity)
+        if (holder !== undefined && IN_HAND[entity.attributes?.ToolKind]) carrying.add(holder)
         if (holder !== undefined || hands.has(entity.id)) {
           toHand.push({ record, entity, holder })
         } else if (moved || record.fresh !== false || record.swims) {
@@ -1042,13 +1038,7 @@ export function createRenderer(ctx) {
           size: entity.size || [2, 5, 2],
           yawOffsetDeg: entity.model_yaw_offset_deg,
         })
-        characters.update(entity.id, {
-          dt,
-          speed,
-          humanoidState: stateByRootPartId.get(entity.id) || null,
-          attributes: attributesByRootPartId.get(entity.id) || {},
-          carrying: carrying.has(entity.id),
-        })
+        bodies.push({ id: entity.id, speed })
         bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
       }
       record.fresh = false
@@ -1059,13 +1049,28 @@ export function createRenderer(ctx) {
       }
     }
 
+    // While a body climbs, both its hands are on the ladder: its tool floats over its head meanwhile, as the world
+    // carries it (Godling levitates what it carries), and goes back into the hand once it steps off.
+    const handFree = (body) => attributesByRootPartId.get(body)?.Climbing !== true
+    const carriers = new Set([...carrying].map((name) => bodyByName.get(name)))
+    for (const { id, speed } of bodies) {
+      characters.update(id, {
+        dt,
+        speed,
+        humanoidState: stateByRootPartId.get(id) || null,
+        attributes: attributesByRootPartId.get(id) || {},
+        carrying: carriers.has(id) && handFree(id),
+      })
+    }
+
     // Tools in hands (hands.js), in the hand of the body whose player's name the piece gives, unless that body is not
-    // drawn (the camera inside its head): then where the world carries it, over the head and out of that view.
+    // drawn (the camera inside its head) or climbs: then where the world carries it, over the head.
     for (const { record, entity, holder } of toHand) {
       const body = bodyByName.get(holder)
+      const free = body !== undefined && body !== hiddenBodyId && handFree(body)
       const served = servedMatrix(entity.position, entity.rotation, entity.position[1], entityMatrix)
       const kept = hands.place({ id: entity.id, kind: entity.attributes?.ToolKind, size: entity.size },
-        body !== undefined && body !== hiddenBodyId ? body : null, served, dt, heldMatrix)
+        free ? body : null, served, dt, heldMatrix)
       placeSlots(record, kept ? heldMatrix : served)
     }
 

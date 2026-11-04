@@ -83,6 +83,29 @@ describe('model library', () => {
     models.dispose()
   })
 
+  it('lays each carry layer over its loop: the loop\'s tracks, the layer\'s bones taken from the layer', async () => {
+    const track = (bone, values) => new THREE.QuaternionKeyframeTrack(`${bone}.quaternion`, [0, 2], values)
+    const still = [0, 0, 0, 1, 0, 0, 0, 1]
+    const turned = [0, 0, 0, 1, 0, 0, 1, 0]
+    files['/layered.glb'] = () => ({
+      scene: new THREE.Group(),
+      animations: [
+        new THREE.AnimationClip('Walk', 2, [track('mixamorigHips', turned), track('mixamorigRightArm', turned)]),
+        new THREE.AnimationClip('WalkCarry', 1.5, [track('mixamorigRightArm', still)]), // the arm alone
+        new THREE.AnimationClip('SwimCarry', 1, [track('mixamorigRightArm', still)]), // no Swim to lay it over
+      ],
+    })
+    const models = createModelLibrary({})
+    models.get('/layered.glb')
+    await flush()
+    const clips = Object.fromEntries(models.get('/layered.glb').animations.map((c) => [c.name, c]))
+    const tracks = (name) => Object.fromEntries(clips[name].tracks.map((t) => [t.name, [...t.values]]))
+    expect(tracks('WalkCarry')).toEqual({ 'mixamorigHips.quaternion': turned, 'mixamorigRightArm.quaternion': still })
+    expect(clips.WalkCarry.duration).toBe(2) // in step with the walk it lies over
+    expect(tracks('Walk')).toEqual({ 'mixamorigHips.quaternion': turned, 'mixamorigRightArm.quaternion': turned })
+    expect(tracks('SwimCarry')).toEqual({ 'mixamorigRightArm.quaternion': still })
+  })
+
   it('reports a model that cannot load, and draws as if it had none', async () => {
     const errors = []
     const models = createModelLibrary({ onError: (err, meta) => errors.push(meta.modelUrl) })
@@ -168,6 +191,24 @@ describe('characters', () => {
     controller.update(1, { dt: 0.2, carrying: true, attributes: { Gestures: 1, Gesture: 'Wave' } })
     controller.update(1, { dt: 0.2, carrying: true, attributes: { Gestures: 2, Gesture: 'Wave' } })
     expect(weights(controller)).toEqual({ Wave: 1 }) // a gesture plays over the carry as over the plain clips
+  })
+
+  it('with a tool in the hand, jumps, falls, climbs and braces with their carry clips too', async () => {
+    const { controller, root } = await setup(['Idle', 'Jump', 'Fall', 'Climb', 'Brace', 'JumpCarry', 'FallCarry',
+      'ClimbCarry', 'BraceCarry'])
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    const settle = (input) => {
+      for (let i = 0; i < 10; i++) controller.update(1, { dt: 0.2, carrying: true, ...input })
+      return weights(controller)
+    }
+    expect(settle({ humanoidState: 'Jumping' })).toEqual({ JumpCarry: 1 })
+    expect(settle({ humanoidState: 'Freefall' })).toEqual({ FallCarry: 1 })
+    expect(settle({ attributes: { Climbing: true } })).toEqual({ ClimbCarry: 1 })
+    expect(settle({ attributes: { Bracing: true } })).toEqual({ BraceCarry: 1 })
+    expect(settle({ carrying: false, attributes: { Bracing: true } })).toEqual({ Brace: 1 }) // set down
+    expect(settle({ humanoidState: 'Jumping' })).toEqual({ JumpCarry: 1 })
+    expect(settle({ carrying: false, humanoidState: 'Jumping' })).toEqual({ Jump: 1 })
+    expect(settle({})).toEqual({ Idle: 1 }) // no IdleCarry: the plain idle
   })
 
   it('a model without carry clips carries a tool in its plain Idle and Walk', async () => {
