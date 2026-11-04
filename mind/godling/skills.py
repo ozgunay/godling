@@ -147,6 +147,7 @@ class Skills:
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
         self.kept_in = kept_in  # the name of the kept structure a piece belongs to
+        self.placed = []  # pieces set down since the mind last asked (take_placed), by any skill, learned ones too
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
         self.log = log or (lambda **kw: None)
@@ -259,6 +260,12 @@ class Skills:
             self.log(kind="reflex", text=f"held on through the earthquake for {time.time() - started:.0f}s")
         except WorldError as err:
             self.log(kind="error", message=f"brace: {err}")
+
+    def take_placed(self):
+        """The pieces the body set down (place_at, put_down) since the last call, at any depth: inside a learned
+        skill too, where most building happens (run hut1: every block went down through stack_block or haul_to)."""
+        placed, self.placed = self.placed, []
+        return placed
 
     # ---- helpers -----------------------------------------------------------------------
     def _observe(self):
@@ -1115,6 +1122,8 @@ class Skills:
             for turn in ((0, 90) if long else (0,)):
                 result = self.skill_put_down(x, z, turn)
                 if result.ok:
+                    if self.placed and self.placed[-1] == held.name:
+                        self.placed.pop()  # set down to free the hands, not built with
                     self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
                     return result
         return None
@@ -1165,6 +1174,8 @@ class Skills:
         landed = snap.entities.get(held.name)
         where = f"({landed.pos[0]:.1f}, {landed.pos[1]:.2f}, {landed.pos[2]:.1f})" if landed else "nowhere (lost)"
         how = " standing upright" if ladder else _orientation(turn, upright)
+        if not self._lifting:  # set back after stepping out of a pen: not newly built
+            self.placed.append(held.name)
         return Result(True, "put_down", f"put {held.name} down{how} at {where}", {"object": held.name})
 
     def skill_stack_on(self, object):
@@ -1294,6 +1305,8 @@ class Skills:
         if stepped:  # and back down again, as a person would: the mind never asked to stand up there
             down = self._hop_down(snap, floor[0], floor[1], self._level(snap), floor[2], walk_on=False)
             said += stepped + (", and stepped back down" if down.ok else f"; {down.summary}")
+        if not self._lifting:
+            self.placed.append(held.name)
         return Result(True, "place_at", said, {"object": held.name})
 
     def skill_throw(self, x, y, z, speed=6):

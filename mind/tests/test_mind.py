@@ -245,15 +245,15 @@ def hut_island(monkeypatch, tmp_path):
     return island, body, library, mem, mind, [w["name"] for w in wall]
 
 
-def placed(*names):
-    return [Result(True, "place_at", "set", {"object": n}) for n in names]
+def built(mind, island, *names):
+    """The body set these pieces down (as place_at and put_down tell it), and the project ended."""
+    mind.skills.placed += names
+    mind.record_outcome({"goal": "build"}, [], island.snap())
 
 
 def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
     island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
-    mind.record_outcome({"goal": "the hut's first course"}, placed(*wall) + [
-        Result(True, "put_down", "set", {"object": "Block_30"}),  # set down alone: material, not a build
-        Result(False, "place_at", "rejected", {"object": "Log_1"})], island.snap())
+    built(mind, island, *wall, "Block_30")  # Block_30 set down alone: material, not a build
     (title, build), = mem.state["structures"].items()
     assert title == "build at (10.0, 0.0)" and build["auto"] and sorted(build["cubes"]) == sorted(wall)
     assert library.resolve_helpers({"a": {"nearest_free": "cube"}}, body) == {"a": "Block_30"}
@@ -268,7 +268,7 @@ def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
     # It grows under the same name; a piece knocked away from it is material again.
     island.ents["Log_1"]["position"] = [10, 6.25, 0]  # a roof beam across the two corners' tops
     island.ents["Block_8"]["position"] = [30, 1.25, 30]
-    mind.record_outcome({"goal": "a roof"}, placed("Log_1"), island.snap())
+    built(mind, island, "Log_1")
     (title, build), = mem.state["structures"].items()
     assert title == "build at (10.0, 0.0)" and "Log_1" in build["cubes"] and "Block_8" not in build["cubes"]
     assert "Log_1 (10.0, 0.0) along x" in mind.situation(island.snap(), [], [])
@@ -279,11 +279,23 @@ def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
     assert mem.state["structures"] == {} and body.run("pick_up", {"object": "Block_2"}).ok
 
 
+def test_a_flat_pile_is_material_and_learned_skills_build_too(monkeypatch, tmp_path):
+    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
+    # Run hut1 gathered its blocks side by side to take from: a pile, not a build, until something is stacked.
+    built(mind, island, *wall[:3])  # three blocks of the first course, flat on the ground
+    assert mem.state["structures"] == {} and body.run("pick_up", {"object": "Block_1"}).ok
+    # Every block in run hut1 went down through one of its own skills (stack_block, haul_to): those count too.
+    library.define({"name": "haul", "params": ["object"], "steps": [
+        {"skill": "pick_up", "args": {"object": "$object"}}, {"skill": "put_down", "args": {"x": -15, "z": 5}}]})
+    assert body.run("haul", {"object": "Block_30"}).ok
+    assert body.take_placed() == ["Block_30"] and body.take_placed() == []  # Block_1 was only set aside first
+
+
 def test_builds_leave_what_it_named_itself_alone(monkeypatch, tmp_path):
     island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
     mind.adopt({"reply": {"keep": [{"name": "my gate", "cubes": ["Block_1", "Block_2"]}]}, "seconds": 1,
                 "prepared": {"assumes": None}}, island.snap())
-    mind.record_outcome({"goal": "walls"}, placed(*wall), island.snap())
+    built(mind, island, *wall)
     assert sorted(mem.state["structures"]) == ["build at (10.0, 0.0)", "my gate"]
     assert not {"Block_1", "Block_2"} & set(mem.state["structures"]["build at (10.0, 0.0)"]["cubes"])
     assert mem.structure_of("Block_1") == "my gate" and mem.structure_of("Block_30") is None

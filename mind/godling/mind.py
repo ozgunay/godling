@@ -270,10 +270,12 @@ stone from the sky, a note, damage, a visitor, the weather) changes what you do,
 thought and in that project's intention."""
 
     def keep_builds(self, snap):
-        """What Godling builds is its own. Pieces its body set down that touch one another are a build, kept like a
-        structure it named: not offered as free material, not picked up unless it releases the build first, and shown
-        as what it has built. Without this its next plans took its own walls apart for material (run rp3: the
-        agenda after a column used the column's blocks for a ring round it), and a hut was never more than a ring.
+        """What Godling builds is its own. Pieces its body set down that touch one another, with something stacked
+        on something, are a build, kept like a structure it named: not offered as free material, not picked up unless
+        it releases the build first, and shown as what it has built. Without this its plans took its own builds apart
+        for material: in run rp3 the agenda after a column used the column's blocks for a ring round it, and in run
+        hut1 it pulled the top off its tower, then took the tower down for hut posts, then two blocks out of a post
+        to clear sand. A flat group of pieces it set down side by side is a pile to take from, not a build.
         A build keeps its name as it grows, and a piece knocked away from it is building material again."""
         structures = self.memory.state["structures"]
         named = {c for s in structures.values() if not s.get("auto") and s.get("keep") for c in s["cubes"]}
@@ -283,7 +285,7 @@ thought and in that project's intention."""
         old = {title: s for title, s in structures.items() if s.get("auto")}
         builds = {}
         for group in sorted(_clusters(placed), key=lambda g: -len(g)):
-            if len(group) < 2:
+            if len(group) < 2 or max(self._layer(snap, e) for e in group) < 2:
                 continue
             cubes = sorted(e.name for e in group)
             title = next((t for t, s in old.items() if t not in builds and set(s["cubes"]) & set(cubes)), None)
@@ -302,6 +304,12 @@ thought and in that project's intention."""
             structures.pop(title)
         structures.update(builds)
 
+    @staticmethod
+    def _layer(snap, e):
+        """Which layer up from the ground a piece lies in: 1 on the ground, 2 on top of one block, and so on."""
+        floor = snap.ground_top(e.pos[0], e.pos[2]) or 0.0
+        return max(1, int(round((e.pos[1] - e.size[1] / 2 - floor) / CUBE)) + 1)
+
     def _layout(self, snap, cubes):
         """A build as the mind can read it back: its pieces by layer, each block by the cell it fills."""
         layers = {}
@@ -309,8 +317,7 @@ thought and in that project's intention."""
             e = snap.entities.get(name)
             if e is None:
                 continue
-            floor = snap.ground_top(e.pos[0], e.pos[2]) or 0.0
-            layer = max(1, int(round((e.pos[1] - e.size[1] / 2 - floor) / CUBE)) + 1)
+            layer = self._layer(snap, e)
             what = _fmt_pos(e.pos)
             if not e.is_cube:
                 what = (f"{name} {what} " + ("upright" if e.size[1] > max(e.size[0], e.size[2]) + 0.1
@@ -500,8 +507,7 @@ thought and in that project's intention."""
         height = max((r.facts.get("height", 0) for r in results), default=0)
         importance = 4 if (height >= 5 or any(r.facts.get("toppled") for r in results)) else (3 if ok else 2)
         self.memory.store_experience(self.last_outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
-        self.memory.note_placed([r.facts["object"] for r in results if r.ok and r.skill in ("place_at", "put_down")
-                                 and isinstance(r.facts.get("object"), str)])
+        self.memory.note_placed(self.skills.take_placed())
         self.keep_builds(snap)
         for r in results:
             if r.skill == "build_tower" and len(r.facts.get("cubes", [])) >= 3:
