@@ -200,9 +200,13 @@ const DRAW = {
   eye() {
     return outline(rows(['....wwww....', '..wwwwwwww..', '.wwwccccwww.', 'wwwcckkccwww', '.wwwccccwww.', '..wwwwwwww..', '....wwww....']))
   },
-  roofOff() { // a hut with its roof lifted off, Godling inside: the cutaway
-    return outline(rows(['....bbb....', '..bbbbbbb..', 'bbbbbbbbbbb', '...........', 's.........s', 's...www...s',
-      's...wkw...s', 's...www...s', 'sssssssssss']))
+  wallsUp() { // the building as it stands, roof and all (the walls mode: walls up)
+    return outline(rows(['....b....', '...bbb...', '..bbbbb..', '.bbbbbbb.', 'bbbbbbbbb', '.sssssss.', '.sssssss.',
+      '.ssSSSss.', '.ssSSSss.']))
+  },
+  wallsCut() { // the roof off and the walls cut low, Godling showing inside (the walls mode: cutaway)
+    return outline(rows(['.........', '.........', '...www...', '...wkw...', '...www...', '.s.www.s.', '.s.....s.',
+      '.sssssss.', '.sssssss.']))
   },
   move() {
     return outline(rows(['.....w.....', '....www....', '.....w.....', '..w..w..w..', '.wwwwwwwww.', '..w..w..w..', '.....w.....', '....www....', '.....w.....']))

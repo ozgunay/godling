@@ -126,13 +126,13 @@ for (const [b, mode] of [[followBtn, 'follow'], [freeBtn, 'free']]) {
   b.type = 'button'
   b.addEventListener('click', () => setCamera(mode))
 }
-// "See inside": the parts of Godling's building that would hide it (its roof, a wall in front) are left out of the
-// picture, with either camera. Off, every piece is drawn, to look at the building itself.
-const insideBtn = el('button', 'cam', `${icon('roofOff', 2)}<span>See inside</span>`)
-insideBtn.type = 'button'
-insideBtn.title = 'Leave out the roof and walls that hide Godling'
-insideBtn.addEventListener('click', () => setInside(!inside))
-cameraGroup.append(followBtn, freeBtn, insideBtn)
+// The walls mode, one small button as in The Sims: cutaway (the parts of Godling's building that would hide it, its
+// roof and a wall in front, are left out of the picture, with either camera) or walls up (every piece drawn, to look
+// at the building itself). The Sims' third mode, walls down, is for arranging a house's inside: nothing to do here.
+const wallsBtn = el('button', 'cam walls')
+wallsBtn.type = 'button'
+wallsBtn.addEventListener('click', () => setInside(!inside))
+cameraGroup.append(followBtn, freeBtn, wallsBtn)
 statusBar.append(cameraGroup)
 stage.append(statusBar)
 const camHint = text('p', 'b-camhint', matchMedia('(pointer: coarse)').matches
@@ -153,7 +153,11 @@ setCamera(camera)
 function setInside(on) {
   inside = on
   store.set('godling.cutaway', on ? 'on' : 'off')
-  insideBtn.setAttribute('aria-pressed', String(on))
+  wallsBtn.innerHTML = icon(on ? 'wallsCut' : 'wallsUp', 2)
+  const says = on ? 'Walls: cutaway, Godling shows through its roof and walls. Click for walls up.'
+    : 'Walls: up, the whole building drawn. Click for the cutaway.'
+  wallsBtn.title = says
+  wallsBtn.setAttribute('aria-label', says)
   tellView({ type: 'godling-cutaway', on })
 }
 setInside(inside)

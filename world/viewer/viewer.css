@@ -100,6 +100,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .cam[aria-pressed='true'] { outline: 0.25rem solid var(--gold); outline-offset: 0.06rem; }
 .cam[aria-pressed='false'] { filter: saturate(0.6) brightness(0.85); }
 .cam[aria-pressed='false']:hover { filter: none; }
+.cam.walls { padding: 0.45rem 0.55rem 0.35rem; } /* the walls mode: an icon alone, as in The Sims */
 .b-camhint {
   position: absolute; top: 10.2rem; right: 1.5rem; margin: 0; padding: 0.4rem 0.7rem; background: var(--glass);
   font: 400 0.95rem/1.2 'Tiny5', sans-serif; color: var(--mist); text-shadow: var(--pixel-shadow);
@@ -410,6 +411,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
   .b-clock .px { width: 1.5rem; height: auto; }
   .b-clock .day, .b-clock .quake { display: none; }
   .cam { height: 3.1rem; padding: 0.3rem 0.5rem 0; }
+  .cam.walls { padding: 0.3rem 0.45rem 0; }
   .b-camhint { top: 4.1rem; right: 0.75rem; left: 0.75rem; text-align: center; font-size: 0.9rem; }
   .b-mind { top: 4.4rem; left: 0.75rem; right: 0.75rem; width: auto; }
   .b-feed .line { grid-template-columns: 2.4rem auto 1fr; font-size: 1rem; padding: 0.35rem 0.55rem; }

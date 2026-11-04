@@ -157,18 +157,21 @@ describe('the viewer screen', () => {
     expect($('.b-note .get').textContent).toMatch(/^Next note in 0:/)
   })
 
-  it('lets the viewer see inside the building Godling is in, or not, and remembers it', async () => {
+  it('switches the walls mode with one small button, cutaway or walls up, and remembers it', async () => {
     const { $, view, told } = await boot()
-    const inside = $('.b-camera').querySelectorAll('button')[2]
-    expect(inside.textContent).toBe('See inside')
-    expect(inside.getAttribute('aria-pressed')).toBe('true') // on unless turned off
+    const walls = $('.b-camera .walls')
+    expect(walls.textContent).toBe('') // an icon alone, as in The Sims
+    expect(walls.getAttribute('aria-label')).toMatch(/^Walls: cutaway/) // unless turned off
     view.dispatchEvent(new Event('load'))
     expect(told).toContainEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
-    inside.click()
-    expect(inside.getAttribute('aria-pressed')).toBe('false')
+    const cutIcon = walls.innerHTML
+    walls.click()
+    expect(walls.getAttribute('aria-label')).toMatch(/^Walls: up/)
+    expect(walls.title).toBe(walls.getAttribute('aria-label'))
+    expect(walls.innerHTML).not.toBe(cutIcon)
     expect(localStorage.getItem('godling.cutaway')).toBe('off')
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: false })
-    inside.click()
+    walls.click()
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
   })
 
@@ -203,7 +206,7 @@ describe('the viewer screen', () => {
 
   it('starts in the free camera when it was left there, on a touch screen', async () => {
     const { $ } = await boot({ stored: { 'godling.camera': 'free', 'godling.name': 'Ann' }, coarse: true })
-    expect($('.b-camera button:last-child').getAttribute('aria-pressed')).toBe('true')
+    expect($('.b-camera').querySelectorAll('button')[1].getAttribute('aria-pressed')).toBe('true') // Free camera
     expect($('.b-camhint').textContent).toContain('pinch')
     expect($('#note-name').value).toBe('Ann')
   })
