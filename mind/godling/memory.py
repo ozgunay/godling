@@ -108,10 +108,23 @@ class NativeMemory:
                                           "keep": keep, "since": time.time()}
 
     def release_structure(self, name):
-        self.state["structures"].pop(name, None)
+        """Let go of a kept structure. Its pieces are building material again, not something it built."""
+        released = self.state["structures"].pop(name, None)
+        if released:
+            self.state["placed"] = [p for p in self.state.get("placed", []) if p not in released["cubes"]]
 
     def protected_cubes(self):
         return {c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
+
+    def structure_of(self, piece):
+        """The name of the kept structure a piece belongs to, or None."""
+        return next((title for title, s in self.state["structures"].items() if s.get("keep") and piece in s["cubes"]),
+                    None)
+
+    def note_placed(self, pieces):
+        """Pieces the body set down itself (place_at, put_down): what it builds with them is its own."""
+        placed = [p for p in self.state.get("placed", []) if p not in pieces] + list(pieces)
+        self.state["placed"] = placed[-400:]
 
     def finish_sleep(self, digest, intentions):
         self.state["digest"] = digest.strip()[:2500]

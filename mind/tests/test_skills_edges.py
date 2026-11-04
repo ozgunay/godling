@@ -128,6 +128,18 @@ def test_pen_lift_needs_a_second_try_and_cannot_go_back(make):
     assert any("(it could not go back: place rejected: PlaceFailed:Wobbly)" in t for t in reflexes(body))
 
 
+def test_pen_of_its_own_build_still_lets_it_out(make):
+    # Every piece of the pen is something it built and keeps: the mind may not take them, but the reflex that
+    # lifts one aside to step out (and sets it back) still may, even when the first lift slips.
+    island, body = make(ring(3.8), protected={f"Block_{i}" for i in range(1, 9)})
+    island.solid_pieces = True
+    island.on_act["Pickup"] = once(lambda d: setattr(island, "held", None))
+    r = body.run("walk_to", {"x": 15, "z": 0})
+    assert r.ok and any("penned in: lifted" in t for t in reflexes(body))
+    asked = body.run("pick_up", {"object": "Block_1"})
+    assert not asked.ok and "which you built; release that first" in asked.summary
+
+
 # ---- reaching high -------------------------------------------------------------------------------------------
 def test_reach_high_skips_what_cannot_be_stood_on(make):
     things = [block("Block_1", -3, 1.25, 3), ent("Coconut_1", (10, 1, 0), (2, 2, 2)),

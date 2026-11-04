@@ -154,7 +154,7 @@ def main():
         memory = make_memory(args, run, log)
         library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
-                        walk_speed=args.walk_speed)
+                        walk_speed=args.walk_speed, kept_in=memory.structure_of)
         discovery = Discovery(run / "memory" / "discovery.json")  # the island as far as Godling has seen it
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step

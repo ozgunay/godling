@@ -53,6 +53,53 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
              "body busy far longer for the same thought.")
 
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
+TOUCHING = 0.3  # pieces closer than this face to face are built together
+BUILT_PREFIX = "build at "  # the name of a build kept by itself (see Mind.keep_builds)
+
+
+def _touching(a, b):
+    return all(abs(a.pos[i] - b.pos[i]) <= (a.size[i] + b.size[i]) / 2 + TOUCHING for i in range(3))
+
+
+def _clusters(pieces):
+    """Groups of pieces that touch, directly or through one another."""
+    groups, left = [], list(pieces)
+    while left:
+        group = [left.pop()]
+        frontier = [group[0]]
+        while frontier:
+            here = frontier.pop()
+            near = [p for p in left if _touching(here, p)]
+            for p in near:
+                left.remove(p)
+            group += near
+            frontier += near
+        groups.append(group)
+    return groups
+
+
+def _agenda_moves(doing):
+    """Where the agenda being carried out takes each piece it names: {name: (x, y or None, z)}, and how many pieces
+    it picks some other way (a helper such as nearest_free, or one of its own skills)."""
+    moves, holding, unnamed = {}, None, 0
+    for project in doing or []:
+        for step in project.get("steps", []):
+            args = step.get("args") or {}
+            if step.get("skill") == "pick_up":
+                holding = args.get("object") if isinstance(args.get("object"), str) else None
+                unnamed += holding is None
+            elif step.get("skill") in ("place_at", "put_down") and holding:
+                where = tuple(args.get(k) if isinstance(args.get(k), (int, float)) else None for k in ("x", "y", "z"))
+                moves[holding] = where
+                holding = None
+    return moves, unnamed
+
+
+def _fmt_target(where):
+    x, y, z = where
+    if x is None or z is None:
+        return "its place"
+    return f"({x:.1f}, {y:.2f}, {z:.1f})" if y is not None else f"({x:.1f}, {z:.1f}) on the ground"
 
 
 def island_map(snap, discovery=None, half=200, step=10):
@@ -222,12 +269,65 @@ something failed, change your approach instead of repeating it. When something y
 stone from the sky, a note, damage, a visitor, the weather) changes what you do, name it in a few words in your
 thought and in that project's intention."""
 
+    def keep_builds(self, snap):
+        """What Godling builds is its own. Pieces its body set down that touch one another are a build, kept like a
+        structure it named: not offered as free material, not picked up unless it releases the build first, and shown
+        as what it has built. Without this its next plans took its own walls apart for material (run rp3: the
+        agenda after a column used the column's blocks for a ring round it), and a hut was never more than a ring.
+        A build keeps its name as it grows, and a piece knocked away from it is building material again."""
+        structures = self.memory.state["structures"]
+        named = {c for s in structures.values() if not s.get("auto") and s.get("keep") for c in s["cubes"]}
+        held = snap.held()
+        placed = [snap.entities[n] for n in self.memory.state.get("placed", [])
+                  if n in snap.entities and n not in named and not (held and n == held.name)]
+        old = {title: s for title, s in structures.items() if s.get("auto")}
+        builds = {}
+        for group in sorted(_clusters(placed), key=lambda g: -len(g)):
+            if len(group) < 2:
+                continue
+            cubes = sorted(e.name for e in group)
+            title = next((t for t, s in old.items() if t not in builds and set(s["cubes"]) & set(cubes)), None)
+            if title is None:
+                x, z = (sum(e.pos[i] for e in group) / len(group) for i in (0, 2))
+                title = f"{BUILT_PREFIX}({round(x / CUBE) * CUBE:.1f}, {round(z / CUBE) * CUBE:.1f})"
+                while (title in structures and title not in old) or title in builds:
+                    title += "'"
+            home = old.get(title, {}).get("positions", {})
+            builds[title] = {"cubes": cubes, "positions": {c: home.get(c) or [round(v, 3) for v in snap.entities[c].pos]
+                                                           for c in cubes},
+                             "where": [round(sum(e.pos[0] for e in group) / len(group), 1),
+                                       round(sum(e.pos[2] for e in group) / len(group), 1)],
+                             "keep": True, "auto": True, "since": old.get(title, {}).get("since", time.time())}
+        for title in old:
+            structures.pop(title)
+        structures.update(builds)
+
+    def _layout(self, snap, cubes):
+        """A build as the mind can read it back: its pieces by layer, each block by the cell it fills."""
+        layers = {}
+        for name in cubes:
+            e = snap.entities.get(name)
+            if e is None:
+                continue
+            floor = snap.ground_top(e.pos[0], e.pos[2]) or 0.0
+            layer = max(1, int(round((e.pos[1] - e.size[1] / 2 - floor) / CUBE)) + 1)
+            what = _fmt_pos(e.pos)
+            if not e.is_cube:
+                what = (f"{name} {what} " + ("upright" if e.size[1] > max(e.size[0], e.size[2]) + 0.1
+                                             else "along x" if e.size[0] > e.size[2] else "along z"))
+            layers.setdefault(layer, []).append(((e.pos[0], e.pos[2]), what))
+        return "; ".join(f"layer {n}: {', '.join(what for _, what in sorted(cells))}"
+                         for n, cells in sorted(layers.items()))
+
     def situation(self, snap, events, chat, doing=None):
         held = snap.held()
         protected = self.memory.protected_cubes()
+        moves, unnamed = _agenda_moves(doing)
         seen = self.discovery.seen if self.discovery is not None else None
         known_stacks = [(xz, names) for xz, names in snap.stacks() if seen is None or any(n in seen for n in names)]
+        known_stacks = [(xz, names) for xz, names in known_stacks if not protected & set(names)]  # built: shown below
         stacked = {n for _, names in known_stacks for n in names}
+        spoken_for = protected | set(moves)
         if seen is None:
             loose = [_Seen(e.name, e.pos, False) for e in snap.movables() if e.name not in stacked and e is not held]
         else:  # what is in sight as it is now, the rest where it was last seen (ADR-008)
@@ -235,13 +335,15 @@ thought and in that project's intention."""
             loose = [_Seen(n, live[n].pos if n in self.discovery.visible and n in live else p,
                            n not in self.discovery.visible) for n, p in seen.items()
                      if n not in stacked and not (held and n == held.name)]
+        loose = [e for e in loose if e.name not in spoken_for]
         loose.sort(key=lambda e: hdist(e.pos, snap.me))
         loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" (last seen there)" if e.old else "")
-                              + (" [kept]" if e.name in protected else "") for e in loose[:LOOSE_IN_VIEW])
+                              for e in loose[:LOOSE_IN_VIEW])
         if len(loose) > LOOSE_IN_VIEW:
             loose_txt += f", and {len(loose) - LOOSE_IN_VIEW} more further away"
         stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in known_stacks) or "none"
-        kept = "; ".join(f"{title} at {s['where']} ({len(s['cubes'])} cubes)" for title, s in self.memory.state["structures"].items()) or "none"
+        kept = "; ".join(f"{title} ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}"
+                         for title, s in self.memory.state["structures"].items() if s.get("keep")) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
         cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in known_stacks for n in names[-1:]]
         cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]
@@ -258,7 +360,8 @@ thought and in that project's intention."""
             f"Others: {others}.",
             f"Loose objects (nearest first): {loose_txt or 'none'}.",
             f"Stacks: {stacks}.",
-            f"Things you decided to keep: {kept}.",
+            f"What you have built and keep (cells are block centres (x, z); your body takes no piece from these "
+            f"unless you release it): {kept}.",
             f"What just happened: {self.last_outcome}",
         ]
         if snap.time_of_day is not None:
@@ -281,8 +384,13 @@ thought and in that project's intention."""
                          + (f" (and {len(strokes) - 40} older)" if len(strokes) > 40 else "") + ".")
         if doing:
             plan = "; ".join(f"{i}) {p['goal']}" for i, p in enumerate(doing, 1))
-            lines.append(f"Right now your body is carrying out this agenda: {plan}. "
-                         "Plan what comes AFTER all of it, assuming it succeeds.")
+            moved = ", ".join(f"{name} to {_fmt_target(where)}" for name, where in moves.items())
+            taking = (f" On the way it sets {moved}" if moved else "") + (
+                f"{', and' if moved else ' On the way it'} picks up {unnamed} more piece{'s' if unnamed != 1 else ''} "
+                "as it goes" if unnamed else "")
+            lines.append(f"Right now your body is carrying out this agenda: {plan}.{taking}{'.' if taking else ''} "
+                         "Plan what comes AFTER all of it, assuming it succeeds"
+                         + (": those pieces will be where it puts them, not loose." if moves or unnamed else "."))
         if self.agenda and self.think_s:
             lines.append(f"You take about {self.think_s:.0f}s to think up a plan. {BUSY_HINT}")
         if self.notes:
@@ -392,6 +500,9 @@ thought and in that project's intention."""
         height = max((r.facts.get("height", 0) for r in results), default=0)
         importance = 4 if (height >= 5 or any(r.facts.get("toppled") for r in results)) else (3 if ok else 2)
         self.memory.store_experience(self.last_outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
+        self.memory.note_placed([r.facts["object"] for r in results if r.ok and r.skill in ("place_at", "put_down")
+                                 and isinstance(r.facts.get("object"), str)])
+        self.keep_builds(snap)
         for r in results:
             if r.skill == "build_tower" and len(r.facts.get("cubes", [])) >= 3:
                 where = snap.entities.get(r.facts["cubes"][0])

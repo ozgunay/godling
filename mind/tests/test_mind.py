@@ -112,7 +112,8 @@ def test_situation_lists_what_matters(world, tmp_path):
     assert "You are wet (20%)." in text and "Fires burning: Fire_1 (2.0, -2.0)." in text
     assert "Fish swimming in the shallows nearest you: Fish_1 (0.0, 20.0)." in text
     assert "Lines you drew in the sand (2, oldest first): (2, 2)-(3, 3); (0, 0)-(1, 1)." in text
-    assert "2-high stack at (5, 0): Block_1, Block_2" in text and "tower at [5, 0] (2 cubes)" in text
+    # A kept tower is shown as built, layer by layer, not as a stack to take from.
+    assert "Stacks: none." in text and "tower (2 pieces): layer 1: (5.0, 0.0); layer 2: (5.0, 0.0)" in text
     assert "Block_3 (-5.0, 1.25, -5.0)" in text and "nobody else is here" in text
     assert "Right now your body is carrying out this agenda: 1) a wall." in text
     assert "You take about 30s to think up a plan." in text and "Notes: a note" in text
@@ -227,6 +228,85 @@ def test_record_outcome(world, tmp_path):
     assert not mind.record_outcome({"goal": ""}, [Result(False, "jump", "x")], s)
     assert len(mind.failures) == 2
     mind.record_outcome({"goal": "t"}, [Result(True, "build_tower", "x", {"cubes": ["Gone_1", "Gone_2", "Gone_3"]})], s)
+
+
+def hut_island(monkeypatch, tmp_path):
+    """A hut's first course round the cell (10, 0), two corners two high, one spare block far off, and a log."""
+    cells = [(dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dz) != (0, 0)]
+    wall = [block(f"Block_{i}", 10 + dx * 2.5, 1.25, dz * 2.5) for i, (dx, dz) in enumerate(cells, 1)]
+    wall += [block("Block_21", 7.5, 3.75, -2.5), block("Block_22", 12.5, 3.75, 2.5)]
+    island = Island([ground(attrs={"Surface": "Sand"}), *wall, block("Block_30", -12, 1.25, 0),
+                     ent("Log_1", (-20, 1.25, 10), (7.5, 2.5, 2.5))])
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    library = SkillLibrary(tmp_path / "skills.json")
+    mem = NativeMemory(tmp_path / "mem")
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.structure_of)
+    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library)
+    return island, body, library, mem, mind, [w["name"] for w in wall]
+
+
+def placed(*names):
+    return [Result(True, "place_at", "set", {"object": n}) for n in names]
+
+
+def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
+    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
+    mind.record_outcome({"goal": "the hut's first course"}, placed(*wall) + [
+        Result(True, "put_down", "set", {"object": "Block_30"}),  # set down alone: material, not a build
+        Result(False, "place_at", "rejected", {"object": "Log_1"})], island.snap())
+    (title, build), = mem.state["structures"].items()
+    assert title == "build at (10.0, 0.0)" and build["auto"] and sorted(build["cubes"]) == sorted(wall)
+    assert library.resolve_helpers({"a": {"nearest_free": "cube"}}, body) == {"a": "Block_30"}
+    text = mind.situation(island.snap(), [], [])
+    assert "Loose objects (nearest first): Block_30 (-12.0, 1.25, 0.0), Log_1 (-20.0, 1.25, 10.0)." in text
+    assert "Stacks: none." in text
+    assert ("build at (10.0, 0.0) (10 pieces): layer 1: (7.5, -2.5), (7.5, 0.0), (7.5, 2.5), (10.0, -2.5), "
+            "(10.0, 2.5), (12.5, -2.5), (12.5, 0.0), (12.5, 2.5); layer 2: (7.5, -2.5), (12.5, 2.5)") in text
+    r = body.run("pick_up", {"object": "Block_2"})
+    assert not r.ok and r.summary == ("Block_2 is part of build at (10.0, 0.0), which you built; release that first "
+                                      "if you mean to take it apart")
+    # It grows under the same name; a piece knocked away from it is material again.
+    island.ents["Log_1"]["position"] = [10, 6.25, 0]  # a roof beam across the two corners' tops
+    island.ents["Block_8"]["position"] = [30, 1.25, 30]
+    mind.record_outcome({"goal": "a roof"}, placed("Log_1"), island.snap())
+    (title, build), = mem.state["structures"].items()
+    assert title == "build at (10.0, 0.0)" and "Log_1" in build["cubes"] and "Block_8" not in build["cubes"]
+    assert "Log_1 (10.0, 0.0) along x" in mind.situation(island.snap(), [], [])
+    assert body.run("pick_up", {"object": "Block_8"}).ok
+    # Released, it is material again, and stays so until it is built with anew.
+    mind.adopt({"reply": {"release": [title]}, "seconds": 1, "prepared": {"assumes": None}}, island.snap())
+    mind.record_outcome({"goal": "nothing"}, [], island.snap())
+    assert mem.state["structures"] == {} and body.run("pick_up", {"object": "Block_2"}).ok
+
+
+def test_builds_leave_what_it_named_itself_alone(monkeypatch, tmp_path):
+    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
+    mind.adopt({"reply": {"keep": [{"name": "my gate", "cubes": ["Block_1", "Block_2"]}]}, "seconds": 1,
+                "prepared": {"assumes": None}}, island.snap())
+    mind.record_outcome({"goal": "walls"}, placed(*wall), island.snap())
+    assert sorted(mem.state["structures"]) == ["build at (10.0, 0.0)", "my gate"]
+    assert not {"Block_1", "Block_2"} & set(mem.state["structures"]["build at (10.0, 0.0)"]["cubes"])
+    assert mem.structure_of("Block_1") == "my gate" and mem.structure_of("Block_30") is None
+
+
+def test_planning_ahead_counts_the_agendas_pieces_as_taken(monkeypatch, tmp_path):
+    # Run rp3: the plan made while the body raised a column took the column's blocks for a ring round it.
+    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
+    doing = [{"goal": "a column", "steps": [
+        {"skill": "pick_up", "args": {"object": "Block_30"}}, {"skill": "place_at", "args": {"x": -10, "y": 1.25, "z": 5}},
+        {"skill": "pick_up", "args": {"object": "Log_1"}}, {"skill": "put_down", "args": {"x": -10, "z": 10}},
+        {"skill": "pick_up", "args": {"object": {"nearest_free": "cube"}}},
+        {"skill": "place_at", "args": {"x": -10, "y": 3.75, "z": 5}}]},
+        {"goal": "a look round", "steps": [{"skill": "walk_to", "args": {"x": 0, "z": 0}}]}]
+    text = mind.situation(island.snap(), [], [], doing=doing)
+    loose = next(line for line in text.splitlines() if line.startswith("Loose objects"))
+    assert "Block_30" not in loose and "Log_1" not in loose and "Block_2" in loose
+    assert ("Right now your body is carrying out this agenda: 1) a column; 2) a look round. On the way it sets "
+            "Block_30 to (-10.0, 1.25, 5.0), Log_1 to (-10.0, 10.0) on the ground, and picks up 1 more piece as it "
+            "goes. Plan what comes AFTER all of it, assuming it succeeds: those pieces will be where it puts them, "
+            "not loose.") in text
+    plain = mind.situation(island.snap(), [], [], doing=[{"goal": "a walk", "steps": []}])
+    assert "1) a walk. Plan what comes AFTER all of it, assuming it succeeds." in plain
 
 
 def test_sleep(world, tmp_path):
