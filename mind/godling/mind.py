@@ -278,10 +278,9 @@ thought and in that project's intention."""
         to clear sand. A flat group of pieces it set down side by side is a pile to take from, not a build.
         A build keeps its name as it grows, and a piece knocked away from it is building material again."""
         structures = self.memory.state["structures"]
-        named = {c for s in structures.values() if not s.get("auto") and s.get("keep") for c in s["cubes"]}
         held = snap.held()
         placed = [snap.entities[n] for n in self.memory.state.get("placed", [])
-                  if n in snap.entities and n not in named and not (held and n == held.name)]
+                  if n in snap.entities and not (held and n == held.name)]
         old = {title: s for title, s in structures.items() if s.get("auto")}
         builds = {}
         for group in sorted(_clusters(placed), key=lambda g: -len(g)):
@@ -349,8 +348,18 @@ thought and in that project's intention."""
         if len(loose) > LOOSE_IN_VIEW:
             loose_txt += f", and {len(loose) - LOOSE_IN_VIEW} more further away"
         stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in known_stacks) or "none"
-        kept = "; ".join(f"{title} ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}"
-                         for title, s in self.memory.state["structures"].items() if s.get("keep")) or "none"
+        structures = self.memory.state["structures"]
+        builds = {t: s for t, s in structures.items() if s.get("auto")}
+        called = {t: [] for t in builds}  # what it named itself, inside one of its builds
+        alone = []
+        for title, s in structures.items():
+            if s.get("keep") and not s.get("auto"):
+                home = next((b for b, bs in builds.items() if set(s["cubes"]) <= set(bs["cubes"])), None)
+                (called[home] if home else alone).append(title)
+        kept = "; ".join([f"{t}" + (f", which you call {' and '.join(called[t])}," if called[t] else "")
+                          + f" ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}" for t, s in builds.items()]
+                         + [f"{t} ({len(structures[t]['cubes'])} pieces): {self._layout(snap, structures[t]['cubes'])}"
+                            for t in alone]) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
         cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in known_stacks for n in names[-1:]]
         cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]

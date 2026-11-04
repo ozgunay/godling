@@ -146,7 +146,7 @@ class Skills:
         self.world = world
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
-        self.kept_in = kept_in  # the name of the kept structure a piece belongs to
+        self.kept_in = kept_in  # the name of the build a piece is built into (memory.built_into), or None
         self.placed = []  # pieces set down since the mind last asked (take_placed), by any skill, learned ones too
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
@@ -1055,11 +1055,12 @@ class Skills:
             return Result(False, "pick_up", f"{object} is fastened in place; a hammer strike knocks it loose")
         if obj.attrs.get("Burning"):  # a log on fire is the fire's now (run n7 kept reaching for them)
             return Result(False, "pick_up", f"{object} is burning; it cannot be picked up until the fire is out")
-        if not self._lifting and object in set(self.protected()):
-            # What it built is its own: a plan made before the build stood took its walls for material (run rp3).
+        build = None if self._lifting else self.kept_in(object)
+        if build:
+            # What it built is its own: its plans took its own builds apart for material (runs rp3 and hut1).
             # Lifting a piece aside to step out of a pen is a reflex, and puts the piece back.
-            return Result(False, "pick_up", f"{object} is part of {self.kept_in(object) or 'something you keep'}, "
-                                            "which you built; release that first if you mean to take it apart")
+            return Result(False, "pick_up", f"{object} is part of {build}, which you built; release that first if you "
+                                            "mean to take it apart")
         held = snap.held()
         if held and held.name == object:
             return Result(True, "pick_up", f"already holding {object}", {"holding": object})

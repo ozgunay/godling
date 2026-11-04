@@ -116,9 +116,11 @@ class NativeMemory:
     def protected_cubes(self):
         return {c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
 
-    def structure_of(self, piece):
-        """The name of the kept structure a piece belongs to, or None."""
-        return next((title for title, s in self.state["structures"].items() if s.get("keep") and piece in s["cubes"]),
+    def built_into(self, piece):
+        """The name of the build (Mind.keep_builds) a piece is built into, or None. Only these does the body refuse
+        to pick up; a piece the mind kept by name it may still take (in run hut2 it named a log lying on the sand
+        "camp roof beam", then could not lift it onto the roof)."""
+        return next((title for title, s in self.state["structures"].items() if s.get("auto") and piece in s["cubes"]),
                     None)
 
     def note_placed(self, pieces):

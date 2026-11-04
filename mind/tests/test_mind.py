@@ -240,7 +240,7 @@ def hut_island(monkeypatch, tmp_path):
     monkeypatch.setattr(sk, "time", FakeTime(island))
     library = SkillLibrary(tmp_path / "skills.json")
     mem = NativeMemory(tmp_path / "mem")
-    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.structure_of)
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into)
     mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library)
     return island, body, library, mem, mind, [w["name"] for w in wall]
 
@@ -291,14 +291,21 @@ def test_a_flat_pile_is_material_and_learned_skills_build_too(monkeypatch, tmp_p
     assert body.take_placed() == ["Block_30"] and body.take_placed() == []  # Block_1 was only set aside first
 
 
-def test_builds_leave_what_it_named_itself_alone(monkeypatch, tmp_path):
+def test_what_it_names_itself(monkeypatch, tmp_path):
     island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
-    mind.adopt({"reply": {"keep": [{"name": "my gate", "cubes": ["Block_1", "Block_2"]}]}, "seconds": 1,
-                "prepared": {"assumes": None}}, island.snap())
+    keep = [{"name": "my gate", "cubes": ["Block_1", "Block_2"]}, {"name": "roof beam", "cubes": ["Log_1"]}]
+    mind.adopt({"reply": {"keep": keep}, "seconds": 1, "prepared": {"assumes": None}}, island.snap())
     built(mind, island, *wall)
-    assert sorted(mem.state["structures"]) == ["build at (10.0, 0.0)", "my gate"]
-    assert not {"Block_1", "Block_2"} & set(mem.state["structures"]["build at (10.0, 0.0)"]["cubes"])
-    assert mem.structure_of("Block_1") == "my gate" and mem.structure_of("Block_30") is None
+    assert sorted(mem.state["structures"]) == ["build at (10.0, 0.0)", "my gate", "roof beam"]
+    assert mem.built_into("Block_1") == "build at (10.0, 0.0)" and mem.built_into("Log_1") is None
+    text = mind.situation(island.snap(), [], [])
+    assert "build at (10.0, 0.0), which you call my gate, (10 pieces): layer 1:" in text
+    assert "roof beam (1 pieces): layer 1: Log_1 (-20.0, 10.0) along x" in text
+    # A piece it named but built into nothing it may still take (run hut2: a log it called its roof beam, on the
+    # sand); the helpers leave it alone, as before.
+    assert library.resolve_helpers({"a": {"nearest_free": "cube"}}, body) == {"a": "Block_30"}
+    assert body.run("pick_up", {"object": "Log_1"}).ok
+    assert not body.run("pick_up", {"object": "Block_1"}).ok
 
 
 def test_planning_ahead_counts_the_agendas_pieces_as_taken(monkeypatch, tmp_path):

@@ -132,6 +132,7 @@ def test_pen_of_its_own_build_still_lets_it_out(make):
     # Every piece of the pen is something it built and keeps: the mind may not take them, but the reflex that
     # lifts one aside to step out (and sets it back) still may, even when the first lift slips.
     island, body = make(ring(3.8), protected={f"Block_{i}" for i in range(1, 9)})
+    body.kept_in = lambda piece: "build at (0.0, 0.0)"
     island.solid_pieces = True
     island.on_act["Pickup"] = once(lambda d: setattr(island, "held", None))
     r = body.run("walk_to", {"x": 15, "z": 0})
