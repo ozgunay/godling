@@ -338,3 +338,19 @@ centred on its bearing wall, came to rest on it. The check then said "none: it i
 `InHouse` true, the house counted. Two body troubles were seen on the way, and are not fixed here: stepping up onto a
 block to reach the roof snagged once (the place came good on the next try), and walking from one step straight onto
 another as high, the body walks off the first and stays on the ground beside the second.
+
+**Steps for reaching high, fixed (each reproduced first, in `tests/test_skills_moves.py`).** Seen while checking
+the roof fixes in the real world:
+- From up on one block to the top of another as high, with ground between, the body walked off the first and stayed
+  on the ground beside the second. Now it steps down first and walks on from the ground, stepping up at the end.
+- Stepping up to set the roof's last log, it tried two steps nearest first, judged reach from the edge of a step
+  rather than where the body stands on it, and gave up after a snag. A step one cell across now has to reach from its
+  middle, and leave the whole body clear of the piece being set (the world refused one place: "that space is taken by
+  ... your own body", the head meeting the roof's underside); the body shuffles to the middle if it lands off it; up
+  to four steps are tried, each twice if the step-up itself fails.
+- It aimed to step up onto a block with a stone standing on it, at the end of a row it was coming along, and snagged
+  on the row. The top a step-up counts now stops where something stands on it, and a block one cell across whose
+  foot on the way is buried is come at from a side with clear floor.
+In the real example world, fresh, with the body choosing its own steps: it walked from step to step, lifted both
+caps, cleared the room, laid the lintel and the log over the far cell (snagging once on the way to its step, and
+going up on the next try), and walked in: `InHouse`, the house counted.
