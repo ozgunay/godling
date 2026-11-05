@@ -388,6 +388,17 @@ def guidance_issue(room, door):
     if roof["unsupported"]:
         return (f"the guided roof has no wall support reaching {_list(roof['unsupported'], 4)}: revise the room to "
                 "at most two cells wide, with a separate bearing wall beside each interior cell")
+    beams = [(door, roof["lintel"][0])] + [(wall, axis) for _, wall, axis in roof["logs"]]
+    footprints = [{(centre[0] + (offset if axis == "x" else 0),
+                    centre[1] + (offset if axis == "z" else 0)) for offset in (-1, 0, 1)}
+                  for centre, axis in beams]
+    footprints += [{wall} for wall in roof["caps"]]
+    occupied = set()
+    for footprint in footprints:
+        overlap = occupied & footprint
+        if overlap:
+            return f"the guided roof pieces overlap at {_list(overlap)}: revise the room or doorway"
+        occupied.update(footprint)
     return ""
 
 

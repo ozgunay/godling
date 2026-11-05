@@ -362,6 +362,7 @@ Python check require continuous, settled, grid-aligned material across each wall
 layouts include sparse walls, tilted and moving material, fractional roof heights, missing ground and terrain seams.
 
 Guided projects validate that every interior cell has a separate perimeter bearing for the current roof method.
+The complete planned roof footprints must also be disjoint, including the lintel, inward beams and wall caps.
 Unsupported layouts receive an explanation before construction begins; saved incomplete layouts request revision.
 General recognition still accepts completed larger houses, up to 64 interior cells.
 

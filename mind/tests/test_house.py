@@ -221,6 +221,11 @@ def test_guided_layouts_require_supported_roof_and_a_straight_doorway():
     concave = [[0, 0], [0, C], [C, 0], [C, C], [2 * C, 0], [2 * C, C], [2 * C, 2 * C], [C, 2 * C]]
     invalid = layout(concave, [0, 2 * C])
     assert isinstance(invalid, str) and "exactly one room cell" in invalid
+    overlapping = [[0, 0], [0, C], [C, 0], [C, C], [C, 2 * C], [C, 3 * C]]
+    rejected = layout(overlapping, [-C, 0])
+    assert isinstance(rejected, str) and "roof pieces overlap" in rejected
+    persisted = plan([], GROUND, [(round(x / C), round(z / C)) for x, z in overlapping], (-1, 0))
+    assert "revise the room or doorway" in persisted["next"]
 
 
 def test_a_complete_larger_house_uses_the_same_verdict_even_without_guided_roof_supports():
