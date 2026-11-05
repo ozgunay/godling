@@ -257,3 +257,21 @@ and the check said "clear the room"; each was picked up (from the doorway for th
 for the rest), carried out and set down; Godling walked back in, the world said `InHouse` and logged `HOUSE`, and the
 check counted the house. The body stood 1.19 to 1.25 from the nearest piece as it took the block: where it came to
 rest, a few hundredths off the spot it chose, still 0.19 or more beyond its own radius.
+
+**Does Godling notice a fallen block and clear it itself? (run hp-recover1, 2026-11-05).** One short paid trial
+(deepseek-flash, the hut persona, at most 12 minutes and $0.25, stopped a minute after success). The settled
+benchmark house with one block lying loose in its far cell, (-92.5, -45); the house already chosen in Godling's
+memory, as a reply would have stored it, and nothing else remembered. It was told only what every plan is told: the
+house's line, "Done: the walls stand three blocks high all round, the doorway ... is open up to the roof, the roof is
+over the room, the roof covers the walls and the doorway. Next: clear the room: (-92.5, -45.0) (Block_48 fills it)",
+and nothing more about the block. It succeeded, in 1.6 minutes and $0.012:
+- Noticed it in its first plan (0.75 min): "the only thing stopping the house being a house is Block_48 sitting in
+  the room"; the first project, "the house room clear and standable".
+- Chose an effective way: pick it up, walk out by the doorway, set it down at (-97.5, -55): outside the footprint and
+  clear of the doorway and the cell before it.
+- Carried it out: picked up at 0.81 min, set down at 0.88; the house check passed (`built`).
+- Came back: its next plan, made while the first ran ("once Block_48 is out I can stand inside at last"), walked it
+  in at 1.63 min, and the world said it stood in a house.
+After that it meant to "lay one log in the hearth" inside the room: the log, three cells long, did not fit the room
+two cells wide and was set down outside, so the room stayed clear. A fire inside the house would fill a cell of the
+room and undo the house; the full construction trial is where that shows, if anywhere.
