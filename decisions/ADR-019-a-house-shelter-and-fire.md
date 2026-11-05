@@ -275,3 +275,39 @@ and nothing more about the block. It succeeded, in 1.6 minutes and $0.012:
 After that it meant to "lay one log in the hearth" inside the room: the log, three cells long, did not fit the room
 two cells wide and was set down outside, so the room stayed clear. A fire inside the house would fill a cell of the
 room and undo the house; the full construction trial is where that shows, if anywhere.
+
+## The first full construction trial against the benchmark (run hp-full2, 2026-11-05)
+A fresh island; the house project with the benchmark and its guidance; the body able to reach into the room;
+deepseek-flash and the hut persona; at most 90 minutes and $1.50. It ran the 90 minutes ($0.48, 375 model calls) and
+built no house.
+- **The house it chose held all run** (2.1 min: a room two by two at (-100..-97.5, -37.5..-35), the doorway west),
+  never moved, and the pieces installed and kept at it rose without a loss for the first 71 minutes: 13 at 11 min,
+  27 at 28, 37 at 38, 44 at 71. The walls reached three blocks all round, corners and both doorway flanks too, by
+  38 min; the roof covered 13 of the 16 cells of the footprint by the end, its stones set on the wall tops from steps
+  it put down outside the walls, and one log laid along the north wall reaching into the room.
+- **What stopped it: three pieces its own hands-full reflex set down in the house.** To free its hands, picking up
+  the next thing, the body sets what it holds on clear floor beside it, and nothing kept the house's room, doorway or
+  way out from being that floor: Stone_52 into room cell (-100, -35) at 53.7 min, Stone_41 into (-100, -37.5) at
+  57.3, Log_7 into the room and doorway at 61.5.
+  - Stone_52: noticed ("the room still has Stone_52 in it"), picked up and set down outside the footprint and the
+    entrance at 69.8 min. Recovered.
+  - Log_7: noticed ("Log_7 was the thing wedging my doorway shut") and picked up at 71.5 min, then laid again as
+    the lintel turned the wrong way, across the doorway from outside into the room (east to west, where the
+    doorway's wall runs north to south), so nothing held it up: it fell, leaning through the way out, the doorway
+    and a cell of the room. An ineffective action: the guidance said "a log along the wall resting on the walls
+    either side", without the axis or the two walls.
+  - Stone_41: noticed and chosen in every plan from 59.5 min ("Clear the room first"), and tried twice, at 75.6 and
+    80.0 min; both failed in execution: "no way round: the way ... is closed off": Log_7 shut the only way in.
+- **Where the time went** (from the recording: the body's track, ten samples a second, split by what it did; 88.7
+  minutes accounted): waiting for its next plan 25.1 min (28%: plans took about 57 to 83 s while it built the walls,
+  117 to 136 s from 40 min, when the roof work began, and in the last 50 minutes the body stood waiting 23 of them);
+  walking with a piece to the house 15.8 (18%); picking up a tool 13.6 (15%), of which 10.2 walking back to it
+  (2,759 units: the hammer lies where the last stone was taken up, at the quarry) and 3.4 handling (about 3 s each,
+  73 times); picking up a piece 11.0 (12%); quarry strikes 5.0 (6%, 61 stones broken off for 44 pieces kept);
+  setting pieces 4.2 (5%). Quarrying several stones a hammer session would save the handling, two or three minutes;
+  carrying one stone at a time keeps the walk back each time.
+
+What it needs next, before another full trial: the guidance to name each roof log's axis and what it rests on (the
+lintel: the two wall cells beside the opening; a log over the room: the wall cell it is centred on and the cell it
+reaches in over), and the hands-full reflex to keep what it sets down out of the chosen house's room, doorway and
+way out.
