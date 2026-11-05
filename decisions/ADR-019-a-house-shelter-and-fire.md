@@ -112,3 +112,11 @@ minutes, and 20 pieces it had set next to others were picked up again. A plan sa
 Tested in `mind/tests/test_house.py` (the next step at each stage, which pieces are its own, layouts that cannot be a
 house) and `mind/tests/test_mind.py` (choose, keep, refuse, revise, move with a reason, give up, the stall notice, a
 house that stands, and off).
+
+**One account of the house (after the first project runs, hp-proj1 and hp-proj2).** Twenty minutes in, both were held
+up by the older bookkeeping of builds. In proj1 a block lay in the room of its house, but the block was part of a
+build it had kept, so the body refused four times to lift it out, while the house said to clear the room; and that
+build's own house verdict named a different room, so the mind spent a plan working out which was its house. proj2
+moved its house because a log in its doorway was held by such a build. Now what fills a chosen house's room or blocks
+its doorway is free to move whatever build holds it, and a build where the house stands says so instead of judging a
+house of its own. A point may also be given as `{"x": x, "z": z}`.

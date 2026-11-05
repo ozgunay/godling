@@ -355,6 +355,17 @@ def test_one_house_kept_across_plans(monkeypatch, tmp_path):
     assert mem.state["house"]["inside"] == [[4, -1], [4, 0]] and mem.state["house"]["moves"] == 0
     reply({"inside": [[10, 0]], "door": [10, 5]})
     assert "Your house was not set: the doorway at (10.0, 5.0) must be a cell beside the room" in mind.notes[-1]
+    # Run hp-proj1: a block left in the room was part of a build it kept, so the body would not lift it out, and the
+    # build's own house verdict named another room. What is in the house's way is free to move, and the house has one
+    # account: its own line.
+    island.ents["Block_30"]["position"] = [10, 1.25, 0]  # set down in the room, beside the wall: built in
+    built(mind, island, *wall, "Block_30")
+    text = mind.situation(island.snap(), [], [])
+    assert mem.state["house"]["in_the_way"] == ["Block_30"] and "Block_30" not in mem.protected_cubes()
+    assert ". It is where your house stands: what the house still needs is said above" in text and "As a house" not in text
+    assert any("Block_30" in s["cubes"] for s in mem.state["structures"].values())
+    assert body.run("pick_up", {"object": "Block_30"}).ok
+    mem.release_structure(next(iter(mem.state["structures"])))
     # Stalled: it hears so after fifteen minutes with nothing gained.
     mem.state["house"]["best_at"] -= 16 * 60
     assert "It has come no further in 16 minutes: the next step needs another way of doing it." in mind.situation(

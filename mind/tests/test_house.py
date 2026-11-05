@@ -105,6 +105,7 @@ def test_a_chosen_house_says_what_it_needs_next():
     # A block in the doorway or the room is in the way, not its own.
     blocked = plan(hut() + [block("Block_8", 0, -1, 1)], GROUND, room, door)
     assert blocked["next"] == "clear the doorway at (0.0, -2.5): Block_8 in it" and "Block_8" not in blocked["pieces"]
+    assert blocked["in_the_way"] == ["Block_8"]
     filled = plan(hut() + [block("Block_7", 0, 0, 1)], GROUND, room, door)
     assert filled["next"] == "clear the room: (0.0, 0.0) (Block_7 fills it)" and "Block_7" not in filled["pieces"]
     done = plan(hut(), GROUND, room, door)
@@ -121,3 +122,4 @@ def test_a_house_layout_must_hold_together():
     assert layout([["a", 0]], [0, 0]) == layout([[0, 0]], None) == (
         "the cells inside and the doorway must each be a point [x, z]")
     assert layout([[0, 0], [2.4, 0.3]], [-2.5, 0]) == ([(0, 0), (1, 0)], (-1, 0))  # points snap to their cells
+    assert layout([{"x": 0, "z": 0}], {"x": -2.5, "z": 0}) == ([(0, 0)], (-1, 0))

@@ -120,8 +120,9 @@ class NativeMemory:
             self.state["placed"] = [p for p in self.state.get("placed", []) if p not in released["cubes"]]
 
     def protected_cubes(self):
-        return ({c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
-                | set((self.state.get("house") or {}).get("pieces", [])))
+        house = self.state.get("house") or {}
+        return (({c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
+                 | set(house.get("pieces", []))) - set(house.get("in_the_way", [])))
 
     def built_into(self, piece):
         """The name of the build (Mind.keep_builds) or the house (Mind.house_project) a piece is built into, or None.
@@ -130,6 +131,8 @@ class NativeMemory:
         house = self.state.get("house") or {}
         if piece in house.get("pieces", []):
             return house_title(house)
+        if piece in house.get("in_the_way", []):  # in its room or doorway: the house says clear it (run hp-proj1)
+            return None
         return next((title for title, s in self.state["structures"].items() if s.get("auto") and piece in s["cubes"]),
                     None)
 

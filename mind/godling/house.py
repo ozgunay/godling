@@ -186,7 +186,9 @@ def assess(pieces, terrain, build):
 
 
 def cell_of(xz):
-    """The cell a point [x, z] lies in."""
+    """The cell a point [x, z] (or {"x": x, "z": z}) lies in."""
+    if isinstance(xz, dict):
+        xz = (xz["x"], xz["z"])
     return (round(float(xz[0]) / CELL), round(float(xz[1]) / CELL))
 
 
@@ -219,7 +221,8 @@ def plan(pieces, terrain, inside, door):
     """How far a house the mind chose (cells from layout()) has come: what stands, what is still to do in the order
     a builder does it (walls, a clear room and doorway, the roof), the next step in words, and the pieces that are
     its own: in its walls and over its room, but not what fills the room or blocks the doorway.
-    Returns {"house", "next", "done", "score", "pieces"}; the score counts what stands, so it grows as the house does."""
+    Returns {"house", "next", "done", "score", "pieces", "in_the_way"}; the score counts what stands, so it grows as
+    the house does."""
     grid = Grid(pieces, terrain)
     room = sorted(inside)
     floor = grid.floor(room[0])
@@ -249,4 +252,4 @@ def plan(pieces, terrain, inside, door):
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
     score = (len(walls) - len(low)) + (len(room) - len(filled)) + (not blocked_door) + (len(room) - len(bare))
     return {"house": not (low or filled or blocked_door or bare), "next": step, "done": done, "score": score,
-            "pieces": own}
+            "pieces": own, "in_the_way": sorted(in_the_way)}

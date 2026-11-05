@@ -388,7 +388,14 @@ thought and in that project's intention."""
                 (called[home] if home else alone).append(title)
         pieces, terrain = (pieces_of(snap), terrain_of(snap)) if structures else ([], [])
 
+        house = self.memory.state.get("house") if self.house_project else None
+        if house:
+            self.house_progress(snap)  # its pieces, and what is in its way, as they are now
+        ours = set(house.get("pieces", []) + house.get("in_the_way", [])) if house else set()
+
         def as_house(cubes):  # the house check (house.py, ADR-019): what it is short of, in words
+            if ours & set(cubes):  # one account of the house: the line about it above (run hp-proj1 had two)
+                return ". It is where your house stands: what the house still needs is said above"
             verdict = assess(pieces, terrain, set(cubes))
             if not verdict:
                 return ""
@@ -475,7 +482,7 @@ thought and in that project's intention."""
         if not self.house_project or not house or not snap.has_world:
             return None
         found = house_plan(pieces_of(snap), terrain_of(snap), [tuple(c) for c in house["inside"]], tuple(house["door"]))
-        house["pieces"] = found["pieces"]
+        house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
         if found["score"] > house.get("best", -1):
             house["best"], house["best_at"] = found["score"], time.time()
             self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
@@ -530,7 +537,7 @@ thought and in that project's intention."""
         chosen = house_layout(inside if isinstance(inside, list) else [], spec.get("door"))
         if isinstance(chosen, str):
             self.notes.append(f"Your house was not set: {chosen}.")
-            self.log(kind="house", phase="rejected", reason=chosen)
+            self.log(kind="house", phase="rejected", reason=chosen, spec=json.dumps(spec)[:300])
             return
         room, door = [list(c) for c in chosen[0]], list(chosen[1])
         moves = 0
