@@ -1043,10 +1043,13 @@ class Skills:
                 x, z = e.pos[0], e.pos[2]
             if spot.footprint_contains(x, z, margin=1.15) or hands(x, z, e.top) > PLACE_RANGE - 0.5:
                 continue
-            # On a top one cell across, the body (two wide) stands about its middle, wherever it aimed: the hands
-            # must reach from there (hp-roofcheck: a block whose edge but not its middle reached the roof).
-            if max(e.size[0], e.size[2]) <= CUBE + 0.1 and hands(e.pos[0], e.pos[2], e.top) > PLACE_RANGE - 0.6:
-                continue
+            # On a top one cell across, the body (two wide) stands at its middle: the hands must reach from there
+            # (hp-roofcheck: a block whose edge but not its middle reached the roof), and the whole body be clear of
+            # what is being set, whose underside its head meets (hp-roofcheck: "taken by ... your own body").
+            if max(e.size[0], e.size[2]) <= CUBE + 0.1:
+                x, z = e.pos[0], e.pos[2]
+                if hands(x, z, e.top) > PLACE_RANGE - 0.6 or spot.footprint_contains(x, z, margin=BODY_RADIUS + 0.15):
+                    continue
             if abs((snap.surface(x, z)[0] or -99) - e.top) > 0.3:  # something else stands on it there
                 continue
             steps.append((hdist(snap.me, (x, 0, z)), x, z, e))
@@ -1061,7 +1064,14 @@ class Skills:
                 walked = self.skill_walk_to(x, z)
                 snap = self._observe()
                 floor = self._level(snap)
-                if abs(floor - e.top) < 0.4 and hands(snap.me[0], snap.me[2], floor) <= PLACE_RANGE - 0.1:
+                if abs(floor - e.top) < 0.4 and hdist(snap.me, (x, 0, z)) > 0.15:
+                    try:  # landed off the middle of the step: to it, a short shuffle on the top
+                        snap = self._move_once(x, z, 0.1)
+                    except Stuck:
+                        snap = self._observe()
+                    floor = self._level(snap)
+                if (abs(floor - e.top) < 0.4 and hands(snap.me[0], snap.me[2], floor) <= PLACE_RANGE - 0.1
+                        and not spot.footprint_contains(snap.me[0], snap.me[2], margin=BODY_RADIUS + 0.05)):
                     return (snap.me[0], snap.me[2]), snap, f"; you stood on {e.name} to reach that high"
                 why = (f"; it is above your reach from the ground, and stepping up onto {e.name} did not bring it in "
                        f"reach: {walked.summary}")

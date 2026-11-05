@@ -779,3 +779,29 @@ def test_stepping_up_to_reach_a_roof_after_snags(make):
     r = body.run("place_at", {"x": 5, "y": 8.75, "z": 2.5, "turn": 0})
     assert r.ok and "came to rest at (5.00, 8.75, 2.50)" in r.summary, r.summary
     assert "Block_c4" not in r.summary  # its middle is 6.7 from the roof's middle: too far to set it from
+
+
+def test_standing_on_a_step_clear_of_the_piece_being_placed(make):
+    # hp-roofcheck: up on the step, the body stood 0.4 off its middle, towards the roof log it was setting, and the
+    # world refused the place: "that space is taken by ... your own body" (its top is where the roof starts). On a
+    # step one cell across the body settles at its middle, and a step counts only with the whole body clear.
+    from test_house_recovery import benchmark
+    house = [p for p in benchmark() if p["name"] != "Log_E1"]
+    island, body = make([*house, block("Block_step", 7.5, 1.25, 5), ent("Log_room", (15, 1.25, 12), (7.5, 2.5, 2.5))],
+                        me=(12, BODY_CENTRE_Y, 14))
+    island.held = "Log_room"
+    target = (5.0, 8.75, 2.5)
+
+    def landed_off_centre(data):  # the world's step-up lands the body off the middle, towards the target, and it
+        if island.me[1] > 4:      # stays where it lands (no walking on towards an earlier goal, as this island would)
+            island.me = [island.me[0] - 0.2, island.me[1], island.me[2] - 0.5]
+            island.goal = None
+    island.on_act["StepUp"] = landed_off_centre
+
+    def place(data):  # nothing is set into the body: its top meets the roof's underside
+        (x, y, z), (bx, by, bz) = data["position"], island.me
+        into = abs(bx - x) < 3.75 + 1.0 and abs(bz - z) < 1.25 + 1.0 and by - BODY_CENTRE_Y + 5.0 >= y - 1.25 - 0.01
+        return "PlaceFailed:Occupied" if into else "PlaceSuccess"
+    island.results["Place"] = place
+    r = body.run("place_at", {"x": target[0], "y": target[1], "z": target[2], "turn": 0})
+    assert r.ok and "you stood on Block_step" in r.summary, r.summary
