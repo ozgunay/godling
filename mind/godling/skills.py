@@ -65,6 +65,9 @@ CATALOG = {**PRIMITIVES, **GIFTED}
 
 MAX_DROP = 2.6  # the highest drop the body hops down from; higher needs a ladder
 BODY_HEIGHT = 5.0  # the engine's capsule: exactly two blocks
+BODY_RADIUS = 1.0  # the engine's capsule is two units wide
+STAND_MARGIN = 0.2  # kept between the body and a loose piece beside it, beyond its radius
+WALL_CLEARANCE = 1.6  # kept from rock: the character controller snags when it slides along a wall it touches
 STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block high (ADR-010)
 RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
 RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
@@ -318,9 +321,11 @@ class Skills:
         snags when it slides along a wall it is touching. `level` asks about another floor than ours.
         """
         level = self._level(snap) if level is None else level
-        walls = BoxIndex([(w.pos[0], w.pos[2], w.size[0] / 2 + 1.6, w.size[2] / 2 + 1.6) for w in self._walls(snap, level)])
+        walls = BoxIndex([(w.pos[0], w.pos[2], w.size[0] / 2 + WALL_CLEARANCE, w.size[2] / 2 + WALL_CLEARANCE)
+                          for w in self._walls(snap, level)])
         # Boxes, not circles: at block scale a circle clips a block's corners and the body snags on them.
-        things = BoxIndex([(o.pos[0], o.pos[2], o.size[0] / 2 + 1.2, o.size[2] / 2 + 1.2)
+        clear = BODY_RADIUS + STAND_MARGIN
+        things = BoxIndex([(o.pos[0], o.pos[2], o.size[0] / 2 + clear, o.size[2] / 2 + clear)
                            for o in self._in_the_way(snap, ignore, level)])
 
         def blocked(x, z):
@@ -653,6 +658,7 @@ class Skills:
         tx, ty, tz = target
         level = self._level(snap)
         blocked = self._blocked_fn(snap, ignore)
+        reaches = self._reach_fn(snap, target, ignore, level)
         me = snap.me
         best = None
         for radius in (min_radius + 0.4, min_radius + 1.0, min_radius + 1.8, min_radius + 2.6):
@@ -664,14 +670,69 @@ class Skills:
                 if avoid is not None and avoid.footprint_contains(sx, sz, margin=1.3):
                     continue
                 body = (sx, level + BODY_CENTRE_Y, sz)
-                if math.dist(body, target) > reach - 0.4:
+                if math.dist(body, target) > reach - 0.4 or not reaches(sx, sz):
                     continue
                 score = math.hypot(sx - me[0], sz - me[2])
                 if best is None or score < best[0]:
                     best = (score, (sx, sz))
             if best:
                 return best[1]
-        return None
+        return self._close_stand_point(snap, target, reach, ignore, avoid)
+
+    def _reach_fn(self, snap, target, ignore, level):
+        """Can the hands reach `target` from a spot (x, z) in a straight line? Not through anything two blocks high or
+        more standing between: a wall (the arms reach over a block lying on the floor, not over a wall)."""
+        tx, tz = target[0], target[2]
+        high = [(o.pos[0], o.pos[2], o.size[0] / 2, o.size[2] / 2)
+                for o in self._in_the_way(snap, ignore, level) + self._walls(snap, level)
+                if o.top >= level + 2 * CUBE - 0.2 and o.pos[1] - o.size[1] / 2 < level + BODY_HEIGHT
+                and not o.footprint_contains(tx, tz)]  # what the target lies in or on is what the hands reach into
+        columns = BoxIndex(high)
+
+        def reaches(x, z):
+            steps = max(1, int(math.hypot(tx - x, tz - z) / 0.25))
+            return not any(columns.at(x + (tx - x) * i / steps, z + (tz - z) * i / steps, strict=True)
+                           for i in range(1, steps))
+        return reaches
+
+    def _close_stand_point(self, snap, target, reach, ignore=(), avoid=None):
+        """Where the whole body fits within reach of `target`, when no spot on the rings round it is clear. In a
+        house's room two cells wide (ADR-019), a block lying in a cell inside leaves only the free cells round it, a
+        quarter unit wider than the body on each side, and every ring crosses a wall or the block. So every spot within
+        reach is tried, on a quarter-unit grid from the target (the grid pieces settle on, so cell centres are on it),
+        with the clearance kept anywhere else: the body's radius and STAND_MARGIN from loose pieces and from `avoid`,
+        WALL_CLEARANCE from rock. The hands must reach the target in a straight line, not through anything two blocks
+        high. Of the spots left, the one with most room to spare is taken, the nearest to us among equals."""
+        tx, ty, tz = target
+        level = self._level(snap)
+        blocked = self._blocked_fn(snap, ignore)
+        clear = BODY_RADIUS + STAND_MARGIN
+        near = reach + 2 * CUBE
+        boxes = [(w.pos[0], w.pos[2], w.size[0] / 2, w.size[2] / 2, WALL_CLEARANCE, w.top)
+                 for w in self._walls(snap, level) if hdist(w.pos, target) < near + max(w.size[0], w.size[2]) / 2]
+        boxes += [(o.pos[0], o.pos[2], o.size[0] / 2, o.size[2] / 2, clear, o.top)
+                  for o in self._in_the_way(snap, ignore, level) if hdist(o.pos, target) < near]
+        if avoid is not None:
+            boxes.append((avoid.pos[0], avoid.pos[2], avoid.size[0] / 2, avoid.size[2] / 2, clear, level))
+        reaches = self._reach_fn(snap, target, ignore, level)
+
+        def spare(x, z):  # room beyond the clearance to the nearest box
+            return min((math.hypot(max(abs(x - bx) - hx, 0), max(abs(z - bz) - hz, 0)) - c for bx, bz, hx, hz, c, _ in boxes),
+                       default=CUBE)
+        best, step = None, 0.25
+        n = int(reach / step)
+        for i in range(-n, n + 1):
+            for k in range(-n, n + 1):
+                sx, sz = tx + i * step, tz + k * step
+                if math.dist((sx, level + BODY_CENTRE_Y, sz), target) > reach - 0.4 or blocked(sx, sz):
+                    continue
+                room = spare(sx, sz)
+                if room < 0 or not reaches(sx, sz):
+                    continue
+                score = (min(round(room, 2), 0.5), -math.hypot(sx - snap.me[0], sz - snap.me[2]))
+                if best is None or score > best[0]:
+                    best = (score, (sx, sz))
+        return best[1] if best else None
 
     def _settle(self, seconds=0.9):
         time.sleep(seconds)
