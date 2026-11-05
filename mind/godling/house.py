@@ -300,6 +300,44 @@ def layout(inside, door):
     return room, door
 
 
+def roof_layout(grid, room, door, walls, floor, top):
+    """Where each piece of the roof goes, as a builder lays it (ADR-019, after run hp-full2: a lintel laid across the
+    doorway rested on nothing, and the doorway's flank walls had been capped first, so the right way round there was no
+    room for it). In this order:
+    - the doorway's lintel: a log along the wall, centred on the doorway, resting on the two wall cells beside it;
+    - over each cell of the room, a log centred on a wall beside that cell (not the doorway, not the lintel's walls,
+      each wall once), along the line from that wall to the cell, resting on its middle and reaching in over it: a log
+      three cells long cannot reach across a room two cells wide;
+    - on the walls left over, a block on top.
+    Returns {"lintel": (axis, (support, support)), "logs": [(room cell, bearing wall, axis)], "caps": [wall cells]}."""
+    inner = next(c for c in _sides(door) if c in set(room))
+    out_x = door[0] != inner[0]  # the doorway leads out along x: its wall runs along z
+    lintel_axis = "z" if out_x else "x"
+    flanks = tuple(sorted([(door[0], door[1] - 1), (door[0], door[1] + 1)] if out_x
+                          else [(door[0] - 1, door[1]), (door[0] + 1, door[1])]))
+    used = set(flanks)
+
+    def free_at_roof(c):  # nothing yet on top of this cell, where the roof goes
+        return not any(floor + top - GAP <= b < floor + top + LAYER - GAP for b, _, _ in grid.columns.get(c, ()))
+    logs = []
+    for c in sorted(room):
+        options = []
+        for dx, dz in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            w, outer = (c[0] + dx, c[1] + dz), (c[0] + 2 * dx, c[1] + 2 * dz)
+            if w in walls and w not in used:
+                options.append((not free_at_roof(w), not free_at_roof(outer), w, "x" if dx else "z"))
+        if options:
+            _, _, w, axis = min(options)
+            used.add(w)
+            logs.append((c, w, axis))
+    caps = [w for w in walls if w not in used]
+    return {"lintel": (lintel_axis, flanks), "logs": logs, "caps": caps}
+
+
+def _turn(axis):
+    return f"along {axis} (turn {0 if axis == 'x' else 90})"
+
+
 def plan(pieces, terrain, inside, door):
     """How far a house the mind chose (cells from layout()) has come against the benchmark: what is done, what is still
     to do in the order a builder does it (the walls, the room and doorway, the roof), the next step in words, and the
@@ -320,9 +358,17 @@ def plan(pieces, terrain, inside, door):
     lintel = grid.roof(door, floor)
     lintel = lintel is not None and lintel <= floor + top + GAP
     bare = v["bare"]
+    layout = roof_layout(grid, room, door, walls, floor, top)
+    axis, flanks = layout["lintel"]
+
+    def at_roof(c):  # what sits on top of this cell, where the roof goes
+        return sorted({name for b, _, name in grid.columns.get(c, ()) if floor + top - GAP <= b < floor + top + LAYER - GAP})
+    # A stone capping one of the lintel's walls before the lintel is on leaves it no room: it is in the way.
+    blockers = sorted({n for f in flanks for n in at_roof(f)} - set(at_roof(door))) if not lintel else []
     in_the_way = ({name for c in room for _, name in grid.filling(c, floor)}
                   | {name for _, name in grid.filling(door, floor, up_to=top - GAP)}
-                  | ({name for _, name in grid.filling(out, floor)} if out is not None else set()))
+                  | ({name for _, name in grid.filling(out, floor)} if out is not None else set())
+                  | set(blockers))
     own = sorted(({name for c in walls for b, _, name in grid.columns.get(c, ()) if b < floor + top + LAYER}
                   | {name for c in room + [door] for b, _, name in grid.columns.get(c, ())
                      if floor + top - GAP <= b < floor + top + LAYER}) - in_the_way)
@@ -349,17 +395,22 @@ def plan(pieces, terrain, inside, door):
                                                                      ": the ground there is not level with the room"))
     elif bare or len(capped) < len(walls) or not lintel:
         needs = []
-        if bare:
-            needs.append(f"over the room at {_list(bare, 4)}, logs laid on the walls, each centred on a wall so it "
-                         "rests on its middle and reaches one cell in (a log three cells long cannot reach across a "
-                         "room two cells wide)")
-        uncapped = [c for c in walls if c not in capped]
-        if uncapped:
-            needs.append(f"on top of the walls at {_list(uncapped)}")
         if not lintel:
-            needs.append(f"over the doorway at {at(door)}, a log along the wall resting on the walls either side")
+            if blockers:
+                needs.append(f"first take {' and '.join(blockers)} off the top{'s' if len(blockers) > 1 else ''} of "
+                             f"{' and '.join(at(f) for f in flanks if at_roof(f))} (reach up from a step one block high "
+                             "beside them): the doorway's lintel rests there")
+            needs.append(f"{'then ' if blockers else ''}over the doorway at {at(door)}, a log {_turn(axis)} centred on it, "
+                         f"resting on the walls at {at(flanks[0])} and {at(flanks[1])}")
+        for c, w, log_axis in layout["logs"]:
+            if c in bare:
+                needs.append(f"over {at(c)}, a log {_turn(log_axis)} centred on the wall at {at(w)}, resting on its "
+                             f"middle and reaching in over {at(c)}")
+        uncapped = [c for c in layout["caps"] if c not in capped]
+        if uncapped:
+            needs.append(f"a block on top of the walls at {_list(uncapped)}")
         step = (f"the roof, every piece at height {centre:.2f} (set from a step one block high outside the walls, never in "
-                "the doorway): " + "; ".join(needs))
+                "the doorway or the way out): " + "; ".join(needs))
     else:
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
     score = ((len(walls) - len(low)) + (len(room) - len(v["filled"])) + door_open + out_open + (len(room) - len(bare))

@@ -10,7 +10,7 @@ from godling import skills as sk
 from godling.house import plan
 from godling.skills import BODY_HEIGHT, BODY_RADIUS, STAND_MARGIN, Skills
 from godling.structures import pieces_of, terrain_of
-from godling.world import BODY_CENTRE_Y, PICKUP_RANGE
+from godling.world import BODY_CENTRE_Y, PICKUP_RANGE, turned_size
 from helpers import block, ent, ground
 from island import FakeTime, Island
 
@@ -158,3 +158,92 @@ def test_the_cells_a_house_needs_clear(tmp_path):
     assert mem.reserved_cells() == set()
     mem.set_house({"inside": [list(c) for c in ROOM], "door": list(DOOR)})
     assert mem.reserved_cells() == RESERVED
+
+
+def walls_only(caps=()):
+    """The benchmark house's walls, three blocks high, and no roof yet but the stones `caps` on top of those walls."""
+    return [p for p in benchmark() if p["name"].startswith("Block_w")] + [
+        block(f"Block_cap{dx + 1}{dz + 1}", dx * C, 8.75, dz * C) for dx, dz in caps]
+
+
+def roof_step(island):
+    snap = island.snap()
+    return plan(pieces_of(snap), terrain_of(snap), ROOM, DOOR)
+
+
+def test_the_lintel_named_by_its_axis_and_supports(monkeypatch):
+    # Run hp-full2: the doorway's flank walls were capped with stones first; the lintel laid the right way then found
+    # no room on them, and laid the wrong way, across the doorway from outside into the room, it rested on nothing and
+    # fell into the doorway. The next step now says to take those caps off, then lay the lintel along the wall, and
+    # which two walls carry it.
+    steps = [block("Block_step", 0, 1.25, -7.5), block("Block_stepW", -5, 1.25, -5), block("Block_stepE", 5, 1.25, -5)]
+    island = Island([ground(), *walls_only(caps=[(-1, -1), (1, -1)]), *steps,
+                     ent("Log_lintel", (8, 1.25, -12), (7.5, 2.5, 2.5))], me=(0, BODY_CENTRE_Y, -12))
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+
+    def place(data):  # as the world does: nothing is set where it would overlap another piece
+        size = turned_size((7.5, 2.5, 2.5) if island.held.startswith("Log_") else (C, C, C), data["rotation"]["yaw"])
+        (x, y, z) = data["position"]
+        taken = [e for n, e in island.ents.items() if n != island.held
+                 and all(abs(v - e["position"][i]) < (size[i] + e["size"][i]) / 2 - 0.1 for i, v in enumerate((x, y, z)))]
+        return "PlaceFailed:Occupied" if taken else "PlaceSuccess"
+    island.results["Place"] = place
+
+    def turned(data):  # and a piece set down a quarter round lies that way round
+        for e in island.ents.values():
+            if e["position"] == list(data["position"]) and e["name"].startswith("Log_"):
+                e["size"] = list(turned_size((7.5, 2.5, 2.5), data["rotation"]["yaw"]))
+    island.on_act["Place"] = turned
+    found = roof_step(island)
+    assert found["next"].startswith(
+        "the roof, every piece at height 8.75 (set from a step one block high outside the walls, never in the doorway "
+        "or the way out): first take Block_cap00 and Block_cap20 off the tops of (-2.5, -2.5) and (2.5, -2.5) (reach up "
+        "from a step one block high beside them): the doorway's lintel rests there; then over the doorway at (0.0, -2.5), a log along x (turn 0) centred on it, "
+        "resting on the walls at (-2.5, -2.5) and (2.5, -2.5)"), found["next"]
+    assert {"Block_cap00", "Block_cap20"} <= set(found["in_the_way"])  # free to lift off, though they sit on its walls
+    body = Skills(island)
+    assert body.run("pick_up", {"object": "Log_lintel"}).ok
+    # As in the run: the right way, there is no room on the capped walls; the wrong way it rests on nothing.
+    assert not body.run("place_at", {"x": 0, "y": 8.75, "z": -C, "turn": 0}).ok
+    wrong = body.run("place_at", {"x": 0, "y": 8.75, "z": -C, "turn": 90})
+    assert "not resting on anything" in wrong.summary, wrong.summary
+    island.ents["Log_lintel"]["position"] = [0, 1.25, -C]  # and falls, as Log_7 did, through the doorway
+    assert roof_step(island)["next"].startswith("clear the room: (0.0, 0.0) (Log_lintel fills it)")
+    # As the step says: the caps off and set down out of the way, then the lintel along x on its two walls.
+    for cap, (sx, sz) in (("Block_cap00", (-5, -5)), ("Block_cap20", (5, -5))):
+        # Down to the ground first, then up onto the step beside that wall: from one step straight to another as
+        # high the body walks off the first and stays on the ground beside the second.
+        assert body.run("walk_to", {"x": sx * 2, "z": -10}).ok
+        up = body.run("walk_to", {"x": sx, "z": sz})
+        assert up.ok and island.me[1] > 4, up.summary
+        assert body.run("pick_up", {"object": cap}).ok, cap
+        assert body.run("put_down", {"x": 10 if cap.endswith("20") else -10, "z": -12}).ok
+    assert body.run("pick_up", {"object": "Log_lintel"}).ok
+    right = body.run("place_at", {"x": 0, "y": 8.75, "z": -C, "turn": 0})
+    assert right.ok and "Block_w003" in right.summary and "Block_w203" in right.summary, right.summary
+    after = roof_step(island)
+    assert f"the doorway at (0.0, -2.5) is open up to the roof" in after["done"] and "lintel" not in after["next"]
+
+
+def test_a_room_log_named_by_its_bearing_wall_and_inward_cell(monkeypatch):
+    # A log three cells long cannot reach across a room two cells wide: each one over the room is centred on a wall,
+    # resting on its middle, and reaches one cell in. The step names the wall it rests on and the cell it reaches.
+    island = Island([ground(), *walls_only(), ent("Log_S", (0, 8.75, -C), (7.5, 2.5, 2.5)),
+                     block("Block_step", -7.5, 1.25, 0), ent("Log_room", (-12, 1.25, -8), (7.5, 2.5, 2.5))],
+                    me=(-12, BODY_CENTRE_Y, -4))
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    found = roof_step(island)
+    assert ("over (0.0, 0.0), a log along x (turn 0) centred on the wall at (-2.5, 0.0), resting on its middle and "
+            "reaching in over (0.0, 0.0)") in found["next"], found["next"]
+    body = Skills(island)
+    assert body.run("pick_up", {"object": "Log_room"}).ok
+    laid = body.run("place_at", {"x": -C, "y": 8.75, "z": 0, "turn": 0})
+    assert laid.ok and "Block_w013" in laid.summary, laid.summary
+    assert (0, 0) not in judge_bare(island)
+
+
+def judge_bare(island):
+    from godling.house import Grid, judge
+    snap = island.snap()
+    grid = Grid(pieces_of(snap), terrain_of(snap))
+    return judge(grid, ROOM, 0.0)["bare"]

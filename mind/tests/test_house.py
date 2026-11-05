@@ -114,10 +114,17 @@ def test_a_chosen_house_says_what_it_needs_next():
     walls = plan(house(roofless=True), GROUND, room, door)
     assert walls["done"] == ["the walls stand three blocks high all round", "the room is clear",
                              "the doorway at (0.0, -2.5) is open up to the roof"]
-    assert walls["next"].startswith("the roof, every piece at height 8.75 (set from a step one block high outside the "
-                                    "walls, never in the doorway): over the room at (0.0, 0.0), (0.0, 2.5), (2.5, 0.0), "
-                                    "(2.5, 2.5), logs laid on the walls, each centred on a wall so it rests on its middle")
-    assert walls["next"].endswith("over the doorway at (0.0, -2.5), a log along the wall resting on the walls either side")
+    # In the order it is laid: the lintel first, on the walls either side of the doorway; then a log over each cell
+    # inside, centred on a wall beside it and reaching in; then blocks on the walls left over.
+    assert walls["next"] == (
+        "the roof, every piece at height 8.75 (set from a step one block high outside the walls, never in the doorway or "
+        "the way out): over the doorway at (0.0, -2.5), a log along x (turn 0) centred on it, resting on the walls at "
+        "(-2.5, -2.5) and (2.5, -2.5); over (0.0, 0.0), a log along x (turn 0) centred on the wall at (-2.5, 0.0), "
+        "resting on its middle and reaching in over (0.0, 0.0); over (0.0, 2.5), a log along x (turn 0) centred on the "
+        "wall at (-2.5, 2.5), resting on its middle and reaching in over (0.0, 2.5); over (2.5, 0.0), a log along x "
+        "(turn 0) centred on the wall at (5.0, 0.0), resting on its middle and reaching in over (2.5, 0.0); over (2.5, "
+        "2.5), a log along z (turn 90) centred on the wall at (2.5, 5.0), resting on its middle and reaching in over "
+        "(2.5, 2.5); a block on top of the walls at (-2.5, 5.0), (0.0, 5.0), (5.0, -2.5), (5.0, 2.5), (5.0, 5.0)")
     assert len(walls["pieces"]) == 33 and walls["score"] > empty["score"]
     # What lies in the room, the doorway or the way out is in the way, not its own.
     blocked = plan(house() + [block("Block_x", 0, -1, 1)], GROUND, room, door)
