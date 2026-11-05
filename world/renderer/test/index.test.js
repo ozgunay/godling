@@ -121,6 +121,23 @@ function island(t = 0, more = []) {
   }
 }
 
+function shelteredHut(selected = true) {
+  return {
+    selected_player_id: selected ? 'p1' : null,
+    players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0], attributes: { Sheltered: 'roof' } }],
+    entities: [part(1, 'Body', [0, 2.5, 0], [2, 5, 2]),
+      part(10, 'Log', [0, 8.75, 0], [7.5, 2.5, 2.5])],
+  }
+}
+
+function roofMatrix() {
+  // The fallback body and log share a group; the roof is its second instance.
+  const mesh = renders.renderer.last.scene.children.find((child) => child.isInstancedMesh && child.count === 2)
+  const matrix = new THREE.Matrix4()
+  mesh.getMatrixAt(1, matrix)
+  return matrix
+}
+
 describe('the renderer', () => {
   beforeEach(() => {
     renders.count = 0
@@ -395,6 +412,92 @@ describe('the renderer', () => {
     expect(globalThis.__godlingRenderer.cutaway()).toEqual([])
     r.unmount()
     history.replaceState(null, '', '/')
+  })
+
+  it.each([
+    ['attach', true], ['poseOverride', true], ['attach', false], ['poseOverride', false],
+  ])('restores the roof on the first %s capture frame (selected: %s)', (mode, selected) => {
+    const { ctx, cameraModes } = runtime()
+    const r = createRenderer(ctx)
+    const state = shelteredHut(selected)
+    r.onState(state)
+    expect(globalThis.__godlingRenderer.cutaway()).toContain(10)
+    expect(roofMatrix().determinant()).toBe(0)
+    cameraModes.spectator.state[mode] = mode === 'attach' ? { playerId: 'p1' } : { position: [0, 4, 0] }
+    r.onState({ ...state, __mesaCaptureMeta: { push: false, dt: 0 } })
+    expect(globalThis.__godlingRenderer.cutaway()).toEqual([])
+    expect(new THREE.Vector3().setFromMatrixPosition(roofMatrix()).toArray()).toEqual([0, 8.75, 0])
+    expect(roofMatrix().determinant()).toBeCloseTo(7.5 * 2.5 * 2.5)
+    cameraModes.spectator.state[mode] = null
+    r.onFrame({ dt: 0 })
+    expect(globalThis.__godlingRenderer.cutaway()).toContain(10)
+    expect(roofMatrix().determinant()).toBe(0)
+    r.unmount()
+  })
+
+  it('restores the roof immediately when walls up is selected, then cuts it away again', () => {
+    history.replaceState(null, '', '/?embed=1')
+    const screen = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', screen)
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    r.onState(shelteredHut())
+    expect(roofMatrix().determinant()).toBe(0)
+    const walls = (on) => {
+      const event = new MessageEvent('message', { data: { source: 'godling-viewer', type: 'godling-cutaway', on } })
+      Object.defineProperty(event, 'source', { value: screen })
+      dispatchEvent(event)
+      r.onFrame({ dt: 0 })
+    }
+    walls(false)
+    expect(globalThis.__godlingRenderer.cutaway()).toEqual([])
+    expect(roofMatrix().determinant()).toBeCloseTo(7.5 * 2.5 * 2.5)
+    walls(true)
+    expect(globalThis.__godlingRenderer.cutaway()).toContain(10)
+    expect(roofMatrix().determinant()).toBe(0)
+    r.unmount()
+  })
+
+  it('keeps a carried log visible under shelter, including the frame it is picked up', () => {
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const state = shelteredHut()
+    r.onState(state)
+    expect(roofMatrix().determinant()).toBe(0)
+    state.entities[1].attributes = { HeldBy: 'Godling' }
+    r.onState({ ...state, __mesaCaptureMeta: { dt: 0 } })
+    expect(globalThis.__godlingRenderer.cutaway()).not.toContain(10)
+    expect(roofMatrix().determinant()).toBeCloseTo(7.5 * 2.5 * 2.5)
+    state.entities[1].position = [0, 6.5, 0] // the world's carry offset: four above the body's middle
+    for (let i = 0; i < 20; i++) r.onFrame({ dt: 0.05 })
+    expect(globalThis.__godlingRenderer.cutaway()).not.toContain(10)
+    expect(new THREE.Vector3().setFromMatrixPosition(roofMatrix()).toArray()).toEqual([0, 6.5, 0])
+    r.unmount()
+  })
+
+  it('keeps the hand pose when a hidden material becomes a carried tool', async () => {
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const state = shelteredHut()
+    state.entities[0].model_url = '/assets/handed.glb'
+    r.onState(state)
+    await flush()
+    r.onFrame({ dt: 0.05 })
+    expect(globalThis.__godlingRenderer.cutaway()).toContain(10)
+    state.entities[1] = part(10, 'Tool', [0, 6.5, 0], [0.4, 0.4, 1], {
+      attributes: { ToolKind: 'Axe', HeldBy: 'Godling' },
+    })
+    r.onState({ ...state, __mesaCaptureMeta: { dt: 0.05 } })
+    expect(globalThis.__godlingRenderer.cutaway()).not.toContain(10)
+    const [heldTool] = globalThis.__godlingRenderer.hands()
+    expect(heldTool).toMatchObject({ id: 10, body: 1 })
+    const mesh = renders.renderer.last.scene.children.find((child) => child.isInstancedMesh && child.geometry.type === 'BoxGeometry')
+    const matrix = new THREE.Matrix4()
+    mesh.getMatrixAt(0, matrix)
+    const drawn = new THREE.Vector3().setFromMatrixPosition(matrix).toArray()
+    drawn.forEach((value, i) => expect(value).toBeCloseTo(heldTool.at[i], 2))
+    expect(drawn[1]).toBeLessThan(6.5)
+    r.unmount()
   })
 
   it('plays a lightning marker as a strike: the part never drawn, the picture flashing and settling', () => {

@@ -49,4 +49,19 @@ describe('cutaway', () => {
     expect(cutaway.clear().sort()).toEqual([1, 2])
     expect(cutaway.hidden()).toEqual([])
   })
+
+  it('keeps a falling meteor and distant building pieces above the hut visible', () => {
+    const meteor = { id: 6, position: [0, 40, 0], size: [2.5, 2.5, 2.5] }
+    const high = { ...roof, id: 7, position: [0, 200, 0] }
+    const out = createCutaway().update({ body: body(true), camera, pieces: [roof, meteor, high], dt: 0.05 })
+    expect([...out.hidden]).toEqual([roof.id])
+  })
+
+  it('forgets pieces that stop being cutaway candidates without the camera hold', () => {
+    const cutaway = createCutaway()
+    cutaway.update({ body: body(true), camera, pieces: [roof], dt: 0 })
+    const out = cutaway.update({ body: body(true), camera, pieces: [], dt: 0 })
+    expect([...out.hidden]).toEqual([])
+    expect(out.restored).toEqual([roof.id])
+  })
 })
