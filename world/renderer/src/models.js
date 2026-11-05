@@ -39,7 +39,7 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
         }
       })
       template.scene = scene
-      template.animations = gltf.animations || []
+      template.animations = withCarryLayers(gltf.animations || [])
       template.animated = skinned || template.animations.length > 0
       template.box = new THREE.Box3().setFromObject(scene) // every part, in the rest pose
       template.extent = template.box.getSize(new THREE.Vector3())
@@ -82,6 +82,21 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
   }
 }
 
+// Carry layers (art/build_godling.py): a clip "<Loop>Carry" holds only the bones it poses (Godling's right arm,
+// holding a tool steadily), keyed frame by frame against <Loop>'s own body. Laid over <Loop>, it makes the whole carry
+// clip: <Loop>'s tracks, with those bones' tracks taken from the layer. The same mask a game engine puts on an arm
+// layer, done once when the model loads. A carry clip without its loop stays as it is.
+export function withCarryLayers(clips) {
+  const byName = new Map(clips.map((clip) => [clip.name, clip]))
+  return clips.map((layer) => {
+    const loop = layer.name.endsWith('Carry') ? byName.get(layer.name.slice(0, -'Carry'.length)) : null
+    if (!loop) return layer
+    const own = new Set(layer.tracks.map((track) => track.name))
+    return new THREE.AnimationClip(layer.name, loop.duration,
+      [...loop.tracks.filter((track) => !own.has(track.name)), ...layer.tracks])
+  })
+}
+
 // Godling (art/build_godling.py) and any other animated model. The clips follow the player's attributes:
 // - "Gesture" names a clip and "Gestures" counts the body's actions (world/main.lua). Each new count plays that clip
 //   once at its own speed (the art pipeline cuts each to the world's timing). A model without that clip falls back
@@ -89,6 +104,9 @@ export function createModelLibrary({ onReady, onError, trackLoad, onMaterial }) 
 // - Climb loops while "Climbing" is true, and Brace (crouched, holding on through an earthquake) while "Bracing" is;
 //   Jump and Fall loop while the body jumps or falls. Each only if the model has the clip.
 // - Walk plays at the body's real speed, Idle when nothing else does.
+// - With a tool in the hand (`carrying`), each of these loops plays as its carry clip (withCarryLayers), if the
+//   model has one: the same body, the right arm holding the tool steadily instead of swinging it. A loop and its carry
+//   clip play in step, so picking up or setting down a tool cross-fades only the arm.
 // A new one-shot cuts the one in progress short. Stagger holds its last pose while "KnockedDown" is true.
 const WALK_STRIDE_SPEED = 0.667 // model metres per second the Walk clip covers at normal speed
 const ONE_SHOTS = [
@@ -164,17 +182,19 @@ export function createCharacterController(models) {
       a.setEffectiveWeight(0)
       return a
     }
-    state.idle = state.action('Idle')
-    state.walk = state.action('Walk')
-    state.climb = state.action('Climb')
-    state.brace = state.action('Brace')
-    state.airborne = Object.fromEntries(Object.entries(AIRBORNE_CLIPS).map(([humanoid, clip]) => [humanoid, state.action(clip)]))
+    // Each loop as a pair: its own clip, and its carry clip for a tool in the hand. Either may be missing.
+    const loop = (name) => ({ plain: state.action(name), carry: state.action(name + 'Carry') })
+    state.idle = loop('Idle')
+    state.walk = loop('Walk')
+    state.climb = loop('Climb')
+    state.brace = loop('Brace')
+    state.airborne = Object.fromEntries(Object.entries(AIRBORNE_CLIPS).map(([humanoid, clip]) => [humanoid, loop(clip)]))
     state.oneShots = ONE_SHOTS.map((spec) => ({ ...spec, action: state.action(spec.clip, true), count: null }))
     state.gestures = new Map() // clip name -> one-shot, made the first time that gesture is seen
     state.gestureCount = null
     state.current = null // the one-shot in progress, and how long it has left
-    state.idle?.setEffectiveWeight(1)
-    if (!state.idle) state.walk?.setEffectiveWeight(1)
+    state.idle.plain?.setEffectiveWeight(1)
+    if (!state.idle.plain) state.walk.plain?.setEffectiveWeight(1)
     state.ready = true
     return true
   }
@@ -195,7 +215,7 @@ export function createCharacterController(models) {
     state.current = shot
   }
 
-  function update(entityId, { dt = 1 / 60, speed = 0, humanoidState = null, attributes = {} } = {}) {
+  function update(entityId, { dt = 1 / 60, speed = 0, humanoidState = null, attributes = {}, carrying = false } = {}) {
     const state = states.get(entityId)
     if (!state?.ready) return
     // A new action: its gesture clip, else (an older model) the older counter's clip. Not on first sight.
@@ -225,29 +245,37 @@ export function createCharacterController(models) {
       if (state.current.left <= 0 && !down) state.current = null
     }
     const playing = state.current
-    const climbing = attributes.Climbing === true && Boolean(state.climb)
-    const bracing = attributes.Bracing === true && Boolean(state.brace) && !climbing
+    const pick = (pair) => (carrying && pair.carry) || pair.plain // the clip a loop plays now, if any
+    const climbing = attributes.Climbing === true && Boolean(pick(state.climb))
+    const bracing = attributes.Bracing === true && Boolean(pick(state.brace)) && !climbing
     const holding = climbing || bracing // a held loop: nothing else plays over it
     const airborne = humanoidState === 'Jumping' || humanoidState === 'Freefall'
-    const inAir = airborne && !holding && !playing ? state.airborne[humanoidState] : null
+    const inAir = airborne && !holding && !playing ? pick(state.airborne[humanoidState]) : null
     const moving = speed > 0.5 && !airborne && !playing && !holding
     const blend = (action, target, rate) => {
       if (!action) return
       const w = action.getEffectiveWeight()
       action.setEffectiveWeight(w + (target - w) * Math.min(1, dt * rate))
     }
+    // A loop on: the clip it plays now fades in, its other clip (with or without the tool) out.
+    const fade = (pair, on, rate) => {
+      const now = pick(pair)
+      for (const action of [pair.plain, pair.carry]) blend(action, on && action === now ? 1 : 0, rate)
+    }
     // A gesture and an older counter can name the same clip, and so share one action: blend each action once.
     const shotActions = new Set(state.oneShots.map((shot) => shot.action))
     for (const shot of state.gestures.values()) if (shot) shotActions.add(shot.action)
     for (const action of shotActions) blend(action, action && action === playing?.action && !holding ? 1 : 0, 14)
-    for (const loop of Object.values(state.airborne)) blend(loop, loop && loop === inAir ? 1 : 0, 10)
-    blend(state.climb, climbing ? 1 : 0, 10)
-    blend(state.brace, bracing ? 1 : 0, 10)
-    blend(state.walk, moving || !state.idle ? 1 : 0, 8)
-    blend(state.idle, moving || playing || holding || inAir ? 0 : 1, 8)
-    if (state.walk && moving) {
+    for (const pair of Object.values(state.airborne)) fade(pair, Boolean(inAir) && pick(pair) === inAir, 10)
+    fade(state.climb, climbing, 10)
+    fade(state.brace, bracing, 10)
+    const walking = moving || !pick(state.idle) // a model with no idle (for this hand) walks when it stands too
+    fade(state.walk, walking, 8)
+    fade(state.idle, !(moving || playing || holding || inAir), 8)
+    if (moving && pick(state.walk)) {
       // Feet keep pace with the body: the clip's stride, scaled with the model, at the body's real speed.
-      state.walk.setEffectiveTimeScale(Math.min(3, Math.max(0.5, speed / (WALK_STRIDE_SPEED * state.scale))))
+      const pace = Math.min(3, Math.max(0.5, speed / (WALK_STRIDE_SPEED * state.scale)))
+      for (const action of [state.walk.plain, state.walk.carry]) action?.setEffectiveTimeScale(pace)
     }
     state.mixer.update(dt)
   }
@@ -268,12 +296,15 @@ export function createCharacterController(models) {
     },
     remove: (entityId) => states.delete(entityId),
     clear: () => states.clear(),
-    // For checks: each character's one-shot in progress and the clips that weigh in now.
-    debug: () => [...states.entries()].filter(([, state]) => state.ready).map(([id, state]) => ({
-      id,
-      current: state.current?.action.getClip().name ?? null,
-      weights: Object.fromEntries(state.mixer._actions.filter((a) => a.getEffectiveWeight() > 0.05)
-        .map((a) => [a.getClip().name, Number(a.getEffectiveWeight().toFixed(2))])),
-    })),
+    // For checks: each character's one-shot in progress, the clips that weigh in now, and how far into each it is.
+    debug: () => [...states.entries()].filter(([, state]) => state.ready).map(([id, state]) => {
+      const weighing = state.mixer._actions.filter((a) => a.getEffectiveWeight() > 0.05)
+      return {
+        id,
+        current: state.current?.action.getClip().name ?? null,
+        weights: Object.fromEntries(weighing.map((a) => [a.getClip().name, Number(a.getEffectiveWeight().toFixed(2))])),
+        times: Object.fromEntries(weighing.map((a) => [a.getClip().name, Number(a.time.toFixed(3))])),
+      }
+    }),
   }
 }

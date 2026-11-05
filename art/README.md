@@ -5,7 +5,7 @@ again.
 
 | Model | File | Built by |
 |---|---|---|
-| Godling, the mascot (clips: Idle, Walk, a gesture for each action, Jump, Fall, Climb, Brace, Strike) | `world/assets/godling.glb` | `build_godling.py` |
+| Godling, the mascot (clips: Idle, Walk, a gesture for each action, Jump, Fall, Climb, Brace, Strike; carry layers) | `world/assets/godling.glb` | `build_godling.py` |
 | Tree, palm, stump, log, axe | `world/assets/tree.glb`, `palm.glb`, `stump.glb`, `log.glb`, `axe.glb` | `build_props.py` |
 | Quarrying: hammer, quarry outcrop, stone cube, stone brick, boulder | `hammer.glb`, `quarry.glb`, `stone.glb`, `brick.glb`, `boulder.glb` | `build_props.py` |
 | Ladder | `world/assets/ladder.glb` | `build_props.py` |
@@ -66,7 +66,9 @@ Being a god, it levitates what it carries above its head, which is how the world
 - Frames are chosen so each clip keeps just the action and the speed-up stays near 2x where the world allows; the lift and lowering must fit 1.0–1.2 s, so they run about 5x.
 - On every clip, `spread_arms` holds the arms a little out from the body. An adult's arm swing passes inside Godling's chubby torso, and a raised hand would vanish into the head.
 - A clip whose file is missing is left out (the build prints `SKIP`).
-- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 25 clips, `godling.glb` is about 900 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
+- **Size:** the export leaves out the 45 bones no body part hangs on (the fingers inside the mittens, the end bones) and samples the clips at 30 fps. With 24 clips and 5 carry layers, `godling.glb` is about 924 KB; with every bone at 60 fps it was 2.3 MB, slow to load on a phone.
+  - A channel a clip has no keys for and that never changes is left out (`export_optimize_animation_keep_anim_armature` off), so a carry layer holds only its three arm bones.
+  - The export goes by action (`export_animation_mode="ACTIONS"`). Exporting by NLA track, the exporter samples every bone without knowing which are keyed, so it also left out the bones a clip holds still, at a pose other than rest (Strike's legs). Each clip keeps its NLA track in `godling.blend`, for the previews.
 - **Idle** is `happy_idle.fbx`. **Walk** is `happy_walk.fbx`, downloaded with "In Place". The build prints the walk's stride speed for the renderer's `WALK_STRIDE_SPEED`; Happy Walk's is 0.667.
 - **PickUp** is frames 40–370 of `picking_up.fbx`, retimed to 1.1 s, with its bend cut to 35%.
 - **Gestures**, each timed to the world (a strike at most every 0.8 s, a lift 1.0 s, a lowering 1.2 s, a rub for fire every 4 s or more). The Mixamo animation behind each:
@@ -82,11 +84,32 @@ Being a god, it levitates what it carries above its head, which is how the world
   - **Strike** (1.0 s) is a two-handed swing: wind up wide and high, come down in front with a bow, recover.
   - The posed **Climb** (1.0 s, loops) is hand over hand, the opposite knee stepping up.
 - The arms are 0.65× an adult's.
+- **A tool in the right hand.** The renderer draws a held tool at the middle of the right mitten (`world/renderer/src/hands.js`): its head points along the hand bone's X (towards the thumb), turned towards the bone's Y (along the fingers) by the tool's dip. The dips are 55° for the spear and 20° for the axe and hammer; `SPEAR_DIP` and `TOOL_DIP` in the build must match `IN_HAND` (a renderer test checks this).
+  - **Carry layers** (`IdleCarry`, `WalkCarry`, `JumpCarry`, `FallCarry`, `BraceCarry`; `CARRY` in the build): one for each loop but Climb. A layer holds only the right arm (`CARRY_BONES`: upper arm, forearm, hand), holding a tool at the side, posed frame by frame against its loop's own body.
+    - While a tool is in the hand, the renderer lays each layer over its loop (`withCarryLayers` in `world/renderer/src/models.js`). The body plays the loop as before, at the same point of it, and only the arm changes. This is the arm mask a game engine puts on a layer, done once when the model loads.
+    - The upper arm hangs down and out, the elbow is bent, and the fist rests by the hip (`AT_SIDE`). A spear points 10° above level and 10° across the body; the axe and hammer, dipped less, point 45° up.
+    - The arm keeps 12% of its loop's own arm motion (`CARRY_KEEP`): each bone's turn away from its average over the loop, not 12% of its pose. So it still looks alive, and on average the tool points exactly where `AT_SIDE` says. Keeping 12% of the pose itself pulled every joint towards the clip's hanging arm, and the joints' shares added up at the hand: the spear pointed 5° up and 7° across, the axe 40° up.
+    - The build prints where a spear and an axe point in each layer (the `CARRY` lines).
+    - Measured in the renderer, from the built `godling.glb`:
+
+      | Loop | Spear: above level | Spear: across | Closest to the body | Lowest point above the feet |
+      |---|---|---|---|---|
+      | Idle | 10° | 10° | 0.10 | 1.34 |
+      | Walk | 9–12° | 9–11° | 0.08 | 1.16 |
+      | Jump | 8–12° | 7–13° | 0.05 (the thigh, at take-off) | 1.00 |
+      | Fall | 10° | 10–11° | 0.10 | 1.52 |
+      | Brace | 10° | 10° | 0.10 | 0.35 |
+
+      With the plain loops, the spear swung from 50° below level to 4° above (Walk), up to 50° off to the side (Jump), and 62–85° up and backwards (Fall). Jump, Fall and Climb also put it into the head or a leg.
+    - **Climbing** has no layer: both hands go to the ladder, and the renderer floats the tool over the head, where the world carries it, until Godling steps off (`index.js`). Held ahead, the tool ran into the ladder; stood up beside the body, its butt went into the shin and below the feet, and the axe into Godling's big head.
+  - **Spear** (Bayonet Stab) holds the right hand with the fingers forward, so a spear in the renderer's grip pointed up at the thrust. Every frame, the build turns the hand about the wrist so the spear points ahead and level. Only that hand's rotation changes.
+  - A spear held ahead, carried or thrust, points 10° across the body (`ACROSS`), its butt out past the right hip as a bayonet's is. Pointing straight ahead, the butt grazed the torso as the walk swayed and the stab lunged.
 
 Preview stills of any clip, four moments each:
 ```powershell
 & $blender --background art\godling.blend --python art\render_preview.py -- godling Walk Chop
 ```
+A carry layer (`-- godling WalkCarry`) is shot laid over its loop, as the renderer plays it.
 
 ## Props
 - **Tree:** a trunk with a root flare and a canopy of five soft green blobs.

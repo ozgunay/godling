@@ -15,7 +15,9 @@ Clips (60 fps), from the Mixamo sources (see CLIPS): Idle and Walk (in place: th
 one-shot gesture for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake,
 Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp) and for the earthquake (Stagger, GetUp, LookAround); loops for
 Jump, Fall, Climb and Brace. Strike (a two-handed overhead swing, 1.0 s) is posed by hand on the same rig, as is
-Climb when its source is missing.
+Climb when its source is missing. The carry layers (IdleCarry, WalkCarry, JumpCarry, FallCarry, BraceCarry) hold
+only the right arm, holding a tool steadily, for the renderer to lay over their loops while one is in the hand; the
+Spear clip's hand is turned so the spear thrusts straight ahead (see "a tool in the right hand").
 
 Writes world/assets/godling.glb and art/godling.blend.
 """
@@ -407,6 +409,136 @@ def spread_arms(arm, action):
                 pb.keyframe_insert("rotation_quaternion", frame=f)
 
 
+# ---- a tool in the right hand ------------------------------------------------------------------
+# How the renderer holds a tool (world/renderer/src/hands.js IN_HAND): at the middle of the right mitten, its head
+# along the hand bone's X (towards the thumb) turned towards the bone's Y (along the fingers) by the tool's dip. The
+# hand's axes in the armature's space here are the ones the renderer sees. Keep these dips equal to IN_HAND's.
+SPEAR_DIP, TOOL_DIP = 55, 20  # the spear; the axe and hammer
+# Carry layers (IdleCarry, WalkCarry, JumpCarry, FallCarry, BraceCarry): for each loop in CARRY, the right arm
+# (CARRY_BONES) holding a tool steadily, posed frame by frame against that loop's own body. Only those bones are in a
+# layer; the renderer lays it over its loop while a tool is in the hand (models.js), so the body still idles, walks,
+# jumps, falls or braces, but the tool no longer swings with the arm. The arm keeps CARRY_KEEP of the loop's own arm
+# motion, each bone's turn away from its average over the loop: it still looks alive, and on average the tool points
+# where the hold says.
+CARRY_BONES = ("RightArm", "RightForeArm", "RightHand")
+CARRY_KEEP = 0.12
+# A spear held ahead, carried or thrust, points this many degrees across the body, its butt out past the right hip
+# as a bayonet's is: straight ahead, the butt grazed the torso as the walk swayed and the stab lunged.
+ACROSS = 10
+# A hold: the upper arm's and forearm's directions, and where a spear points, `rise` degrees above level and turned
+# `across` degrees from straight ahead towards Godling's left. The palm faces in, towards the body. The axe and
+# hammer, dipped less, point SPEAR_DIP - TOOL_DIP degrees higher.
+AT_SIDE = dict(arm=(-0.45, -1, 0.05), forearm=(-0.15, -0.25, 1), rise=10, across=ACROSS)  # the fist by the hip
+# Climbing has none: both hands go to the ladder, and the renderer floats the tool over the head meanwhile (index.js).
+# Held ahead, a tool ran into the ladder, and stood up beside the body, into Godling's big head.
+CARRY = {"Idle": AT_SIDE, "Walk": AT_SIDE, "Jump": AT_SIDE, "Fall": AT_SIDE, "Brace": AT_SIDE}
+
+
+def pointing(rise, across):
+    """A direction `rise` degrees above level, turned `across` degrees from straight ahead towards Godling's left
+    (armature space: +Y up, +Z ahead, +X Godling's left)."""
+    r, a = math.radians(rise), math.radians(across)
+    return Vector((math.sin(a) * math.cos(r), math.sin(r), math.cos(a) * math.cos(r)))
+
+
+def orient(pb, x_axis, y_axis):
+    """Turn a pose bone about its head so its Y axis points along `y_axis` and its X axis as near `x_axis` as that
+    allows (armature space). The caller updates the view layer before reading the pose again."""
+    head = pb.matrix.translation.copy()
+    y = Vector(y_axis).normalized()
+    x = (Vector(x_axis) - y * Vector(x_axis).dot(y)).normalized()
+    pb.matrix = Matrix.Translation(head) @ Matrix((x, y, x.cross(y))).transposed().to_4x4()
+
+
+def held_direction(pb, dip):
+    """Where the head of a tool held in this hand points (armature space)."""
+    m = pb.matrix.to_3x3()
+    return (m.col[0] * math.cos(math.radians(dip)) + m.col[1] * math.sin(math.radians(dip))).normalized()
+
+
+def grip_axes(tool, dip, palm=(1, 0, 0)):
+    """The hand's X (thumb) and Y (fingers) axes that hold a tool of this dip pointing along `tool`, the palm (the
+    hand's Z) facing as near `palm` as that allows. The inverse of held_direction."""
+    s = Vector(tool).normalized()
+    z = (Vector(palm) - s * s.dot(Vector(palm))).normalized()
+    d = math.radians(dip)
+    x = s * math.cos(d) - z.cross(s) * math.sin(d)
+    return x, z.cross(x)
+
+
+def average_turn(turns):
+    """The average of some rotations near one another (quaternions, each sign matched to the first's)."""
+    total = Vector((0, 0, 0, 0))
+    for q in turns:
+        total += Vector(q) if q.dot(turns[0]) >= 0 else -Vector(q)
+    return Quaternion(total).normalized()  # (a 4D Vector's normalized() leaves its last component as it is)
+
+
+def angles(direction):
+    """Degrees above level, and across from straight ahead (+ towards Godling's left), of an armature direction."""
+    return math.degrees(math.asin(max(-1, min(1, direction.y)))), math.degrees(math.atan2(direction.x, direction.z))
+
+
+def carry_layer(arm, loop, hold):
+    """The carry layer for `loop` (see CARRY): its right arm, as `hold` says, keyed on CARRY_BONES only. Prints
+    where a held spear and axe point over the loop."""
+    use_clip(arm, loop)
+    scene = bpy.context.scene
+    bones = [arm.pose.bones["mixamorig:" + b] for b in CARRY_BONES]
+    first, last = (int(round(f)) for f in loop.frame_range)
+    frames = range(first, last + 1)
+    curves = {}
+    for fc in fcurves(loop):
+        curves.setdefault(fc.data_path, {})[fc.array_index] = fc
+    own = {f: [Quaternion([curves[pb.path_from_id("rotation_quaternion")][i].evaluate(f) for i in range(4)])
+               for pb in bones] for f in frames}
+    mean = [average_turn([own[f][i] for f in frames]) for i in range(len(bones))]
+    thumb, fingers = grip_axes(pointing(hold["rise"], hold["across"]), SPEAR_DIP)
+    place = (lambda pb: aim(pb, hold["arm"], update=False), lambda pb: aim(pb, hold["forearm"], update=False),
+             lambda pb: orient(pb, thumb, fingers))
+    poses, spear, tool = {}, [], []
+    for f in frames:
+        scene.frame_set(f)
+        for pb, put, q, m in zip(bones, place, own[f], mean):
+            put(pb)
+            motion = q @ m.inverted()  # the loop's own turn of this bone away from its average (in the parent's frame)
+            if motion.w < 0:
+                motion.negate()
+            pb.rotation_quaternion = Quaternion().slerp(motion, CARRY_KEEP) @ pb.rotation_quaternion
+            bpy.context.view_layer.update()  # the next bone, and the measure, hang on this one
+        poses[f] = [pb.rotation_quaternion.copy() for pb in bones]
+        spear.append(angles(held_direction(bones[-1], SPEAR_DIP)))
+        tool.append(angles(held_direction(bones[-1], TOOL_DIP)))
+    layer = bpy.data.actions.new(loop.name + "Carry")
+    layer.use_fake_user = True
+    use_clip(arm, layer)
+    for f in frames:
+        for pb, q in zip(bones, poses[f]):
+            pb.rotation_quaternion = q
+            pb.keyframe_insert("rotation_quaternion", frame=f)
+
+    def span(values):
+        return f"{min(values):.0f}..{max(values):.0f} (mean {sum(values) / len(values):.1f})"
+    print(f"CARRY {layer.name}: spear {span([r for r, _ in spear])} up, {span([a for _, a in spear])} across; "
+          f"axe and hammer {span([r for r, _ in tool])} up, {span([a for _, a in tool])} across")
+    return layer
+
+
+def level_spear(arm, action):
+    """The bayonet stab holds the right hand with the fingers forward, so a spear gripped as the renderer grips it
+    pointed up at the thrust. Every frame, turn the hand about the wrist so the spear points ahead, level: the stab
+    goes where Godling faces, ACROSS degrees across the body."""
+    use_clip(arm, action)
+    scene = bpy.context.scene
+    hand = arm.pose.bones["mixamorig:RightHand"]
+    ahead = pointing(0, ACROSS)
+    first, last = (int(round(f)) for f in action.frame_range)
+    for f in range(first, last + 1):
+        scene.frame_set(f)
+        aim(hand, ahead, held_direction(hand, SPEAR_DIP), update=False)  # the next frame_set updates
+        hand.keyframe_insert("rotation_quaternion", frame=f)
+
+
 def soften_hips(arm, action, keep):
     """Less forward pitch of the hips, with the thighs re-solved each frame so legs and feet stay put."""
     use_clip(arm, action)
@@ -473,14 +605,18 @@ POSE_ORDER = ("Spine1", "LeftArm", "LeftForeArm", "RightArm", "RightForeArm", "L
               "RightUpLeg", "RightLeg")
 
 
-def aim(pb, target):
-    """Turn a pose bone about its head so it points along `target` (armature space)."""
+def aim(pb, target, current=None, update=True):
+    """Turn a pose bone about its head so it points along `target` (armature space): the bone itself (its Y), or
+    `current`, a direction that turns with it (a tool in the hand: held_direction). Without `update`, the caller
+    updates the view layer before reading the pose again."""
     m = pb.matrix.copy()
     head = m.translation.copy()
-    current = (m.to_3x3() @ Vector((0, 1, 0))).normalized()
-    turn = current.rotation_difference(Vector(target).normalized()).to_matrix().to_4x4()
+    if current is None:
+        current = m.to_3x3() @ Vector((0, 1, 0))
+    turn = Vector(current).normalized().rotation_difference(Vector(target).normalized()).to_matrix().to_4x4()
     pb.matrix = Matrix.Translation(head) @ turn @ Matrix.Translation(-head) @ m
-    bpy.context.view_layer.update()
+    if update:
+        bpy.context.view_layer.update()
 
 
 def bend(pb, degrees):
@@ -757,6 +893,12 @@ def main():
         keep_frames(idle, 1, IDLE_FRAMES)
         ping_pong(idle, IDLE_FRAMES)
         clips.insert(0, idle)
+    by_name = {a.name: a for a in clips}
+    if "Spear" in by_name:
+        level_spear(arm, by_name["Spear"])
+    for loop, hold in CARRY.items():  # the renderer lays these over their loops while a tool is in the hand
+        if loop in by_name:
+            clips.append(carry_layer(arm, by_name[loop], hold))
     for action in clips:
         scale_hips(action, LEG)
         action.use_fake_user = True
@@ -778,7 +920,8 @@ def main():
     if "Climb" not in names:
         clips.append(posed_clip(arm, "Climb", CLIMB, idle))
 
-    # One NLA track per clip, so the exporter writes them all as separate animations.
+    # One NLA track per clip: the export takes each track's action as an animation, and in godling.blend,
+    # render_preview.py plays a carry layer over its loop's track.
     for action in clips:
         track = arm.animation_data.nla_tracks.new()
         track.name = action.name
@@ -794,11 +937,14 @@ def main():
 
     OUT_GLB.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT_BLEND))
-    # Sampled at 30 fps (frame step 2): the renderer interpolates between keys, and it halves the clips' size.
+    # Sampled at 30 fps (frame step 2): the renderer interpolates between keys, and it halves the clips' size. A
+    # channel a clip has no keys for and that never changes is left out (keep_anim_armature off), so a carry layer
+    # holds just its arm. Exported by action, not by NLA track: by track, the exporter samples every bone without
+    # knowing which are keyed, and left out the bones a clip holds still (Strike's legs) as well.
     bpy.ops.export_scene.gltf(filepath=str(OUT_GLB), export_format="GLB", export_apply=True,
-                              export_animations=True, export_animation_mode="NLA_TRACKS",
+                              export_animations=True, export_animation_mode="ACTIONS",
                               export_force_sampling=True, export_frame_step=2, export_def_bones=True,
-                              export_yup=True)
+                              export_optimize_animation_keep_anim_armature=False, export_yup=True)
     print("WROTE", OUT_GLB, OUT_GLB.stat().st_size, "bytes", f"({unused} unused bones left out)")
     for action in clips:
         first, last = action.frame_range

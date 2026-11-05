@@ -40,7 +40,7 @@ files['/assets/crater.glb'] = prop
 files['/assets/fish.glb'] = prop
 files['/assets/stone.glb'] = prop
 files['/assets/godling.glb'] = body
-files['/assets/handed.glb'] = () => handed({ clips: ['Idle', 'Walk'] })
+files['/assets/handed.glb'] = () => handed({ clips: ['Idle', 'Walk', 'IdleCarry', 'WalkCarry'] })
 
 function runtime() {
   const buffer = {
@@ -280,12 +280,15 @@ describe('the renderer', () => {
     const r = createRenderer(ctx)
     const tool = (id, kind, position, holder) => part(id, 'Tool', position, [0.4, 0.4, 1], { rotation: I,
       attributes: { ToolKind: kind, ...(holder ? { HeldBy: holder } : {}) } })
-    const obs = (holder) => ({
-      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0] },
-        { id: 'p2', name: 'Plain', root_part_id: 2, position: [9, 2.5, 0] }],
+    const obs = (holder, attributes = {}) => ({
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 1, position: [0, 2.5, 0], attributes },
+        { id: 'p2', name: 'Plain', root_part_id: 2, position: [9, 2.5, 0] },
+        { id: 'p3', name: 'Torchbearer', root_part_id: 7, position: [-9, 2.5, 0] }],
       entities: [
         part(1, 'Body', [0, 2.5, 0], [2, 5, 2], { model_url: '/assets/handed.glb', rotation: I }),
         part(2, 'Body', [9, 2.5, 0], [2, 5, 2], { model_url: '/assets/godling.glb' }), // a model without a hand bone
+        part(7, 'Body', [-9, 2.5, 0], [2, 5, 2], { model_url: '/assets/handed.glb', rotation: I }),
+        tool(8, 'Torch', [-9, 6.5, 0], 'Torchbearer'), // a kind with no grip (IN_HAND): it stays over the head
         tool(3, 'Axe', [0, 6.5, 0], holder), // carried over the head, as the world does (main.lua HOLD_OFFSET)
         tool(4, 'Hammer', [9, 6.5, 0], 'Plain'),
         tool(5, 'Spear', [4, 0.2, 4], 'Nobody'), // a holder not on the island
@@ -303,6 +306,10 @@ describe('the renderer', () => {
     await flush() // the models arrive
     frames(12, obs('Godling'))
     expect(hands()).toEqual([expect.objectContaining({ id: 3, body: 1, weight: 1 })])
+    const clips = (id) => globalThis.__godlingRenderer.animations().find((a) => a.id === id).weights
+    expect(clips(1)).toEqual({ IdleCarry: 1 }) // it carries the axe: the arm holds it still
+    expect(clips(2)).toEqual({ Idle: 1 }) // a model without carry clips keeps its own
+    expect(clips(7)).toEqual({ Idle: 1 }) // nothing in its hand to hold steady: the torch is drawn over its head
     const [axe] = hands()
     expect(axe.at[1]).toBeLessThan(4) // in the hand at the body's side, not over its head at 6.5
     expect(Math.hypot(axe.at[0], axe.at[2])).toBeLessThan(2.5)
@@ -313,11 +320,18 @@ describe('the renderer', () => {
     cameraModes.spectator.state.attach = null
     frames(12, obs('Godling'))
     expect(hands()).toHaveLength(1)
+    // Climbing, both hands are on the ladder: the axe floats over the head meanwhile, and comes back to the hand after.
+    frames(12, obs('Godling', { Climbing: true }))
+    expect(hands()).toEqual([])
+    expect(clips(1)).toEqual({ Idle: 1 }) // its hand is empty: no carry clip (this stand-in has no Climb to play)
+    frames(12, obs('Godling'))
+    expect(hands()).toEqual([expect.objectContaining({ id: 3, body: 1, weight: 1 })])
     // Set down: out of the hand, then where the world has it.
     frames(2, obs(null))
     expect(hands()[0].weight).toBeLessThan(1)
     frames(12, obs(null))
     expect(hands()).toEqual([])
+    expect(clips(1)).toEqual({ Idle: 1 })
     r.unmount()
   })
 

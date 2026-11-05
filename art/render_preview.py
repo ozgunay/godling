@@ -84,9 +84,14 @@ def shoot(view, azimuth_deg, elevation_deg=12):
 
 
 def clip(action_name, frame):
+    """Pose the armature at a frame of a clip. A carry layer (IdleCarry, ...) holds only the right arm: it is laid
+    over its loop, as the renderer does, the loop's NLA track playing under it."""
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
     action = bpy.data.actions.get(action_name)
     if arm and action:
+        under = action_name[:-len("Carry")] if action_name.endswith("Carry") else None
+        for track in arm.animation_data.nla_tracks:
+            track.mute = track.name != under
         arm.animation_data.action = action
         if hasattr(arm.animation_data, "action_slot") and action.slots:
             arm.animation_data.action_slot = action.slots[0]
