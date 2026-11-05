@@ -724,7 +724,10 @@ class Skills:
             return min((math.hypot(max(abs(x - bx) - hx, 0), max(abs(z - bz) - hz, 0)) - c for bx, bz, hx, hz, c, _ in boxes),
                        default=CUBE)
         best, step = None, 0.25
-        n = int(reach / step)
+        # Only out as far as the hands reach at the target's height: from up high (a roof) that is a few units, not all
+        # of the reach (run hp-full2 hit 34 blocked walks and reaches, each a search like this one).
+        rise = ty - (level + BODY_CENTRE_Y)
+        n = int(math.sqrt(max((reach - 0.4) ** 2 - rise ** 2, 0)) / step)
         for i in range(-n, n + 1):
             for k in range(-n, n + 1):
                 sx, sz = tx + i * step, tz + k * step

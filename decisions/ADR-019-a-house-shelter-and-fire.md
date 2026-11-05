@@ -215,7 +215,7 @@ the roof over it is as clear and as roofed as the room, so a clear cell sticking
 leading out, is taken as the doorway, not the room. The world now reports shelter and the house apart: `Sheltered`
 says what is over and round the body ("", "roof", "enclosed"), which still halves the cold while a house is being
 built; `InHouse` says it stands inside a finished house, which alone keeps it warm; and the world log says `HOUSE`
-when the body first stands in one. The mind hears the new rule, the next step names each wall short of three blocks,
+each time the body walks into one. The mind hears the new rule, the next step names each wall short of three blocks,
 then where the roof pieces go, and the pieces in place at the chosen house are logged as they change
 (`kind: "house", phase: "installed"`), so a run can be measured by the work that stays, not only by time.
 
@@ -374,3 +374,21 @@ across connected platforms before attempting a descent.
 Established builds survive trimming the material history. Disabling the house project releases its runtime
 ownership while preserving the saved project. House feedback and build-damage notices use observed geometry;
 hidden changes are learned when Godling revisits, and the construction observations persist across restarts.
+
+## Second review (2026-11-05)
+
+- **A cap on a room log's bearing wall is in the way, like one on the lintel's walls.** While a room cell is bare,
+  whatever sits at the roof on the wall its log rests on, or beyond it where the log's outer end goes, is named in
+  the next step ("first take ... off the top of ...: the log over ... rests there") and is free to lift. Before, it
+  was kept as the house's own, so the body refused to lift it and the world refused the log: in a 2x2 room the two
+  cells beside the doorway have one bearing wall each, so one stone set there first left the house unfinishable.
+- **A fire takes on only a log lying loose beside it.** Fuel must lie on the burning log's floor and hold nothing
+  up. A log in a wall's bottom course, a lintel or a roof beam, fastened or not, never catches, so a hearth by the
+  house can't burn it down.
+- **A log laid on a burning one is no roof over it.** The rain check skips anything resting directly on the log.
+- **A revised house is measured afresh.** Changing the room or the doorway on the same site resets its best score,
+  which was scored against the old layout. Before, a lower-scoring revision never logged progress, and the plan was
+  soon told the house had stalled.
+- The house line says "Last observed" only when there are pieces to have observed. The body names the house with
+  `house.at`, the same as the mind. The close stand-point search reaches only as far as the hands do at the
+  target's height. The world logs `HOUSE` each time the body walks into a house, as this record now says.

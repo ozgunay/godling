@@ -2410,7 +2410,8 @@ end)()
 -- Rain puts out the fires in the open (WEATHER): the fire is gone, the log is left, charred but whole. Under a roof, a
 -- fire burns on through the shower (ADR-019). (Its helper lives inside: the main chunk is near Luau's 200 locals.)
 local function douseFires()
-    local function covered(fire, log) -- something solid and held in place over it
+    local function covered(fire, log) -- something solid and held in place over it, not resting on the log itself
+        local top = log.Position.Y + halfExtents(log).Y
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = { fire, log }
@@ -2420,7 +2421,8 @@ local function douseFires()
         local hits = Workspace:GetPartsInPart(probe, params)
         probe:Destroy()
         for _, hit in ipairs(hits) do
-            if hit.Anchored and isSolid(hit) and not isCarried(hit) and hit.Name ~= "HumanoidRootPart" then
+            if hit.Anchored and isSolid(hit) and not isCarried(hit) and hit.Name ~= "HumanoidRootPart"
+                and math.abs(hit.Position.Y - halfExtents(hit).Y - top) >= 0.3 then -- a log laid on it is no roof
                 return true
             end
         end
@@ -2441,15 +2443,30 @@ end
 
 -- Feeding a fire (ADR-019): a log laid against a burning one, loose (not fastened, not carried), takes the fire as the
 -- first burns out, so one lighting can last the night. A fire lasts ten minutes on a log; a night is about thirteen.
+-- Only a log lying beside it, on the same floor and holding nothing up: a log built into a wall or a roof (a wall's
+-- bottom course, a lintel, a roof beam) never takes the fire, or a hearth by the house would burn the house down.
 local function tickFires()
+    local function holdsUp(piece) -- something held in place rests on it
+        local c, e = piece.Position, halfExtents(piece)
+        for _, other in ipairs(Workspace:GetChildren()) do
+            if other ~= piece and other:IsA("BasePart") and other.Anchored and isSolid(other) then
+                local oc, oe = other.Position, halfExtents(other)
+                if math.abs((oc.Y - oe.Y) - (c.Y + e.Y)) < 0.3 and math.abs(c.X - oc.X) < e.X + oe.X - 0.05
+                    and math.abs(c.Z - oc.Z) < e.Z + oe.Z - 0.05 then
+                    return true
+                end
+            end
+        end
+        return false
+    end
     local function fuelFor(log)
         local a = halfExtents(log)
         for _, inst in ipairs(Workspace:GetChildren()) do
             if inst ~= log and inst:IsA("BasePart") and inst:GetAttribute("RenderRole") == "Log" and not isCarried(inst)
                 and not inst:GetAttribute("Burning") and not inst:GetAttribute("Fastened") then
                 local b, d = halfExtents(inst), inst.Position - log.Position
-                if math.abs(d.X) <= a.X + b.X + 0.3 and math.abs(d.Y) <= a.Y + b.Y + 0.3
-                    and math.abs(d.Z) <= a.Z + b.Z + 0.3 then
+                if math.abs(d.X) <= a.X + b.X + 0.3 and math.abs(d.Z) <= a.Z + b.Z + 0.3
+                    and math.abs((inst.Position.Y - b.Y) - (log.Position.Y - a.Y)) < 0.3 and not holdsUp(inst) then
                     return inst
                 end
             end

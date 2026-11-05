@@ -257,6 +257,30 @@ def test_a_room_log_named_by_its_bearing_wall_and_inward_cell(monkeypatch):
     assert (0, 0) not in judge_bare(island)
 
 
+def test_a_stone_capping_a_room_logs_bearing_wall_is_in_the_way(monkeypatch):
+    # Room cell (0, 0) has one bearing wall, (-1, 0): its other side is the lintel's wall. A stone set on top of that
+    # wall first left the log over (0, 0) no room there, and the stone was kept as the house's own, so the body would
+    # not lift it: the house could never be finished. Like a cap on the lintel's walls, it is now in the way, named,
+    # and once lifted off the log goes on.
+    island = Island([ground(), *walls_only(caps=[(-1, 0)]), ent("Log_S", (0, 8.75, -C), (7.5, 2.5, 2.5)),
+                     block("Block_step", -5, 1.25, -C), ent("Log_room", (-12, 1.25, -8), (7.5, 2.5, 2.5))],
+                    me=(-12, BODY_CENTRE_Y, -4))
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    found = roof_step(island)
+    assert "Block_cap01" in found["in_the_way"] and "Block_cap01" not in found["pieces"], found
+    assert ("first take Block_cap01 off the top of (-2.5, 0.0) (reach up from a step one block high beside it): the "
+            "log over (0.0, 0.0) rests there; then over (0.0, 0.0), a log along x (turn 0) centred on the wall at "
+            "(-2.5, 0.0)") in found["next"], found["next"]
+    body = Skills(island, kept_in=lambda p: "your house at (0.0, 0.0)" if p in found["pieces"] else None)
+    assert body.run("walk_to", {"x": -5, "z": -C}).ok and island.me[1] > 4
+    assert body.run("pick_up", {"object": "Block_cap01"}).ok
+    assert body.run("put_down", {"x": -12, "z": 8}).ok
+    assert body.run("pick_up", {"object": "Log_room"}).ok
+    laid = body.run("place_at", {"x": -C, "y": 8.75, "z": 0, "turn": 0})
+    assert laid.ok and "Block_w013" in laid.summary, laid.summary
+    assert (0, 0) not in judge_bare(island)
+
+
 def judge_bare(island):
     from godling.house import Grid, judge
     snap = island.snap()

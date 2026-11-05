@@ -445,10 +445,18 @@ def plan(pieces, terrain, inside, door):
         return sorted({name for b, _, name in grid.columns.get(c, ()) if floor + top - GAP <= b < floor + top + LAYER - GAP})
     # A stone capping one of the lintel's walls before the lintel is on leaves it no room: it is in the way.
     blockers = sorted({n for f in flanks for n in at_roof(f)} - set(at_roof(door))) if not lintel else []
+    # So does one on the wall a room log rests on, or beyond it where the log's outer end goes, while that cell is bare:
+    # left as the house's own, the body would never lift it and the log would never go on.
+    beds = {}
+    for c, w, _ in layout["logs"]:
+        if c in bare:
+            cells = [x for x in (w, (2 * w[0] - c[0], 2 * w[1] - c[1])) if at_roof(x)]
+            if cells:
+                beds[c] = (cells, sorted({n for x in cells for n in at_roof(x)}))
     in_the_way = ({name for c in room for _, name in grid.filling(c, floor)}
                   | {name for _, name in grid.filling(door, floor, up_to=top - GAP)}
                   | ({name for _, name in grid.filling(out, floor)} if out is not None else set())
-                  | set(blockers))
+                  | set(blockers) | {n for _, found in beds.values() for n in found})
     own = sorted(({name for c in walls for b, _, name in grid.columns.get(c, ()) if b < floor + top + LAYER}
                   | {name for c in room + [door] for b, _, name in grid.columns.get(c, ())
                      if floor + top - GAP <= b < floor + top + LAYER}) - in_the_way)
@@ -484,8 +492,13 @@ def plan(pieces, terrain, inside, door):
                          f"resting on the walls at {at(flanks[0])} and {at(flanks[1])}")
         for c, w, log_axis in layout["logs"]:
             if c in bare:
-                needs.append(f"over {at(c)}, a log {_turn(log_axis)} centred on the wall at {at(w)}, resting on its "
-                             f"middle and reaching in over {at(c)}")
+                if c in beds:
+                    cells, found = beds[c]
+                    needs.append(f"first take {' and '.join(found)} off the top{'s' if len(cells) > 1 else ''} of "
+                                 f"{' and '.join(at(x) for x in cells)} (reach up from a step one block high beside "
+                                 f"{'them' if len(cells) > 1 else 'it'}): the log over {at(c)} rests there")
+                needs.append(f"{'then ' if c in beds else ''}over {at(c)}, a log {_turn(log_axis)} centred on the wall "
+                             f"at {at(w)}, resting on its middle and reaching in over {at(c)}")
         uncapped = [c for c in layout["caps"] if c not in capped]
         if uncapped:
             needs.append(f"a block on top of the walls at {_list(uncapped)}")

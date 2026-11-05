@@ -11,12 +11,12 @@ import time
 from pathlib import Path
 
 from .files import write_atomic
+from .house import at, outside_of
 
 
 def house_title(house):
     """How the body names the house the mind is building: "your house at (x, z)", by its first cell inside."""
-    ix, iz = house["inside"][0]
-    return f"your house at ({ix * 2.5:.1f}, {iz * 2.5:.1f})"
+    return f"your house at {at(house['inside'][0])}"
 
 
 def _words(text):
@@ -144,7 +144,6 @@ class NativeMemory:
         house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         if not house.get("inside") or not house.get("door"):
             return set()
-        from .house import outside_of
         room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
         out = outside_of(room, door)
         return set(room) | {door} | ({out} if out else set())
