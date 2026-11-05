@@ -22,13 +22,14 @@ stood sheltered. What was missing was a definition of a house:
 
 ## Decisions
 The user chose each of these.
-1. **What a house is.** At least one clear interior cell, where Godling can stand (a block filling the room fails
-   it). Walls at least two blocks high all round it, but for one doorway Godling can walk through. A roof over every
-   interior cell, with more than five units of headroom (the body is exactly five tall).
+1. **What a house is.** At first: at least one clear interior cell, where Godling can stand (a block filling the room
+   fails it); walls at least two blocks high all round it, but for one doorway Godling can walk through; a roof over
+   every interior cell, with more than five units of headroom (the body is exactly five tall). Replaced by the
+   first-house benchmark (below), after a shelter that was no house passed it.
 2. **House and shelter are two facts.** A house is a structure: a build passes the check or not, wherever Godling
-   is. Shelter is what the body feels where it stands (`Sheltered`): "roof", "enclosed" (a roof with walls on three
-   sides, a lean-to) or "house" (standing in a house's interior). A lean-to keeps the rain off long before it is a
-   house.
+   is. Shelter is what the body feels where it stands (`Sheltered`): "roof", or "enclosed" (a roof with walls on three
+   sides, a lean-to); standing inside a finished house is reported apart (`InHouse`). A lean-to keeps the rain off
+   long before it is a house.
 3. **One check, written once for the mind and the measure.** `mind/godling/house.py` judges a build. The build measure
    counts houses with it, and the mind is told, for each of its builds, that it is a house or what it is short of, in
    concrete words: "the doorway at (0.0, -2.5) is clear, the walls stand two blocks high, but the roof covers only 1
@@ -137,12 +138,13 @@ room's floor. `walk_to` now judges headroom from the floor where it is going, an
 (`test_walk_into_a_roofed_room_from_the_step_it_was_roofed_from`). Found in the run, fixed after it.
 
 ## Guided construction
-The roof-supports wording teaches a way to build, not only what a house is: the supports' height, a log laid across
-them at a stated height, and a step to set it from. That moves this away from ADR-004's "no blueprints" towards
-guided construction. It is a deliberate choice: the goal is a simple house that Godling builds, and without the
-method no run got past walls two blocks high. It names the parts and heights for the house the mind chose, not a
-plan: where the house stands, its size and doorway, the order of the work and what it is made of stay the mind's.
-A world with other building goals can keep the definition and drop the guidance (`--no-house-project` drops both).
+The house's next step teaches a way to build, not only what a house is: how high the walls stand, where the roof
+pieces lie and at what height, and to set them from a step outside the walls, never in the doorway. That moves this
+away from ADR-004's "no blueprints" towards guided construction. It is a deliberate choice: the goal is a simple house
+that Godling builds, and without the method no run got past walls two blocks high. It names the parts and heights for
+the house the mind chose, not a plan: where the house stands, its size and doorway, the order of the work and what it
+is made of stay the mind's. A world with other building goals can keep the definition and drop the guidance
+(`--no-house-project` drops both).
 
 ## Results (2026-11-05, deepseek-flash, the hut-wanting persona, 45 minutes a run)
 Comparison at the same minute, with the house rule and the fire changes in every run:
@@ -195,3 +197,49 @@ coconut beside the log. Cost about $0.60 a run; with the runs restarted after th
   pieces in the clutter: 8 to 18 times a run.
 - Steps set in the doorway: proj6 three times, proj8 twice (it cleared them). The wording now says to set the step
   beside the supports; the body does not stop a doorway being filled.
+
+## The first-house benchmark (replaces the first check)
+proj8's shelter showed the first check was too weak: something two blocks high on each of a room's four sides, and a
+roof over the room, let a nook between pillars count. The user set the target a house must meet:
+- **A room at least two by two cells** (5 by 5), clear to stand in, on one walkable floor.
+- **Walls all round it, corners too**, each filled from the floor up to the roof's underside without a gap.
+- **One doorway, on a side** (never a corner), open from the floor up to the roof, onto open ground outside.
+- **A roof over the whole footprint**, the walls and doorway too, its underside more than five above the room's
+  floor. The body is exactly five tall and the grid is 2.5, so that is three blocks up: walls three high, the roof on
+  them, the doorway open three high under a lintel.
+- **Standing after it settles, and Godling walks in.**
+
+One check, three copies held to the same layouts: `house.py` (the mind's next step and verdicts, and the build
+measure's `houses`) and `houseAt` in `main.lua` (whether the body stands in a house). A doorway clear to the roof with
+the roof over it is as clear and as roofed as the room, so a clear cell sticking out of the room between two walls,
+leading out, is taken as the doorway, not the room. The world now reports shelter and the house apart: `Sheltered`
+says what is over and round the body ("", "roof", "enclosed"), which still halves the cold while a house is being
+built; `InHouse` says it stands inside a finished house, which alone keeps it warm; and the world log says `HOUSE`
+when the body first stands in one. The mind hears the new rule, the next step names each wall short of three blocks,
+then where the roof pieces go, and the pieces in place at the chosen house are logged as they change
+(`kind: "house", phase: "installed"`), so a run can be measured by the work that stays, not only by time.
+
+A log is three cells long and a room two cells wide is four from wall to wall, so no log reaches across it. The roof
+over the room is logs centred on the walls, each resting on its middle and reaching one cell in, with a log over the
+doorway resting on the walls either side.
+
+**Checked by hand before any paid run.** The house was set into hp-proj8's island beside proj8's shelter, loose, and
+left to the world's physics (`make_bench.py`, `bench_probe.py` in the session's scratch tools):
+- All 41 pieces (33 in the walls, 8 in the roof) settled in their cells: the logs balanced on the walls held.
+- The mind's check and the build measure count one house there (4 cells, the doorway at (-95, -50), the roof's
+  underside 7.49 up), and not proj8's shelter, which they say is a room of one cell whose walls do not reach the roof
+  at five cells, with no roof over its doorway.
+- Godling walked in by the doorway: the world said `InHouse` true (`Sheltered` "roof" by the doorway, "enclosed" in
+  the far corner) and logged "HOUSE Godling stands inside a house at (-94.9, -47.9)"; out again, false. In proj8's
+  shelter it said false, with `Sheltered` "enclosed".
+- Tested in `mind/tests/test_house.py` (the house; proj8's shelter as it stood; a corner short, a wall short of the
+  roof, a wall without the roof on it, a second opening, a blocked way out, a block in the room, no roof, a roof too
+  low; the next step at each stage; layouts that cannot be a house) and `world/tests/test_life.luau` (in the house at
+  night the body is warm and mends twice as fast; with a corner a block short it is under a roof, cold at half pace;
+  the one-cell shelter is "enclosed" and no house).
+
+**Found while checking it: the body cannot reach into a room two cells wide.** To stand, the body keeps 1.6 from walls
+and 1.2 from loose pieces. In a 5 by 5 room that leaves a patch 1.8 across in the middle, and a block left in any cell
+of the room leaves nowhere to stand within reach of it: `pick_up` says "no clear spot to reach". Walking in works
+(the doorway, the near and the far cells). Clearing a room is part of the benchmark, so this is a body fix to make,
+with a reproduction, before another paid run.
