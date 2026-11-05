@@ -16,8 +16,23 @@ def layer(n):
 def test_pieces_and_terrain_of_a_snapshot():
     s = snap([ground(), block("Block_1", 0, 1.25, 0, attrs={"Fastened": True}), block("Block_2", 0, 2.55 + 4, 0),
               ent("Hammer_1", (5, 0.5, 0), (1, 1, 3))])
-    assert pieces_of(s) == [{"name": "Block_1", "pos": [0, 1.25, 0], "size": [2.5, 2.5, 2.5], "fastened": True}]
+    assert pieces_of(s) == [{"name": "Block_1", "pos": [0, 1.25, 0], "size": [2.5, 2.5, 2.5], "fastened": True,
+                            "anchored": True, "aligned": True, "settled": True}]
     assert terrain_of(s) == [{"name": "Ground", "pos": [0, -0.5, 0], "size": [400, 1, 400]}]
+
+
+def test_piece_records_preserve_unsettled_and_tilted_geometry():
+    falling = block("Block_falling", 5, 1.25, 0)
+    falling["anchored"] = False
+    tilted = block("Block_tilted", 10, 1.75, 0, rot=[[1, 0, 0], [0, 0.8, -0.6], [0, 0.6, 0.8]])
+    records = {p["name"]: p for p in pieces_of(snap([ground(), falling, tilted]))}
+    assert records["Block_falling"]["anchored"] is False
+    assert records["Block_falling"]["aligned"] is True
+    assert records["Block_tilted"]["aligned"] is False
+    placing = block("Block_placing", 15, 1.25, 0, attrs={"Settled": False})
+    assert pieces_of(snap([ground(), placing]))[0]["settled"] is False
+    placing["attributes"]["Fastened"] = True
+    assert pieces_of(snap([ground(), placing]))[0]["settled"] is True
 
 
 def test_nothing_built():

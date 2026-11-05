@@ -60,6 +60,7 @@ class Attention:
         self.busy = busy  # objects our own skills are handling right now: their movement is not news
         self.log = log or (lambda **kw: None)
         self.prev = None
+        self.observed_pieces = {}  # last observed geometry, including pieces currently out of sight
         self.pending = []  # events the mind has not seen yet
         self.interrupt = None
         self.glances = []  # events worth turning to look at, with when they were seen
@@ -70,6 +71,8 @@ class Attention:
             return
         if self.discovery is not None:
             self.discovery.see(snap)
+            if self.prev is None:
+                self.observed_pieces = {e.name: e for e in snap.movables() if e.name in self.discovery.visible}
         if self.prev is not None:
             for text, salience, entities, extra in self._diff(self.prev, snap):
                 event = {"text": text, "salience": salience, "entities": entities, "tick": snap.tick, **extra}
@@ -102,6 +105,12 @@ class Attention:
         out = []
         old = {e.name: e for e in before.movables()}
         new = {e.name: e for e in after.movables()}
+        if self.discovery is not None:
+            old = self.observed_pieces
+            visible = {name: e for name, e in new.items() if name in self.discovery.visible}
+            new = {name: e for name, e in {**old, **visible}.items()
+                   if name in self.discovery.seen or name in visible}
+            self.observed_pieces = new
         from_sky = {}  # one event per sky event, however many pieces it left
         for name in sorted(new.keys() - old.keys()):
             e = new[name]
@@ -193,6 +202,8 @@ class Attention:
                         f"({ship.pos[0]:.0f}, {ship.pos[2]:.0f})", 4, ["Ship"], _at(ship.pos)))
         elif was is not None and ship is None:
             out.append(("The ship has sailed out of sight", 3, [], {}))
+        if after.in_house and not before.in_house:  # ADR-019: the world says it is a house
+            out.append(("You are inside a house now: warm and dry, and fed you mend twice as fast", 3, [], {}))
         if after.cold and not before.cold:
             out.append(("You have grown cold" + (": the night is chilly out here" if not after.in_rain
                                                  else ": the rain has soaked you through"), 3, [], {}))

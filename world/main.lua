@@ -2023,6 +2023,8 @@ local FAINT_HUNGER, FAINT_HEALTH = 50, 30
 local HARM = {
     healWhenFed = 50, healSeconds = 1800,
     coldDrainSeconds = 2400, -- cold (WEATHER) takes a whole body's health in 40 minutes, and stops healing
+    coldHalves = 0.5, -- a fire close by halves the cold, and so does a roof over the head; only a house keeps it off
+    houseHeals = 2, -- inside a house a fed body mends twice as fast (ADR-019)
     lightning = 35, lightningRange = 7, -- from the struck palm's trunk
     meteor = 45, meteorRange = 6, -- from where the stone lands
 }
@@ -2100,9 +2102,9 @@ local function tickSurvival(dt)
                 s.health = s.health - dt * 100 / STARVE_SECONDS
             end
             if s.cold then
-                s.health = s.health - dt * 100 / HARM.coldDrainSeconds
+                s.health = s.health - dt * 100 / HARM.coldDrainSeconds * (s.coldPace or 1)
             elseif s.hunger >= HARM.healWhenFed and s.health < 100 then -- well fed and warm, a body mends
-                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds)
+                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and HARM.houseHeals or 1))
             end
             s.beat = s.beat + dt
             if s.health <= 0 then
@@ -2339,7 +2341,8 @@ end
 -- (a struck Spear) against a log that lies still heats the wood a little more with each rub in a row. It only catches
 -- once the wood is hot, after RUB_HOT rubs, and only into something dry and fine lying right beside it (a coconut's
 -- husk, as Chuck's tinder was), which burns away. Nothing catches in the rain or while the wood is still damp after it,
--- and rain puts every fire out (WEATHER). A fire burns ten minutes and uses the log up; over it a raw fish cooks.
+-- and rain puts out every fire in the open (WEATHER), but not one under a roof. A fire burns ten minutes and uses the
+-- log up, unless a log laid against it takes the fire on (ADR-019); over it a raw fish cooks.
 local FIRE_SECONDS, COOK_RANGE = 600, 6
 local fires = {} -- fire part -> { log, untilTime }
 local climate = { rain = 0, dampUntil = 0 } -- kept by WEATHER: how hard it rains, and until when wood stays damp
@@ -2404,30 +2407,73 @@ local rubLog = (function()
     end
 end)()
 
--- Rain puts fires out (WEATHER): the fire is gone, the log is left, charred but whole.
+-- Rain puts out the fires in the open (WEATHER): the fire is gone, the log is left, charred but whole. Under a roof, a
+-- fire burns on through the shower (ADR-019). (Its helper lives inside: the main chunk is near Luau's 200 locals.)
 local function douseFires()
-    for fire, f in pairs(fires) do
-        fires[fire] = nil
-        fire:Destroy()
-        if f.log.Parent then
-            f.log:SetAttribute("Burning", false)
-            f.log:SetAttribute("Heat", 0)
+    local function covered(fire, log) -- something solid and held in place over it
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { fire, log }
+        local probe = Instance.new("Part")
+        probe.Size = Vector3.new(2, 12, 2)
+        probe.CFrame = CFrame.new(fire.Position.X, log.Position.Y + halfExtents(log).Y + 6.2, fire.Position.Z)
+        local hits = Workspace:GetPartsInPart(probe, params)
+        probe:Destroy()
+        for _, hit in ipairs(hits) do
+            if hit.Anchored and isSolid(hit) and not isCarried(hit) and hit.Name ~= "HumanoidRootPart" then
+                return true
+            end
         end
-        print(string.format("DOUSED %s on %s", fire.Name, f.log.Name))
+        return false
+    end
+    for fire, f in pairs(fires) do
+        if not (f.log.Parent and covered(fire, f.log)) then
+            fires[fire] = nil
+            fire:Destroy()
+            if f.log.Parent then
+                f.log:SetAttribute("Burning", false)
+                f.log:SetAttribute("Heat", 0)
+            end
+            print(string.format("DOUSED %s on %s", fire.Name, f.log.Name))
+        end
     end
 end
 
+-- Feeding a fire (ADR-019): a log laid against a burning one, loose (not fastened, not carried), takes the fire as the
+-- first burns out, so one lighting can last the night. A fire lasts ten minutes on a log; a night is about thirteen.
 local function tickFires()
+    local function fuelFor(log)
+        local a = halfExtents(log)
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst ~= log and inst:IsA("BasePart") and inst:GetAttribute("RenderRole") == "Log" and not isCarried(inst)
+                and not inst:GetAttribute("Burning") and not inst:GetAttribute("Fastened") then
+                local b, d = halfExtents(inst), inst.Position - log.Position
+                if math.abs(d.X) <= a.X + b.X + 0.3 and math.abs(d.Y) <= a.Y + b.Y + 0.3
+                    and math.abs(d.Z) <= a.Z + b.Z + 0.3 then
+                    return inst
+                end
+            end
+        end
+        return nil
+    end
+    local fed = {} -- lit after the loop: a table must not gain keys while pairs walks it
     for fire, f in pairs(fires) do
         if os.clock() >= f.untilTime or not f.log.Parent then -- burnt out: the log is ash
             fires[fire] = nil
             fire:Destroy()
+            local fuel = f.log.Parent and fuelFor(f.log)
             if f.log.Parent then
                 wakeRestingOn(f.log)
                 trackedBlocks[f.log] = nil
                 f.log:Destroy()
             end
+            if fuel then
+                table.insert(fed, fuel)
+            end
         end
+    end
+    for _, fuel in ipairs(fed) do
+        print(string.format("FED %s burns on %s", lightFire(fuel).Name, fuel.Name))
     end
 end
 
@@ -2463,10 +2509,12 @@ end
 -- - In heavy rain thunderstorms break: lightning strikes a palm near Godling every few minutes.
 -- - Some mornings fog comes in from the sea and hides what is further than a stone's throw.
 -- - Out in the rain the body is slowed and gets soaked. Nights are cold, and so is being soaked in the rain; cold wears
---   health down and stops healing. A roof overhead keeps the rain off; a roof with walls on three sides, or a fire close
---   by, keeps the cold off. Rain puts every fire out, and leaves the wood too damp to light for a while after.
--- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, InRain, Sheltered ("",
--- "roof" or "enclosed") and its current WalkSpeed.
+--   health down and stops healing. A roof overhead keeps the rain off and halves the cold; a fire close by halves it
+--   too. Only inside a house (ADR-019) is the body warm, and there a fed body mends twice as fast. Rain puts every
+--   fire out, and leaves the wood too damp to light for a while after.
+-- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, ByFire, InRain,
+-- Sheltered (what is over and round it: "", "roof", or "enclosed": a roof with walls on three sides), InHouse (it
+-- stands inside a finished house, ADR-019) and its current WalkSpeed.
 local stormStrike -- with the sky events below: lightning on a palm near Godling
 -- Rain, cold and shelter. Like the other newer sections, a function of its own, so its locals stay out of the main
 -- chunk's (Luau allows 200 locals in one function, and the world script has come close).
@@ -2569,6 +2617,206 @@ local tickWeather = (function()
         return sides >= 3 and "enclosed" or "roof"
     end
 
+    -- A house (ADR-019's first-house benchmark; mind/godling/house.py is the same check, held to the same layouts by
+    -- the tests): the body stands in a room of clear cells at least two by two, each with a roof over it more than the
+    -- body's height up (three blocks: the grid is 2.5); walls all round the room, corners too, filled from the floor
+    -- up to the roof with the roof on them; and one doorway on a side, open up to the roof with the roof over it, onto
+    -- open ground. Shelter is what the body feels where it stands; a house is what was built, and only inside one is
+    -- the body warm.
+    local HOUSE_MOST = 64 -- cells: more is open ground under something wide, not a house
+    local SIDES = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    local AROUND = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+    local function houseAt(player, hrp)
+        local p = hrp.Position
+        local gap, flat, clearance = 0.15, 0.6, 5.05 -- house.py GAP, FLAT, CLEAR
+        local building = { Block = true, ImpactBlock = true, SupplyBlock = true, Stone = true, Meteor = true,
+            Brick = true, Log = true, Boulder = true }
+        local terrainRoles = { Ground = true, Mesa = true, Tree = true, Quarry = true, Stump = true, Wreck = true }
+        local pieces, terrain = {}, {}
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst:IsA("BasePart") and isSolid(inst) and not isCarried(inst) then
+                local record = { pos = inst.Position, half = halfExtents(inst) }
+                if terrainRoles[inst:GetAttribute("RenderRole")] and inst.Anchored then
+                    table.insert(terrain, record)
+                elseif building[inst.Name:match("^(%a+)_")] then
+                    record.stable = inst.Anchored and (inst:GetAttribute("Settled") ~= false or inst:GetAttribute("Fastened") == true)
+                    for _, axis in ipairs({ inst.CFrame.RightVector, inst.CFrame.UpVector, inst.CFrame.LookVector }) do
+                        local nonzero = (math.abs(axis.X) > 0.01 and 1 or 0) + (math.abs(axis.Y) > 0.01 and 1 or 0)
+                            + (math.abs(axis.Z) > 0.01 and 1 or 0)
+                        record.stable = record.stable and nonzero == 1
+                    end
+                    table.insert(pieces, record)
+                end
+            end
+        end
+        local cache = {}
+        local function column(c)
+            local k = c[1] .. "," .. c[2]
+            if cache[k] then
+                return cache[k]
+            end
+            local x, z = c[1] * GRID, c[2] * GRID
+            local data = { spans = {}, supports = {} }
+            for _, t in ipairs(terrain) do
+                if math.abs(x - t.pos.X) <= t.half.X and math.abs(z - t.pos.Z) <= t.half.Z then
+                    data.floor = math.max(data.floor or -math.huge, t.pos.Y + t.half.Y)
+                end
+            end
+            for _, piece in ipairs(pieces) do
+                local q, h = piece.pos, piece.half
+                if x >= q.X - h.X - 1e-9 and x < q.X + h.X - 1e-9
+                    and z >= q.Z - h.Z - 1e-9 and z < q.Z + h.Z - 1e-9 then
+                    local span = { q.Y - h.Y, q.Y + h.Y }
+                    table.insert(data.spans, span)
+                    if piece.stable and math.abs(x - q.X) + GRID / 2 <= h.X + gap
+                        and math.abs(z - q.Z) + GRID / 2 <= h.Z + gap then
+                        table.insert(data.supports, span)
+                    end
+                end
+            end
+            table.sort(data.supports, function(a, b) return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2]) end)
+            cache[k] = data
+            return data
+        end
+        local start = { math.floor(p.X / GRID + 0.5), math.floor(p.Z / GRID + 0.5) }
+        local floor = column(start).floor
+        if not floor or math.abs(p.Y - BODY_ABOVE_FEET - floor) > flat then
+            return false
+        end
+        local function filled(c, height)
+            for _, span in ipairs(column(c).spans) do
+                if span[1] < floor + height and span[2] > floor + gap then
+                    return true
+                end
+            end
+            return false
+        end
+        local function clear(c, height)
+            local actual = column(c).floor
+            return actual ~= nil and math.abs(actual - floor) <= flat and not filled(c, height or clearance)
+        end
+        local function standing(c)
+            local level = floor
+            for _, span in ipairs(column(c).supports) do
+                if span[1] <= level + gap then
+                    level = math.max(level, span[2])
+                end
+            end
+            return level - floor
+        end
+        local function underside(c)
+            local lowest = nil
+            for _, span in ipairs(column(c).supports) do
+                if span[1] >= floor + clearance - 0.1 and span[1] <= floor + 15 then
+                    lowest = math.min(lowest or math.huge, span[1] - floor)
+                end
+            end
+            return lowest
+        end
+        local function key(c)
+            return c[1] .. "," .. c[2]
+        end
+        local function near(c, i)
+            return { c[1] + i[1], c[2] + i[2] }
+        end
+        local under = {} -- cell key -> where its roof starts
+        under[key(start)] = clear(start) and underside(start)
+        if not under[key(start)] then
+            return false
+        end
+        local room, seen, queue, n = { [key(start)] = start }, { [key(start)] = true }, { start }, 1
+        while #queue > 0 do
+            local c = table.remove(queue)
+            for _, d in ipairs(SIDES) do
+                local next = near(c, d)
+                local k = key(next)
+                if not seen[k] then
+                    seen[k] = true
+                    under[k] = clear(next) and underside(next)
+                    if under[k] then
+                        room[k], n = next, n + 1
+                        if n > HOUSE_MOST + 1 then -- the doorway is peeled off after the flood
+                            return false
+                        end
+                        table.insert(queue, next)
+                    end
+                end
+            end
+        end
+        local function inside(c)
+            return room[key(c)] ~= nil
+        end
+        local function inner(c) -- the cells of the room beside this one
+            local cells = {}
+            for _, d in ipairs(SIDES) do
+                if inside(near(c, d)) then
+                    table.insert(cells, near(c, d))
+                end
+            end
+            return cells
+        end
+        local function wall(c)
+            return standing(c) >= 2 * GRID - gap
+        end
+        -- A doorway clear to the roof, with the roof over it, is as clear and roofed as the room: a cell sticking out
+        -- of it between two walls, leading out, is the doorway (house.py _peel).
+        local doorway = {}
+        for k, c in pairs(room) do
+            local by = inner(c)
+            if #by == 1 and #inner(by[1]) >= 2 then
+                local dx, dz = c[1] - by[1][1], c[2] - by[1][2]
+                if wall({ c[1] + dz, c[2] + dx }) and wall({ c[1] - dz, c[2] - dx }) and not wall({ c[1] + dx, c[2] + dz }) then
+                    doorway[k] = true
+                end
+            end
+        end
+        if doorway[key(start)] then
+            return false -- standing in the doorway, not in the house
+        end
+        local top = 0
+        for k in pairs(doorway) do
+            room[k] = nil
+        end
+        local square = false
+        for k, c in pairs(room) do
+            top = math.max(top, under[k])
+            square = square or (inside(near(c, { 1, 0 })) and inside(near(c, { 0, 1 })) and inside(near(c, { 1, 1 })))
+        end
+        local count = 0
+        for _ in pairs(room) do
+            count = count + 1
+        end
+        if not square or count > HOUSE_MOST or top <= 5 then
+            return false -- a room smaller than two by two
+        end
+        local ring = {}
+        for _, c in pairs(room) do
+            for _, d in ipairs(AROUND) do
+                local next = near(c, d)
+                if not inside(next) then
+                    ring[key(next)] = next
+                end
+            end
+        end
+        local doors = 0
+        for _, c in pairs(ring) do
+            local by = inner(c)
+            if #by == 1 and clear(c, top - gap) then
+                local out = { 2 * c[1] - by[1][1], 2 * c[2] - by[1][2] }
+                local roof = underside(c)
+                if not (roof and roof <= top + gap and clear(out)) then
+                    return false -- an opening that is no doorway: no roof over it, or no way out
+                end
+                doors = doors + 1
+            else
+                if standing(c) < top + GRID - 2 * gap then
+                    return false -- the wall must be continuously filled through its roof cap
+                end
+            end
+        end
+        return doors == 1
+    end
+
     local function tickWeather(dt)
         weather.clock = weather.clock + dt
         weather.left = weather.left - dt
@@ -2586,8 +2834,9 @@ local tickWeather = (function()
         climate.rain = weather.rain
         if weather.rain > 0.3 then
             climate.dampUntil = os.clock() + DAMP_AFTER
-            if next(fires) then
-                douseFires() -- no fire lives in the rain
+            if next(fires) and os.clock() >= (climate.douseAt or 0) then
+                climate.douseAt = os.clock() + 0.5
+                douseFires() -- no fire lives in the rain, but under a roof
             end
         end
         weather.beat = weather.beat + dt
@@ -2606,6 +2855,18 @@ local tickWeather = (function()
             local s = hrp and surviving[player]
             if s then
                 local shelter = shelterOf(player, hrp)
+                local inHouse = false -- under a roof, the house check, at most once a second (it probes a good deal)
+                if shelter == "" then
+                    s.houseCheckAt = 0
+                elseif os.clock() >= (s.houseCheckAt or 0) then
+                    s.houseCheckAt = os.clock() + 1
+                    s.houseSeen = houseAt(player, hrp)
+                end
+                inHouse = shelter ~= "" and s.houseSeen == true
+                if inHouse and not s.house then
+                    local at = hrp.Position
+                    print(string.format("HOUSE %s stands inside a house at (%.1f, %.1f)", player.Name, at.X, at.Z))
+                end
                 local inRain = weather.rain > 0.3 and shelter == ""
                 local byFire = false
                 for fire in pairs(fires) do
@@ -2616,7 +2877,11 @@ local tickWeather = (function()
                 end
                 s.wet = math.clamp((s.wet or 0) + (inRain and step * 100 / WET_SECONDS
                     or -step * 100 / DRY_SECONDS * (byFire and FIRE_DRIES or 1)), 0, 100)
-                s.cold = not (byFire or shelter == "enclosed") and (night or (inRain and s.wet >= 50))
+                -- Night, or soaked in the rain, is cold; only a house keeps it off. A fire close by halves it, and so
+                -- does a roof over the head (ADR-019).
+                s.house = inHouse
+                s.cold = not s.house and (night or (inRain and s.wet >= 50))
+                s.coldPace = (byFire and HARM.coldHalves or 1) * (shelter ~= "" and HARM.coldHalves or 1)
                 if player:GetAttribute("InRain") ~= inRain then
                     player:SetAttribute("InRain", inRain)
                     player:SetAttribute("RainPace", inRain and RAIN_PACE or 1)
@@ -2624,7 +2889,9 @@ local tickWeather = (function()
                 end
                 player:SetAttribute("Wet", math.floor(s.wet + 0.5))
                 player:SetAttribute("Cold", s.cold)
+                player:SetAttribute("ByFire", byFire)
                 player:SetAttribute("Sheltered", shelter)
+                player:SetAttribute("InHouse", inHouse)
             end
         end
     end

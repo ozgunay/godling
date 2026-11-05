@@ -73,7 +73,7 @@ def turned_size(size, turn=0, upright=False):
 
 
 class Entity:
-    __slots__ = ("id", "name", "pos", "size", "local_size", "rot", "role", "attrs")
+    __slots__ = ("id", "name", "pos", "size", "local_size", "rot", "role", "attrs", "anchored")
 
     def __init__(self, raw):
         self.id = raw.get("id")
@@ -84,6 +84,17 @@ class Entity:
         self.size = world_size(self.local_size, self.rot)
         self.attrs = raw.get("attributes") or {}
         self.role = self.attrs.get("RenderRole", "")
+        self.anchored = raw.get("anchored", True)  # older recordings omitted this field
+
+    @property
+    def aligned(self):
+        """Whether its bounding box represents grid-aligned material, rather than a tilted piece."""
+        if self.rot is None:
+            return True
+        return (isinstance(self.rot, (list, tuple)) and len(self.rot) == 3
+                and all(isinstance(row, (list, tuple)) and len(row) == 3 for row in self.rot)
+                and all(sum(abs(v) >= 0.99 for v in row) == 1
+                        and all(abs(v) <= 0.01 or abs(v) >= 0.99 for v in row) for row in self.rot))
 
     @property
     def movable(self):
@@ -169,7 +180,9 @@ class Snapshot:
         self.freed = attrs.get("Freed") or 0  # times the world moved the body out from inside a piece
         # Weather on the body (main.lua WEATHER): soaked 0-100, cold, out in the rain, and what shelters it.
         self.wet, self.cold, self.in_rain = attrs.get("Wet") or 0, bool(attrs.get("Cold")), bool(attrs.get("InRain"))
-        self.sheltered = attrs.get("Sheltered") or ""
+        self.sheltered = attrs.get("Sheltered") or ""  # what is over and round it: "", "roof" or "enclosed"
+        self.in_house = bool(attrs.get("InHouse"))  # it stands inside a finished house (main.lua houseAt, ADR-019)
+        self.by_fire = bool(attrs.get("ByFire"))
         self.walk_speed = attrs.get("WalkSpeed")  # the pace now: a heavy load and the rain slow it
         fx, fz = attrs.get("ViewForwardX"), attrs.get("ViewForwardZ")  # which way the body faces
         self.facing = (fx, fz) if isinstance(fx, (int, float)) and isinstance(fz, (int, float)) else None

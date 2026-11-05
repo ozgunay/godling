@@ -42,6 +42,7 @@ def test_entity_properties():
     assert not e.footprint_contains(2.4, 2)
     assert e.footprint_contains(2.4, 2, margin=0.2)
     assert e.role == ""
+    assert e.anchored and e.aligned
     tree = Entity(ent("Tree_1", role="Tree", size=(2, 10, 2)))
     assert not tree.movable and not tree.is_cube and tree.role == "Tree"
 
@@ -52,6 +53,7 @@ def test_entity_defaults_and_facing():
     turned = Entity(ent("Ladder_1", rot=[[0, 0, 1], [0, 1, 0], [-1, 0, 0]], size=(2, 7.5, 0.4)))
     assert turned.facing == (1.0, 0.0)
     assert turned.size == pytest.approx((0.4, 7.5, 2))
+    assert turned.aligned
     flat = Entity(ent("Ladder_2", rot=[[1, 0, 0], [0, 0, 1], [0, 1, 0]]))
     assert flat.facing == (0.0, 1.0)  # its thin side faces up: no horizontal direction
 

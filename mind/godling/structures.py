@@ -10,10 +10,13 @@ heights are measured from the terrain top under the cell, so building on a mesa 
   span       a long piece lying on its two ends with a gap under its middle (a lintel, a beam, a bridge)
   post       a long piece stood on its end
   floor      a flat top at least two layers up, at least 4 cells wide, that one could stand on
+  house      the house check (house.py, ADR-019): a clear room at least two by two, continuous walls to the roof but
+             for one doorway, and a settled roof over its whole footprint with more than the body's height below it
 """
 import math
 from collections import deque
 
+from .house import houses
 from .world import CUBE
 
 CELL = CUBE  # a block's width: the grid
@@ -25,7 +28,8 @@ def pieces_of(snap):
     """The building pieces in a Snapshot as plain records (carried ones excluded)."""
     held = snap.held()
     return [{"name": e.name, "pos": [round(v, 3) for v in e.pos], "size": [round(v, 3) for v in e.size],
-             "fastened": bool(e.attrs.get("Fastened"))}
+             "fastened": bool(e.attrs.get("Fastened")), "anchored": e.anchored, "aligned": e.aligned,
+             "settled": e.attrs.get("Settled", True) or bool(e.attrs.get("Fastened"))}
             for e in snap.movables() if e.name.startswith(PIECE_PREFIXES) and e is not held]
 
 
@@ -192,6 +196,7 @@ def measure(pieces, terrain):
         "posts": posts,
         "floors": floors,
         "floor_area": round(floor_cells * CELL * CELL, 2),
+        "houses": len(houses(pieces, terrain)),
         # The tallest stack of at least two pieces; the highest top of anything built in (two or more pieces joined).
         "tallest": round(max((h for c, h in standing.items() if len(stacked[c]) >= 2), default=0.0), 2),
         "highest": round(max((top_of[c] for c in top_of if any(top_piece[c] in g for g in built)), default=0.0), 2),

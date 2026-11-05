@@ -8,11 +8,14 @@ A decision is split in three so the mind can think while the body moves (ADR-002
 """
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 
 from .learned import SkillError
-from .discovery import SIGHT
-from .world import CUBE, hdist
+from .discovery import EYE, FOG_HIDES, SIGHT
+from .house import Grid, assess, at, layout as house_layout, outside_of, plan as house_plan, ring
+from .structures import pieces_of, terrain_of
+from .world import BODY_CENTRE_Y, CUBE, Snapshot, hdist
 
 ANSWER_SHAPE = {
     "thought": "1-2 sentences: what you notice, remember or wonder (viewers see this)",
@@ -28,6 +31,18 @@ ANSWER_SHAPE = {
     "keep": [{"name": "a name for something you built", "cubes": ["Block_..."]}],
     "release": ["name of a kept structure you are willing to take apart"],
 }
+
+# A house is one project kept across plans (ADR-019, after run hut5-house: four sites in 45 minutes, 19 pieces of its
+# own building taken back). The mind chooses its site once; every plan is told how far it has come and what is next.
+HOUSE_SHAPE = {"inside": "[[x, z], ...] the cells inside your house (block centres), at least two by two",
+               "door": "[x, z] its doorway: a cell beside them on one side, not at a corner",
+               "why": "only to move or give up the house you chose: the concrete reason it cannot stand there"}
+HOUSE_RULE = """A house you build is one project, kept across all your plans until it stands. Choose where it will stand
+once, with "house": the cells inside it and its doorway; leave "house" out after that. Every plan is told how far it
+has come and what it needs next, and your body keeps the pieces in its walls and roof for it. You may change the house
+where it stands (more cells, another doorway). Move it elsewhere, or give it up ("inside": []), only with "why": a
+concrete reason it cannot stand there."""
+HOUSE_STALL = 15 * 60  # seconds without progress before the mind hears its house has come no further
 
 TEACHING = """## Teaching yourself skills
 You start with only your body's basic moves. When you find a sequence that works, give it a name with
@@ -53,6 +68,53 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
              "body busy far longer for the same thought.")
 
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
+TOUCHING = 0.3  # pieces closer than this face to face are built together
+BUILT_PREFIX = "build at "  # the name of a build kept by itself (see Mind.keep_builds)
+
+
+def _touching(a, b):
+    return all(abs(a.pos[i] - b.pos[i]) <= (a.size[i] + b.size[i]) / 2 + TOUCHING for i in range(3))
+
+
+def _clusters(pieces):
+    """Groups of pieces that touch, directly or through one another."""
+    groups, left = [], list(pieces)
+    while left:
+        group = [left.pop()]
+        frontier = [group[0]]
+        while frontier:
+            here = frontier.pop()
+            near = [p for p in left if _touching(here, p)]
+            for p in near:
+                left.remove(p)
+            group += near
+            frontier += near
+        groups.append(group)
+    return groups
+
+
+def _agenda_moves(doing):
+    """Where the agenda being carried out takes each piece it names: {name: (x, y or None, z)}, and how many pieces
+    it picks some other way (a helper such as nearest_free, or one of its own skills)."""
+    moves, holding, unnamed = {}, None, 0
+    for project in doing or []:
+        for step in project.get("steps", []):
+            args = step.get("args") or {}
+            if step.get("skill") == "pick_up":
+                holding = args.get("object") if isinstance(args.get("object"), str) else None
+                unnamed += holding is None
+            elif step.get("skill") in ("place_at", "put_down") and holding:
+                where = tuple(args.get(k) if isinstance(args.get(k), (int, float)) else None for k in ("x", "y", "z"))
+                moves[holding] = where
+                holding = None
+    return moves, unnamed
+
+
+def _fmt_target(where):
+    x, y, z = where
+    if x is None or z is None:
+        return "its place"
+    return f"({x:.1f}, {y:.2f}, {z:.1f})" if y is not None else f"({x:.1f}, {z:.1f}) on the ground"
 
 
 def island_map(snap, discovery=None, half=200, step=10):
@@ -101,10 +163,15 @@ def _how_it_feels(snap):
         parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
     if snap.wet >= 15:
         parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
+    if snap.in_house:
+        parts.append("You are inside a house: warm and dry, mending twice as fast while fed")
+    elif snap.sheltered:
+        parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else "")
+                     + (", which halves the cold; this is not a house, which would keep it off" if snap.cold else ""))
+    if snap.by_fire:
+        parts.append("A fire close by " + ("halves the cold" if snap.cold else "warms you"))
     if snap.cold:
         parts.append("You are cold, and it is wearing your health down")
-    if snap.sheltered:
-        parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else ""))
     return ". ".join(parts) + "." if parts else ""
 
 
@@ -117,7 +184,8 @@ class _Seen:
 
 
 class Mind:
-    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None):
+    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None,
+                 house_project=False):
         self.llm = llm
         self.discovery = discovery  # what Godling has seen of the island; None: it knows everything (ADR-008)
         self.memory = memory
@@ -132,12 +200,97 @@ class Mind:
         self.failures = []  # recent failed goals, to break loops
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
         self.think_s = None  # running estimate of how long a plan takes to think up
+        self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
+        self.memory.house_project_enabled = house_project
+        self.skills.on_placed = self.record_placement
+        on_step = self.skills.on_step
+
+        def observe(snap):
+            try:
+                if on_step is not None:
+                    on_step(snap)
+            finally:
+                self._remember_construction(snap)
+        self.skills.on_step = observe
 
     def _knows(self, thing):
         return self.discovery is None or self.discovery.knows(thing)
 
     def _sees(self, thing):
         return self.discovery is None or thing.name in self.discovery.visible
+
+    def _house_cells(self):
+        house = self.memory.state.get("house")
+        if not self.house_project or not house:
+            return set()
+        room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
+        out = outside_of(room, door)
+        return set(room) | set(ring(room)) | {door} | ({out} if out is not None else set())
+
+    def _remember_construction(self, snap):
+        """Retain geometry only while it is observed. Hidden changes stay unknown until the site is seen again.
+
+        Floor records cover one building cell each, so seeing the centre of a broad terrain part cannot reveal the
+        ground under an unseen house. Raw piece records preserve their rotation and physical-state metadata.
+        """
+        if self.discovery is None or not snap.has_world:
+            return
+        sight = SIGHT * (1 - FOG_HIDES * snap.fog)
+        eye = (snap.me[0], snap.me[1] - BODY_CENTRE_Y + EYE, snap.me[2])
+        rock = self.discovery._rock_index(snap)
+
+        def visible_point(point):
+            return hdist(point, snap.me) <= sight and self.discovery._clear(rock, eye, point)
+
+        cache = self.memory.state.setdefault("construction", {"pieces": {}, "ground": {}, "missing": []})
+        known, ground = cache["pieces"], cache["ground"]
+        missing = set(cache.get("missing", []))
+        for name in list(known):
+            if name not in self.discovery.seen:
+                known.pop(name)
+                missing.add(name)
+        held = snap.held()
+        raw = {e["name"]: e for e in (snap.raw.get("world") or {}).get("entities", [])}
+        visible = [e for e in snap.movables() if self._sees(e) and e is not held]
+        for e in visible:
+            known[e.name] = deepcopy(raw[e.name])
+            missing.discard(e.name)
+        if held is not None:
+            known.pop(held.name, None)
+            missing.add(held.name)
+        if self.discovery._looked is not None:
+            for structure in self.memory.state["structures"].values():
+                for name, position in structure.get("positions", {}).items():
+                    if name not in self.discovery.seen and visible_point(position):
+                        missing.add(name)
+        cache["missing"] = sorted(missing)
+        cells = {tuple(map(int, key.split(","))) for key in ground} | self._house_cells()
+        footprints = [{"name": e.name, "pos": e.pos, "size": e.size} for e in visible]
+        cells.update(Grid(footprints, []).columns)
+        cells.add((round(snap.me[0] / CUBE), round(snap.me[2] / CUBE)))
+        for ix, iz in sorted(cells):
+            x, z = ix * CUBE, iz * CUBE
+            floor = snap.ground_top(x, z)
+            if not visible_point((x, (floor or 0) + 0.05, z)):
+                continue
+            key = f"{ix},{iz}"
+            if floor is None:
+                ground[key] = None
+                continue
+            source = max((b for b in snap._standable_index().at(x, z) if b[6]), key=lambda b: b[4])[5]
+            cell = deepcopy(raw[source.name])
+            cell.update(name=f"ObservedGround_{ix}_{iz}", position=[x, floor - 0.5, z], size=[CUBE, 1, CUBE])
+            cell.pop("rotation", None)
+            ground[key] = cell
+
+    def _construction_view(self, snap):
+        if self.discovery is None:
+            return snap
+        self._remember_construction(snap)
+        cache = self.memory.state.get("construction", {})
+        entities = list(cache.get("pieces", {}).values())
+        entities += [cell for cell in cache.get("ground", {}).values() if cell is not None]
+        return Snapshot({**snap.raw, "world": {"entities": entities}})
 
     # ---- prompts ----------------------------------------------------------------------
     def system_prompt(self, snap):
@@ -158,6 +311,9 @@ class Mind:
             **{k: v for k, v in ANSWER_SHAPE.items() if k != "agenda"}, "intention": ANSWER_SHAPE["agenda"][0]["intention"],
             "project": {k: v for k, v in ANSWER_SHAPE["agenda"][0].items() if k != "intention"}}
         plan_rule = AGENDA_RULES if self.agenda else "Plan one project with 1-8 steps."
+        if self.house_project:
+            shape = {**shape, "house": HOUSE_SHAPE}
+            plan_rule += "\n" + HOUSE_RULE
         return f"""{self.soul}
 
 ## How you exist
@@ -180,12 +336,20 @@ Pieces you set down can be turned a quarter round or stood on end, and fastened 
 Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. Lightning, or a
 stone falling from the sky, hurts you if you are close when it strikes. Fed at least half full, you heal. You eat what
 you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Cooked fish fills you far more than raw.
-Fire is hard to make: wood rubbed hard and long against wood grows hot, and something dry and fine beside it may
-catch. Rain puts fires out, and nothing catches while it rains or while the wood is still damp after it.
+Fire is made as people make it without matches: hold your spear and rub it hard against a log lying on the ground,
+over and over, with something dry and fine right beside the log for tinder (a coconut's dry husk). The wood grows warm,
+then hot and smoking after a dozen rubs or so, and then the tinder may catch and set the log burning. A fire burns
+about ten minutes and uses its log up; a log laid against a burning one takes the fire as it burns out, so a fire can
+be kept going. Rain puts out a fire in the open, but not one under a roof. Nothing catches while it rains or while the
+wood is still damp after it.
 Days turn into nights; nights are dark and cold. The weather turns: showers, spells of rain that last for days,
-thunderstorms, fog some mornings. Rain soaks you and slows your walking. Being cold wears your health down and stops
-you healing. A roof over your head keeps the rain off; walls around you with a roof over you, or a fire close by,
-keep the cold off.
+thunderstorms, fog some mornings. Rain soaks you and slows your walking. The cold, at night or soaked in the rain,
+wears your health down and stops you mending. A roof over your head keeps the rain off and halves the cold; a fire
+close by halves it too. Only inside a house are you warm, whatever the night. A house is a room at least two cells by
+two, clear to stand in on one floor; walls all round it, corners too, filled from the ground up to the roof, but for one
+doorway on a side, open up to the roof and onto open ground; and a roof over all of it, the walls and the doorway too,
+with more room under it than your height (on walls three blocks high).
+Inside your house a fed body mends twice as fast.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before.
 Now and then the ground shakes. Loose pieces can fall; fastened pieces hold where they are, and a wide base stands
@@ -222,12 +386,80 @@ something failed, change your approach instead of repeating it. When something y
 stone from the sky, a note, damage, a visitor, the weather) changes what you do, name it in a few words in your
 thought and in that project's intention."""
 
+    def keep_builds(self, snap):
+        """What Godling builds is its own. Pieces its body set down that touch one another, with something stacked
+        on something, are a build, kept like a structure it named: not offered as free material, not picked up unless
+        it releases the build first, and shown as what it has built. Without this its plans took its own builds apart
+        for material: in run rp3 the agenda after a column used the column's blocks for a ring round it, and in run
+        hut1 it pulled the top off its tower, then took the tower down for hut posts, then two blocks out of a post
+        to clear sand. A flat group of pieces it set down side by side is a pile to take from, not a build.
+        A build keeps its name as it grows, and a piece knocked away from it is building material again."""
+        snap = self._construction_view(snap)
+        structures = self.memory.state["structures"]
+        held = snap.held()
+        old = {title: s for title, s in structures.items() if s.get("auto")}
+        missing = set(self.memory.state.get("construction", {}).get("missing", []))
+        pending = {t: s for t, s in old.items() if self.discovery is not None
+                   and any(n not in snap.entities and n not in missing for n in s["cubes"])}
+        awaiting = {n for s in pending.values() for n in s["cubes"]}
+        remembered = set(self.memory.state.get("placed", [])) | {n for s in old.values() for n in s["cubes"]}
+        placed = [snap.entities[n] for n in sorted(remembered)
+                  if n in snap.entities and n not in awaiting and not (held and n == held.name)]
+        builds = dict(pending)
+        for group in sorted(_clusters(placed), key=lambda g: -len(g)):
+            if len(group) < 2 or max(self._layer(snap, e) for e in group) < 2:
+                continue
+            cubes = sorted(e.name for e in group)
+            title = next((t for t, s in old.items() if t not in builds and set(s["cubes"]) & set(cubes)), None)
+            if title is None:
+                x, z = (sum(e.pos[i] for e in group) / len(group) for i in (0, 2))
+                title = f"{BUILT_PREFIX}({round(x / CUBE) * CUBE:.1f}, {round(z / CUBE) * CUBE:.1f})"
+                while (title in structures and title not in old) or title in builds:
+                    title += "'"
+            home = old.get(title, {}).get("positions", {})
+            builds[title] = {"cubes": cubes, "positions": {c: home.get(c) or [round(v, 3) for v in snap.entities[c].pos]
+                                                           for c in cubes},
+                             "where": [round(sum(e.pos[0] for e in group) / len(group), 1),
+                                       round(sum(e.pos[2] for e in group) / len(group), 1)],
+                             "keep": True, "auto": True, "since": old.get(title, {}).get("since", time.time())}
+        for title in old:
+            structures.pop(title)
+        structures.update(builds)
+
+    @staticmethod
+    def _layer(snap, e):
+        """Which layer up from the ground a piece lies in: 1 on the ground, 2 on top of one block, and so on."""
+        floor = snap.ground_top(e.pos[0], e.pos[2]) or 0.0
+        return max(1, int(round((e.pos[1] - e.size[1] / 2 - floor) / CUBE)) + 1)
+
+    def _layout(self, snap, cubes):
+        """A build as the mind can read it back: its pieces by layer, each block by the cell it fills."""
+        snap = self._construction_view(snap)
+        layers = {}
+        for name in cubes:
+            e = snap.entities.get(name)
+            if e is None:
+                continue
+            layer = self._layer(snap, e)
+            what = _fmt_pos(e.pos)
+            if not e.is_cube:
+                what = (f"{name} {what} " + ("upright" if e.size[1] > max(e.size[0], e.size[2]) + 0.1
+                                             else "along x" if e.size[0] > e.size[2] else "along z"))
+            layers.setdefault(layer, []).append(((e.pos[0], e.pos[2]), what))
+        return "; ".join(f"layer {n}: {', '.join(what for _, what in sorted(cells))}"
+                         for n, cells in sorted(layers.items()))
+
     def situation(self, snap, events, chat, doing=None):
+        observed = self._construction_view(snap)
+        self.house_progress(snap)
         held = snap.held()
         protected = self.memory.protected_cubes()
+        moves, unnamed = _agenda_moves(doing)
         seen = self.discovery.seen if self.discovery is not None else None
-        known_stacks = [(xz, names) for xz, names in snap.stacks() if seen is None or any(n in seen for n in names)]
+        known_stacks = observed.stacks()
+        known_stacks = [(xz, names) for xz, names in known_stacks if not protected & set(names)]  # built: shown below
         stacked = {n for _, names in known_stacks for n in names}
+        spoken_for = protected | set(moves)
         if seen is None:
             loose = [_Seen(e.name, e.pos, False) for e in snap.movables() if e.name not in stacked and e is not held]
         else:  # what is in sight as it is now, the rest where it was last seen (ADR-008)
@@ -235,13 +467,38 @@ thought and in that project's intention."""
             loose = [_Seen(n, live[n].pos if n in self.discovery.visible and n in live else p,
                            n not in self.discovery.visible) for n, p in seen.items()
                      if n not in stacked and not (held and n == held.name)]
+        loose = [e for e in loose if e.name not in spoken_for]
         loose.sort(key=lambda e: hdist(e.pos, snap.me))
         loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" (last seen there)" if e.old else "")
-                              + (" [kept]" if e.name in protected else "") for e in loose[:LOOSE_IN_VIEW])
+                              for e in loose[:LOOSE_IN_VIEW])
         if len(loose) > LOOSE_IN_VIEW:
             loose_txt += f", and {len(loose) - LOOSE_IN_VIEW} more further away"
         stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in known_stacks) or "none"
-        kept = "; ".join(f"{title} at {s['where']} ({len(s['cubes'])} cubes)" for title, s in self.memory.state["structures"].items()) or "none"
+        structures = self.memory.state["structures"]
+        builds = {t: s for t, s in structures.items() if s.get("auto")}
+        called = {t: [] for t in builds}  # what it named itself, inside one of its builds
+        alone = []
+        for title, s in structures.items():
+            if s.get("keep") and not s.get("auto"):
+                home = next((b for b, bs in builds.items() if set(s["cubes"]) <= set(bs["cubes"])), None)
+                (called[home] if home else alone).append(title)
+        pieces, terrain = (pieces_of(observed), terrain_of(observed)) if structures else ([], [])
+
+        house = self.memory.state.get("house") if self.house_project else None
+        ours = set(house.get("pieces", []) + house.get("in_the_way", [])) if house else set()
+
+        def as_house(cubes):  # the house check (house.py, ADR-019): what it is short of, in words
+            if ours & set(cubes):  # one account of the house: the line about it above (run hp-proj1 had two)
+                return ". It is where your house stands: what the house still needs is said above"
+            verdict = assess(pieces, terrain, set(cubes))
+            if not verdict:
+                return ""
+            return f". It is {verdict}" if verdict.startswith("a house") else f". As a house: {verdict}"
+        kept = "; ".join([f"{t}" + (f", which you call {' and '.join(called[t])}," if called[t] else "")
+                          + f" ({len(s['cubes'])} pieces): {self._layout(snap, s['cubes'])}{as_house(s['cubes'])}"
+                          for t, s in builds.items()]
+                         + [f"{t} ({len(structures[t]['cubes'])} pieces): {self._layout(snap, structures[t]['cubes'])}"
+                            f"{as_house(structures[t]['cubes'])}" for t in alone]) or "none"
         others = ", ".join(f"{n} at {_fmt_pos(p)}" for n, p in snap.others) or "nobody else is here"
         cue_entities = [e.name for e in loose[:LOOSE_IN_VIEW]] + [n for _, names in known_stacks for n in names[-1:]]
         cue_entities += [e.name for e in snap.landmarks() if hdist(e.pos, snap.me) < 25 and self._knows(e)]
@@ -251,6 +508,7 @@ thought and in that project's intention."""
         lines = [
             f"Awake for {int((time.time() - self.started) / 60)} minutes. World tick {snap.tick}.",
             f"You are at {_fmt_pos(snap.me)}, holding {held.name if held else 'nothing'}.",
+            *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
                + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
@@ -258,7 +516,8 @@ thought and in that project's intention."""
             f"Others: {others}.",
             f"Loose objects (nearest first): {loose_txt or 'none'}.",
             f"Stacks: {stacks}.",
-            f"Things you decided to keep: {kept}.",
+            f"What you have built and keep (cells are block centres (x, z); your body takes no piece from these "
+            f"unless you release it): {kept}.",
             f"What just happened: {self.last_outcome}",
         ]
         if snap.time_of_day is not None:
@@ -281,8 +540,13 @@ thought and in that project's intention."""
                          + (f" (and {len(strokes) - 40} older)" if len(strokes) > 40 else "") + ".")
         if doing:
             plan = "; ".join(f"{i}) {p['goal']}" for i, p in enumerate(doing, 1))
-            lines.append(f"Right now your body is carrying out this agenda: {plan}. "
-                         "Plan what comes AFTER all of it, assuming it succeeds.")
+            moved = ", ".join(f"{name} to {_fmt_target(where)}" for name, where in moves.items())
+            taking = (f" On the way it sets {moved}" if moved else "") + (
+                f"{', and' if moved else ' On the way it'} picks up {unnamed} more piece{'s' if unnamed != 1 else ''} "
+                "as it goes" if unnamed else "")
+            lines.append(f"Right now your body is carrying out this agenda: {plan}.{taking}{'.' if taking else ''} "
+                         "Plan what comes AFTER all of it, assuming it succeeds"
+                         + (": those pieces will be where it puts them, not loose." if moves or unnamed else "."))
         if self.agenda and self.think_s:
             lines.append(f"You take about {self.think_s:.0f}s to think up a plan. {BUSY_HINT}")
         if self.notes:
@@ -304,7 +568,117 @@ thought and in that project's intention."""
             lines.append("Your intentions for later: " + "; ".join(i["text"] for i in intentions))
         return "\n".join(lines)
 
+    # ---- the house it is building (HOUSE_RULE) ------------------------------------------
+    def house_progress(self, snap):
+        """How far the house it chose has come (house.plan), with its pieces kept for it, or None. Logs each step
+        forward and the moment it first stands as a house."""
+        house = self.memory.state.get("house")
+        if not self.house_project or not house or not snap.has_world:
+            return None
+        observed = self._construction_view(snap)
+        ground = self.memory.state.get("construction", {}).get("ground", {})
+        if self.discovery is not None and any(f"{ix},{iz}" not in ground for ix, iz in self._house_cells()):
+            return None  # a remembered project can predate the geometry cache; inspect it before changing ownership
+        found = house_plan(pieces_of(observed), terrain_of(observed), [tuple(c) for c in house["inside"]], tuple(house["door"]))
+        house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
+        if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
+            house["installed"] = len(found["pieces"])
+            self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
+        if found["score"] > house.get("best", -1):
+            house["best"], house["best_at"] = found["score"], time.time()
+            self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
+        if found["house"] and not house.get("built"):
+            house["built"] = time.time()
+            self.log(kind="house", phase="built", inside=house["inside"], door=house["door"])
+        elif not found["house"]:
+            house["built"] = None
+        return found
+
+    def _house_line(self, snap):
+        house = self.memory.state["house"]
+        found = self.house_progress(snap)
+        if found is None:
+            return (f"Your house at {at(house['inside'][0])} needs an inspection. Walk around its site before planning "
+                    "the next construction step.")
+        cells = ", ".join(at(c) for c in house["inside"])
+        moved = house.get("moves", 0)
+        after = f", after moving it {moved} time{'s' if moved != 1 else ''}" if moved else ""
+        line = (f"Your house, the one project you keep across your plans (chosen "
+                f"{int((time.time() - house['since']) / 60)} minutes ago{after}): inside {cells}, the doorway at "
+                f"{at(house['door'])}. ")
+        if self.discovery is not None and not any(n in self.discovery.visible for n in found["pieces"]):
+            line += "Last observed. "
+        if found["done"]:
+            line += f"Done: {', '.join(found['done'])}. "
+        line += f"Next: {found['next']}."
+        if found["pieces"]:
+            line += (f" Built so far, kept for it ({len(found['pieces'])} pieces): "
+                     f"{self._layout(snap, found['pieces'])}.")
+        still = time.time() - house.get("best_at", house["since"])
+        if not found["house"] and still >= HOUSE_STALL:
+            line += (f" It has come no further in {int(still / 60)} minutes: the next step needs another way of "
+                     "doing it.")
+        return line
+
+    def _choose_house(self, spec, snap):
+        """The mind chose a house, changed it, moved it or gave it up ("house" in its reply). Moving it elsewhere or
+        giving it up needs a reason (in run hut5 it began again at four sites in 45 minutes)."""
+        if not self.house_project or not isinstance(spec, dict):
+            return
+        now = self.memory.state.get("house")
+        why = str(spec.get("why") or "").strip()[:200]
+        inside = spec.get("inside")
+        if not inside:
+            if now is None:
+                return
+            if not why:
+                self.notes.append("You did not give up your house: say why it cannot stand where it is (\"why\").")
+                self.log(kind="house", phase="refused", inside=[], door=None)
+                return
+            self.log(kind="house", phase="abandoned", why=why, inside=now["inside"], door=now["door"])
+            self.memory.set_house(None)
+            return
+        chosen = house_layout(inside, spec.get("door"))
+        if isinstance(chosen, str):
+            self.notes.append(f"Your house was not set: {chosen}.")
+            self.log(kind="house", phase="rejected", reason=chosen, spec=json.dumps(spec)[:300])
+            return
+        room, door = [list(c) for c in chosen[0]], list(chosen[1])
+        moves = 0
+        if now is not None:
+            if now["inside"] == room and now["door"] == door:
+                return
+            same_site = any(c in now["inside"] for c in room)
+            if not same_site and not why:
+                self.notes.append(f"You did not move your house from {at(now['inside'][0])}: a house moves only for a "
+                                  "concrete reason it cannot stand there; give it with \"why\".")
+                self.log(kind="house", phase="refused", inside=room, door=door)
+                return
+            self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
+                     was=now["inside"])
+            if same_site:
+                self.memory.set_house({**now, "inside": room, "door": door})
+                self.house_progress(snap)
+                return
+            moves = now.get("moves", 0) + 1
+        else:
+            self.log(kind="house", phase="chose", why=why, inside=room, door=door)
+        self.memory.set_house({"inside": room, "door": door, "since": time.time(), "best": -1, "best_at": time.time(),
+                               "pieces": [], "moves": moves, "why": why})
+        self.house_progress(snap)
+
     # ---- thinking ---------------------------------------------------------------------
+    def record_placement(self, snap):
+        """Keep settled work before another step can gather it, including inside a learned skill.
+
+        Leave the body's placement list intact until the project records its outcome, so interruption recovery and
+        existing take_placed callers still receive every accepted placement.
+        """
+        self.memory.note_placed(self.skills.placed)
+        self.keep_builds(snap)
+        self.house_progress(snap)
+        self.memory.save()
+
     def prepare(self, snap, events, chat, doing=None):
         """Main thread: build the prompt (reads memory). Returns what think() needs."""
         prepared = {"system": self.system_prompt(snap), "user": self.situation(snap, events, chat, doing),
@@ -351,14 +725,18 @@ thought and in that project's intention."""
                                  importance=int(str(item.get("importance", 3))[:1] or 3))
         for name in reply.get("release") or []:
             self.memory.release_structure(str(name))
+        self._choose_house(reply.get("house"), snap)
+        self.keep_builds(snap)
+        self.house_progress(snap)
+        observed = self._construction_view(snap)
         for item in reply.get("keep") or []:
-            cubes = [c for c in item.get("cubes", []) if c in snap.entities]
+            cubes = [c for c in item.get("cubes", []) if c in observed.entities]
             if item.get("name") and cubes:
                 # A structure is one physical cluster; drop names that are lying somewhere else.
-                where = snap.entities[cubes[0]].pos
-                cubes = [c for c in cubes if hdist(snap.entities[c].pos, where) < 6 * CUBE]
+                where = observed.entities[cubes[0]].pos
+                cubes = [c for c in cubes if hdist(observed.entities[c].pos, where) < 6 * CUBE]
                 self.memory.add_structure(str(item["name"]), cubes, (where[0], where[2]),
-                                          {c: snap.entities[c].pos for c in cubes})
+                                          {c: observed.entities[c].pos for c in cubes})
         self.memory.save()
         self.memory.flush()
         # What the agenda is short of: one line for the viewers' side panel, so they can tell what a gift would mean.
@@ -392,6 +770,9 @@ thought and in that project's intention."""
         height = max((r.facts.get("height", 0) for r in results), default=0)
         importance = 4 if (height >= 5 or any(r.facts.get("toppled") for r in results)) else (3 if ok else 2)
         self.memory.store_experience(self.last_outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
+        self.memory.note_placed(self.skills.take_placed())
+        self.keep_builds(snap)
+        self.house_progress(snap)
         for r in results:
             if r.skill == "build_tower" and len(r.facts.get("cubes", [])) >= 3:
                 where = snap.entities.get(r.facts["cubes"][0])

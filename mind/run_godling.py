@@ -68,6 +68,8 @@ def main():
                     help="also offer ready-made stack_on/build_tower (comparison arm); default is body moves only")
     ap.add_argument("--agenda", action=argparse.BooleanOptionalAction, default=True,
                     help="plan 1-4 projects at a time and think while moving (ADR-002 D2); --no-agenda is the m-003 loop")
+    ap.add_argument("--house-project", action=argparse.BooleanOptionalAction, default=True,
+                    help="keep one house project across plans: its site, its progress and its pieces (ADR-019)")
     ap.add_argument("--walk-speed", type=float, default=5,
                     help="humanoid walk speed (Mesa default 16; 8 in ADR-002 D3b; 5, a person's walk, in ADR-003 O2)")
     ap.add_argument("--sky-test-minutes", type=float, default=0,
@@ -154,13 +156,14 @@ def main():
         memory = make_memory(args, run, log)
         library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
-                        walk_speed=args.walk_speed)
+                        walk_speed=args.walk_speed, kept_in=memory.built_into,
+                        reserved=memory.reserved_cells)
         discovery = Discovery(run / "memory" / "discovery.json")  # the island as far as Godling has seen it
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
-                    discovery=discovery)
+                    discovery=discovery, house_project=args.house_project)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
@@ -226,6 +229,7 @@ def main():
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,
+                   "house_project": args.house_project,
                    "walk_speed": args.walk_speed, **stats, "memory": memory.health(), "structures": structures.last}
         (run / "summary.json").write_text(json.dumps(summary, indent=2))
         print(f"Done: {summary['minutes']} min, {stats['projects']} projects, {llm.calls} model calls, ${llm.cost:.3f}. "
@@ -781,7 +785,7 @@ def print_entry(entry):
     elif kind == "sleep":
         print(f"[{stamp}] SLEEP  {entry.get('dream', '')}\n[{stamp}]        intentions: {[i['text'] for i in entry['intentions']]}", flush=True)
     elif kind == "structures":
-        print(f"[{stamp}] BUILT  walls {entry['walls']}, enclosures {entry['enclosures']} ({entry['roofed']} roofed), "
+        print(f"[{stamp}] BUILT  houses {entry.get('houses', 0)}, walls {entry['walls']}, enclosures {entry['enclosures']} ({entry['roofed']} roofed), "
               f"spans {entry['spans']}, posts {entry['posts']}, floors {entry['floors']}, largest {entry['largest_structure']} "
               f"pieces, tallest {entry['tallest']}, fastened {entry['fastened']}", flush=True)
     else:

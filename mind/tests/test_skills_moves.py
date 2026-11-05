@@ -1,4 +1,5 @@
 """The body's walks, reaches and builds on the fake island (functional tests of skills.py)."""
+import math
 import pytest
 
 from godling import skills as sk
@@ -189,6 +190,19 @@ def test_inside_a_trunk(make):
     island, body = make([ent("Palm_1", (10, 5, 0), (2, 10, 2), role="Tree")])
     r = body.run("walk_to", {"x": 10, "z": 0})
     assert "inside the trunk of Palm_1" in r.summary
+
+
+def test_walk_into_a_roofed_room_from_the_step_it_was_roofed_from(make):
+    # Run hp-proj8: Godling laid its roof standing on a step block, then walked for the room inside, and was told the
+    # room was "on top of" the roof, too high to climb: from up on the step, the floor under the roof was not its own.
+    hut = [block(f"Block_{side}{k}", x, (k - 0.5) * 2.5, 0) for side, x in ((1, -2.5), (2, 2.5)) for k in (1, 2, 3)]
+    hut += [block(f"Block_3{k}", 0, (k - 0.5) * 2.5, 2.5) for k in (1, 2)]
+    roof = ent("Log_1", (0, 8.75, 0), (7.5, 2.5, 2.5))  # across the posts, its underside 7.5 over the room
+    step = block("Block_40", 5, 1.25, -2.5)  # outside the walls, beside the doorway's corner
+    island, body = make(hut + [roof, step], me=(5, 2.5 + BODY_CENTRE_Y, -2.5))
+    r = body.run("walk_to", {"x": 0, "z": 0})
+    assert r.ok and "cannot climb" not in r.summary, r.summary
+    assert at(island) == pytest.approx((0, 0), abs=1.3) and island.me[1] == pytest.approx(BODY_CENTRE_Y)
 
 
 def test_hop_down_from_a_platform(make):
@@ -559,6 +573,7 @@ def test_carve(make):
 def test_rub(make):
     log = ent("Log_3", (6, 0.5, 0), (7.5, 1, 1))
     island, body = tools(make, held="Spear_1", target=log)
+    island.ents["Coconut_1"] = ent("Coconut_1", (6, 0.45, 2), (0.9, 0.9, 0.9))  # tinder beside the log
     island.results["Rub"] = ["RubFailed:TooSoon", "StrikeRubWarm:1", "StrikeRubHot:12", "StrikeRubCaught:Fire_1"]
     r = body.run("rub", {"object": "Log_3"})
     assert r.ok and r.summary.startswith("rubbed Spear_1 against Log_3 3 times, and a flame caught: Fire_1")
@@ -570,9 +585,24 @@ def test_rub(make):
         r = body.run("rub", {"object": "Log_3"})
         assert r.ok is ok and words in r.summary
     island.results["Rub"] = "StrikeRubHot:14"
-    assert "grew hot and smoked" in body.run("rub", {"object": "Log_3"}).summary
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "the dry husk of Coconut_1 beside it only smoulders yet; rub on and it may catch")
     island.results["Rub"] = "StrikeRubWarm:2"
     assert body.run("rub", {"object": "Log_3"}).summary.endswith("the wood grew warm, no more")
+    # Run hut5: it rubbed 30 times with the husk 5 away. With no tinder beside the log it does not start, and says why.
+    island.ents["Coconut_1"]["position"] = [6, 0.45, 6.1]
+    rubs = island.actions().count("Rub")
+    assert body.run("rub", {"object": "Log_3"}).summary == (
+        "you did not start rubbing: no tinder lies within 3 of Log_3 for a spark to catch (the nearest coconut, "
+        "Coconut_1, is 5.6 away); set a coconut right beside the log first")
+    del island.ents["Coconut_1"]
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "(no coconut lies anywhere near); set a coconut right beside the log first")
+    assert island.actions().count("Rub") == rubs
+    # Hot wood whose tinder was carried off while it rubbed says so, and where the nearest lies.
+    island.ents["Coconut_2"] = ent("Coconut_2", (6, 0.45, 6.1), (0.9, 0.9, 0.9))
+    assert body._tinder_by(body._observe(), "Log_3") == (
+        "no tinder lay within 3 of Log_3 for a spark to catch: the nearest coconut, Coconut_2, is 5.6 away")
     assert body.run("rub", {"object": "Nothing"}).summary == "there is nothing called Nothing"
     island.held = None
     assert body.run("rub", {"object": "Log_3"}).summary.startswith("your hands are empty")
@@ -580,7 +610,7 @@ def test_rub(make):
 
 def test_rub_out_of_reach(make):
     sea = [ent("Sand", (0, -0.5, 0), (20, 1, 20), role="Ground"), ent("Spear_1", (-3, 0.5, 0), (1, 1, 3)),
-           ent("Log_3", (40, 0.5, 0), (7.5, 1, 1))]
+           ent("Log_3", (40, 0.5, 0), (7.5, 1, 1)), ent("Coconut_1", (40, 0.45, 1.5), (0.9, 0.9, 0.9))]
     island, body = make(sea, bare=True)
     island.held = "Spear_1"
     assert body.run("rub", {"object": "Log_3"}).summary.startswith("no clear spot to stand within reach of Log_3")
@@ -723,3 +753,84 @@ def test_past_and_rest_on(make):
     island.results["Place"] = "PlaceFailed:Occupied"
     from godling.world import Entity
     assert body._rest_on(island.snap(), Entity(block("Block_2", 0, 6, 0)), [Entity(block("Block_1", 3, 1.25, 0))]) is None
+
+
+# ---- steps for reaching high (ADR-019, the benchmark house's roof) ------------------------------------------------------
+def test_walk_around_a_gap_on_the_same_connected_platform(make):
+    ledges = [ent("Mesa_h", (5, 2, 0), (16, 4, 6), role="Mesa"),
+              ent("Mesa_v", (10, 2, 5), (6, 4, 16), role="Mesa")]
+    island, body = make(ledges, me=(0, 4 + BODY_CENTRE_Y, 0))
+    r = body.run("walk_to", {"x": 10, "z": 10})
+    assert r.ok and island.me == pytest.approx([10, 4 + BODY_CENTRE_Y, 10]), r.summary
+    assert "StepDown" not in island.actions() and "StepUp" not in island.actions()
+
+
+def test_walk_from_one_step_onto_another_as_high(make):
+    # From up on one block to the top of another as high, with ground between: walking straight there walked off the
+    # first and stayed on the ground beside the second. Down first, then up onto it.
+    island, body = make([block("Block_A", 0, 1.25, 0), block("Block_B", 5, 1.25, 5)], me=(0, 2.5 + BODY_CENTRE_Y, 0))
+    r = body.run("walk_to", {"x": 5, "z": 5})
+    assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
+    assert "stepped up onto Block_B" in r.summary
+
+
+def test_stepping_up_to_reach_a_roof_after_snags(make):
+    # The roof's last log, over the room's far cell, from the east, beside a column of clutter (hp-roofcheck): the
+    # body snagged stepping up onto the nearest block, and then tried one whose edge, but not its middle, was in reach
+    # of the roof, and gave up. A step must reach from where the body stands on it, and a failed step-up is tried
+    # again, and the next steps after it.
+    from test_house_recovery import benchmark
+    house = [p for p in benchmark() if p["name"] != "Log_E1"]
+    clutter = [block(f"Block_c{i}", 7.5, 1.25, z) for i, z in enumerate((-2.5, 0, 2.5, 5, 7.5))]
+    clutter += [block(f"Block_n{i}", x, 1.25, 7.5) for i, x in enumerate((-5, -2.5, 0, 2.5, 5))]
+    island, body = make([*house, *clutter, ent("Log_room", (15, 1.25, 12), (7.5, 2.5, 2.5))], me=(12, BODY_CENTRE_Y, 14))
+    island.held = "Log_room"
+    island.results["StepUp"] = ["StepUpFailed:NoRoom", "StepUpFailed:NoRoom", "StepUpStarted"]  # two snags, then up
+    r = body.run("place_at", {"x": 5, "y": 8.75, "z": 2.5, "turn": 0})
+    assert r.ok and "came to rest at (5.00, 8.75, 2.50)" in r.summary, r.summary
+    assert "Block_c4" not in r.summary  # its middle is 6.7 from the roof's middle: too far to set it from
+
+
+def test_standing_on_a_step_clear_of_the_piece_being_placed(make):
+    # hp-roofcheck: up on the step, the body stood 0.4 off its middle, towards the roof log it was setting, and the
+    # world refused the place: "that space is taken by ... your own body" (its top is where the roof starts). On a
+    # step one cell across the body settles at its middle, and a step counts only with the whole body clear.
+    from test_house_recovery import benchmark
+    house = [p for p in benchmark() if p["name"] != "Log_E1"]
+    island, body = make([*house, block("Block_step", 7.5, 1.25, 5), ent("Log_room", (15, 1.25, 12), (7.5, 2.5, 2.5))],
+                        me=(12, BODY_CENTRE_Y, 14))
+    island.held = "Log_room"
+    target = (5.0, 8.75, 2.5)
+
+    def landed_off_centre(data):  # the world's step-up lands the body off the middle, towards the target, and it
+        if island.me[1] > 4:      # stays where it lands (no walking on towards an earlier goal, as this island would)
+            island.me = [island.me[0] - 0.2, island.me[1], island.me[2] - 0.5]
+            island.goal = None
+    island.on_act["StepUp"] = landed_off_centre
+
+    def place(data):  # nothing is set into the body: its top meets the roof's underside
+        (x, y, z), (bx, by, bz) = data["position"], island.me
+        into = abs(bx - x) < 3.75 + 1.0 and abs(bz - z) < 1.25 + 1.0 and by - BODY_CENTRE_Y + 5.0 >= y - 1.25 - 0.01
+        return "PlaceFailed:Occupied" if into else "PlaceSuccess"
+    island.results["Place"] = place
+    r = body.run("place_at", {"x": target[0], "y": target[1], "z": target[2], "turn": 0})
+    assert r.ok and "you stood on Block_step" in r.summary, r.summary
+
+
+def test_stepping_up_from_the_side_with_clear_floor(make):
+    # hp-roofcheck: the step stood at the end of a row of blocks, and the way to it straight from where the body stood
+    # ran along the row: it stopped short at the row's far end and could not get near enough to step up. A step one
+    # cell across is come at from a side with clear floor at its foot.
+    row = [block(f"Block_r{i}", 7.5, 1.25, z) for i, z in enumerate((-5, -2.5, 0, 2.5))]
+    row.append(block("Block_cap", 7.5, 3.75, -5))  # the near end two blocks high (a stone set down on it)
+    island, body = make([*row, block("Block_step", 7.5, 1.25, 5)], me=(7.5, BODY_CENTRE_Y, -14))
+    island.solid_pieces = True
+
+    def step_up(data):  # as the world does: only from beside the step's edge
+        x, z = data["position"]
+        return "StepUpFailed:TooFar" if math.hypot(island.me[0] - x, island.me[2] - z) > 3.0 else "StepUpStarted"
+    island.results["StepUp"] = step_up
+    r = body.run("walk_to", {"x": 7.5, "z": 5})
+    assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
+    ups = [d["position"] for a, d in island.acts if a == "StepUp"]
+    assert ups and all(abs(z - -5) > 1.25 for _, z in ups), ups  # never onto the block with a stone standing on it
