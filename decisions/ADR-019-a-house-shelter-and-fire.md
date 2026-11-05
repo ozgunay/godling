@@ -1,6 +1,6 @@
 # ADR-019: A house: one definition for the world, the mind and the measure; warmth in tiers; how fire is made
 
-Date: 2026-11-04. Status: built, tested in the simulated island and the world script. Live run pending.
+Date: 2026-11-04. Status: built and tested; measured in live runs on 2026-11-05 (see Results): one house built and walked into in two guided runs.
 
 ## Why
 With deepseek-flash, Godling carried blocks about and never built a house. Four 45-minute runs on the same persona
@@ -65,8 +65,8 @@ The user chose each of these.
 - `world/tests/test_life.luau`, the same hut in the world script, at night: inside it the body is warm and mends
   twice as fast; with the north wall one block high it is "enclosed" and cold at half pace; a fire close by halves
   that again; out in the open a fire alone halves it.
-- Not yet: Godling building one and walking in. That is the live run's to show: the geometry passing the check, and
-  the body walking in by the doorway and feeling "house".
+- Live, in run hp-proj8 (see Results): the geometry passed the check, a structure measure still counted the house
+  after it settled, and the body walked in and the world said "house".
 
 ## Fire, made easier (after run hut5-house)
 In hut5 Godling made the spear, set a coconut out for tinder and rubbed 30 times: the wood grew hot and smoked, and
@@ -129,3 +129,55 @@ cell inside, the two walls on opposite sides that a log across it reaches, never
 lower than three blocks the next step is "raise the roof's supports to three blocks high (tops at 7.5): (-2.5, 0.0)
 stands 5.0, ...". With them up it says where the roof lies and at what height its centre goes (8.75 on flat ground).
 Raising a support counts as progress, so the stall notice does not fire while it is being done.
+
+**Walking into a roofed room from a step.** In hp-proj8 Godling laid its roof standing on a step block, then walked
+for the room and was told it lay "on top of" the roof: the roof's height was measured from the step, not from the
+room's floor. `walk_to` now judges headroom from the floor where it is going, and hops down to it first
+(`test_walk_into_a_roofed_room_from_the_step_it_was_roofed_from`). Found in the run, fixed after it.
+
+## Guided construction
+The roof-supports wording teaches a way to build, not only what a house is: the supports' height, a log laid across
+them at a stated height, and a step to set it from. That moves this away from ADR-004's "no blueprints" towards
+guided construction. It is a deliberate choice: the goal is a simple house that Godling builds, and without the
+method no run got past walls two blocks high. It names the parts and heights for the house the mind chose, not a
+plan: where the house stands, its size and doorway, the order of the work and what it is made of stay the mind's.
+A world with other building goals can keep the definition and drop the guidance (`--no-house-project` drops both).
+
+## Results (2026-11-05, deepseek-flash, the hut-wanting persona, 45 minutes a run)
+Comparison at the same minute, with the house rule and the fire changes in every run:
+
+| run | house kept | build sites | switches between them | own pieces taken back | furthest | house |
+|---|---|---|---|---|---|---|
+| hp-free1 | no | 5 | 15 | 24 | (none tracked) | no |
+| hp-free2 | no | 5 | 17 | 17 | (none tracked) | no |
+| hp-proj5 | yes | 2 | 3 | 9 | three of four walls two high | no |
+| hp-proj6 | yes | 2 | 3 | 9 | walls two high, room and doorway clear, from minute 9 | no |
+| hp-proj7 | yes, with the supports wording | 1 | 0 | 4 | walls and both supports three high, minute 23.5 | no |
+| hp-proj8 | yes, with the supports wording | 2 | 3 | 8 | a house at minute 40.3 | yes |
+
+A site is where pieces went up (above the first layer, or stood on end), within 7.5 of its centre; "taken back" is a
+piece it set beside another it had set, picked up again. Keeping one house cut switching between sites about five
+fold and halved what it took back. With the old roof wording neither run raised its roof's supports: proj6 set a
+single block over its room (it fell), put steps in its own doorway, and fastened a block hanging in its room;
+proj5 tried to set the roof from the ground, out of reach. With the supports wording both runs raised them.
+
+hp-proj8, the first house: walls at minute 2, the supports step at 4; a block tried early as a roof fell into the
+room and was fastened there, so at 19 it moved one cell over, giving that reason; supports and roof step at 32; at
+40.3 it stood on a block outside the corner and laid a log across the supports at 8.75 ("came to rest across Block_9
+and Log_7"). The check passed, the 5-minute measure counted the house at 40.8 and at the end, and at 41.8 it walked
+in: "You are inside a house now". Its first try to walk in, from the step, failed on the body bug above.
+
+hp-proj7 did everything the wording said up to the roof (walls and both supports at 23.5, and the step it would use
+set outside a corner, not in the doorway), then for 21 minutes could not get to its own house: five walks to the
+room ended "the way is closed off by Block_4, Block_7, Block_8, Stone_5...", its own loose pieces round the site.
+
+Fire: proj5 made fire (22 rubs) and proj1 did in its first try (15); the tinder check refused three rubs with no
+coconut beside the log. Cost about $0.60 a run; with the runs restarted after the fixes above, about $4.30 in all.
+
+## What still fails (for a body-level reproduction before more full runs)
+- A piece set where nothing holds it falls into the room, and the mind then fastens it there (proj6 and proj8). The
+  room is lost until a hammer knocks it loose; both moved their house rather than do that.
+- Its own loose pieces close off the way to the house (proj7, 21 minutes), and walks and reaches stop short of
+  pieces in the clutter: 8 to 18 times a run.
+- Steps set in the doorway: proj6 three times, proj8 twice (it cleared them). The wording now says to set the step
+  beside the supports; the body does not stop a doorway being filled.
