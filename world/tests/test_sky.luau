@@ -179,6 +179,61 @@ T.test("a meteor: a shadow, a wait for a clear shadow, the fall, the blast, the 
     T.logged(w, "SKY Meteor #1 blasted at")
 end)
 
+T.test("a meteor's stone lands glowing hot and cools over a day, its crater's scorch with it", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local m = x.sky.meteor
+    T.eq(m.COOL_SECONDS, x.DAY_SECONDS, "about a day of the island's clock")
+    T.eq(w.power("Meteor", aim(w.spot, 0, 6)), "SkyDone:Meteor:1")
+    e.step(40.1, 0.1)
+    local stone = e.find("Meteor_1")
+    T.eq(stone:GetAttribute("Heat"), 1, "white-hot as it falls")
+    T.eq(stone:GetAttribute("LandedAt"), nil, "not landed yet")
+    T.eq(#m.hot, 0)
+    e.step(2, 0.1)
+    local crater = e.find("Crater_1")
+    T.eq(stone.CanCollide, true, "landed")
+    local landed = stone:GetAttribute("LandedAt")
+    T.ok(landed and math.abs(landed - 42) < 2.5, "on the island's clock, 40 s of warning and a short fall after it")
+    T.eq(crater:GetAttribute("LandedAt"), landed, "the crater cools from the same moment")
+    T.eq(stone:GetAttribute("Heat"), 1)
+    T.eq(crater:GetAttribute("Heat"), 1)
+    T.eq(#m.hot, 2)
+    local clock = e.find("Clock")
+    local function after(dayFraction) -- the clock moved on to that much of a day since it landed, and the world looked
+        local now = (clock:GetAttribute("Day") - 1) * 2400 + clock:GetAttribute("TimeOfDay") * 100 - 700 -- to a second
+        x.tickClock(landed + dayFraction * m.COOL_SECONDS - now)
+        m.cool(m.COOL_EVERY)
+    end
+    after(0.3) -- fast at first: (1 - 0.3)^2 = 0.49, shown as the step above
+    T.eq(stone:GetAttribute("Heat"), 0.5)
+    T.eq(crater:GetAttribute("Heat"), 0.5, "the scorch fades as the stone cools")
+    after(0.6)
+    T.eq(stone:GetAttribute("Heat"), 0.2, "a dull glow")
+    crater:Destroy() -- no longer kept (or smashed): it leaves the cooling
+    after(0.99)
+    T.eq(stone:GetAttribute("Heat"), 0.05, "the last of the glow: it is never 0 until it is cold")
+    T.eq(#m.hot, 1)
+    after(1.01)
+    T.eq(stone:GetAttribute("Heat"), 0, "a plain dark stone")
+    T.eq(#m.hot, 0, "and nothing is left to cool")
+    T.eq(m.heat(landed - 5 * m.COOL_SECONDS), 0)
+end)
+
+T.test("the world looks at what cools every few seconds, not every beat", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local m = x.sky.meteor
+    local stone = e.part("Meteor_7", { Size = V.new(2.5, 2.5, 2.5) })
+    m.landed(stone)
+    x.tickClock(m.COOL_SECONDS / 2)
+    m.coolBeat = 0
+    e.step(m.COOL_EVERY - 0.5, 0.5)
+    T.eq(stone:GetAttribute("Heat"), 1, "not looked at yet")
+    e.step(0.6, 0.5)
+    T.eq(stone:GetAttribute("Heat"), 0.25, "half a day: (1 - 0.5)^2")
+end)
+
 T.test("an aimed meteor blasts what it hits: smashes, breaks fastenings, throws, fells, hurts and knocks down", function()
     local w = sky()
     local e, x = w.e, w.x

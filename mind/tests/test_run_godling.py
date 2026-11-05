@@ -68,6 +68,29 @@ def test_island_of_keeps_what_a_restart_needs():
     assert empty["body"] is None and empty["clock"] == 0.0
 
 
+def test_a_meteor_stone_keeps_cooling_across_a_restart_and_in_replays():
+    """main.lua sky.meteor.cool: a landed meteor's stone and its crater carry LandedAt (on the island's clock, which the
+    save keeps too) and Heat. The save keeps both, so the world cools them on from where they were; a replay frame
+    keeps Heat, so the past shows each stone as hot as it was."""
+    from godling.replay import slim_entity
+    snap = snapshot()
+    landed = {"RenderRole": {"type": "String", "value": "Stone"}, "SkyEvent": {"type": "String", "value": "Meteor"},
+              "LandedAt": {"type": "Number", "value": 3012.4}, "Heat": {"type": "Number", "value": 0.35}}
+    rest = {"cframe": {"position": [9, 1.25, 0], "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+            "size": [2.5, 2.5, 2.5], "color": [0.25, 0.22, 0.2], "anchored": True, "can_collide": True}
+    snap["instance"]["workspace_children"].append({"name": "Meteor_6", "class_name": "Part", "part": rest,
+                                                   "attributes": landed})
+    crater = next(c for c in snap["instance"]["workspace_children"] if c["name"] == "Crater_1")
+    crater["attributes"].update(LandedAt={"type": "Number", "value": 3012.4}, Heat={"type": "Number", "value": 0.35})
+    island = rg.island_of(snap)
+    by_name = {p["name"]: p for p in island["pieces"]}
+    assert by_name["Meteor_6"]["attrs"]["LandedAt"] == 3012.4 and by_name["Meteor_6"]["attrs"]["Heat"] == 0.35
+    assert by_name["Crater_1"]["attrs"]["LandedAt"] == 3012.4
+    assert "Meteor_2" not in by_name  # one still falling is never saved
+    frame = slim_entity({"id": 6, "position": [9.004, 1.25, 0], "attributes": {"Heat": 0.35000000001, "LandedAt": 3012.4}})
+    assert frame["attributes"] == {"Heat": 0.35, "LandedAt": 3012.4}
+
+
 def test_orientation():
     assert rg.orientation([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) == [0.0, 0.0, 0.0]
     c, s = math.cos(0.5), math.sin(0.5)

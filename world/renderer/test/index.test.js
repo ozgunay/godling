@@ -397,6 +397,54 @@ describe('the renderer', () => {
     history.replaceState(null, '', '/')
   })
 
+  it('draws a meteor\'s stone and its crater as hot as the world says, a group for each step of heat', async () => {
+    files['/assets/meteor.glb'] = () => {
+      const scene = new THREE.Group()
+      const glowing = new THREE.MeshStandardMaterial({ name: 'ember', emissive: new THREE.Color(1, 0.13, 0.01), emissiveIntensity: 1.2 })
+      scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()),
+        new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), glowing))
+      return { scene, animations: [] }
+    }
+    files['/assets/scorched.glb'] = () => {
+      const geometry = new THREE.PlaneGeometry(8, 8, 2, 2).rotateX(-Math.PI / 2)
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Array(geometry.attributes.position.count * 3).fill(0.08), 3))
+      const scene = new THREE.Group()
+      scene.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true })))
+      return { scene, animations: [] }
+    }
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const debug = globalThis.__godlingRenderer
+    const at = (heat) => ({
+      players: [],
+      entities: [
+        part(1, 'Ground', [0, -0.5, 0], [100, 1, 100]),
+        part(2, 'Stone', [0, 1.25, 0], [2.5, 2.5, 2.5], { model_url: '/assets/meteor.glb',
+          attributes: { SkyEvent: 'Meteor', SkyId: 1, ...(heat == null ? {} : { Heat: heat }) } }),
+        part(3, 'Crater', [0, 0.3, 0], [8, 0.6, 8], { model_url: '/assets/scorched.glb',
+          attributes: { SkyId: 1, ...(heat == null ? {} : { Heat: heat }) } }),
+      ],
+    })
+    r.onState(at(1))
+    await flush() // the models arrive
+    r.onState(at(1))
+    r.onFrame({ dt: 0.02 })
+    const groups = debug.info().groups
+    const instances = debug.info().instances
+    r.onState(at(0.55)) // cooler: the cracks and the scorch move to the next groups
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 2)
+    expect(debug.info().instances).toBe(instances) // still one stone and one crater
+    r.onState(at(1)) // the same heat again: the same groups
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 2)
+    r.onState(at(null)) // a replay from before stones cooled: drawn as the models are
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 4)
+    expect(debug.info().instances).toBe(instances)
+    r.unmount()
+  })
+
   it('plays a lightning marker as a strike: the part never drawn, the picture flashing and settling', () => {
     const { ctx } = runtime()
     const r = createRenderer(ctx)

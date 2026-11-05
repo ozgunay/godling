@@ -3704,6 +3704,7 @@ local function advanceSkyFalls(dt)
             local stone = createPiece("Meteor_" .. fall.n, CFrame.new(fall.x, SKY_DROP_HEIGHT, fall.z), size,
                 Color3.fromRGB(64, 56, 52), "Stone", stonePhysics, sky.meteor.MODEL) -- dark and bare: not quarried
             stone.Anchored, stone.CanCollide = true, false -- carried down by the world until it touches something
+            stone:SetAttribute("Heat", 1) -- white-hot as it falls; it cools once it has landed (sky.meteor.cool)
             skyMark("Meteor", fall.n)(stone)
             fall.stone, fall.y = stone, SKY_DROP_HEIGHT
             i = i + 1
@@ -4551,6 +4552,7 @@ function sky.meteor.blast(fall, top)
         Color3.fromRGB(40, 34, 30), "Crater")
     crater:SetAttribute("ModelUrl", m.CRATER_MODEL)
     mark(crater)
+    m.landed(crater)
     table.insert(m.craters, crater)
     while #m.craters > m.CRATERS_KEPT do
         table.remove(m.craters, 1):Destroy()
@@ -4570,6 +4572,7 @@ function sky.meteor.blast(fall, top)
     stone.CFrame = CFrame.new(rest.X, ground + BLOCK_SIZE / 2 + 0.05, rest.Z)
     stone.CanCollide, stone.Anchored = true, false
     stone.AssemblyLinearVelocity = Vector3.new(0, -2, 0)
+    m.landed(stone)
     clockPart:SetAttribute("MeteorX", math.floor(c.X * 10 + 0.5) / 10)
     clockPart:SetAttribute("MeteorZ", math.floor(c.Z * 10 + 0.5) / 10)
     clockPart:SetAttribute("MeteorSmashed", smashed)
@@ -4580,6 +4583,61 @@ function sky.meteor.blast(fall, top)
     clockPart:SetAttribute("MeteorId", n)
     print(string.format("SKY Meteor #%d blasted at (%.1f, %.1f, %.1f): smashed %d, unfastened %d, threw %d, "
         .. "felled %d palms, hurt %d", n, c.X, c.Y, c.Z, smashed, unfastened, thrown, felled, hurtCount))
+end
+
+-- THE STONE COOLS (the user's wish, 2026-11-05): a meteor's stone lands glowing hot and, over about a day of the
+-- island's own clock, fades to a plain dark stone, and its crater's scorch fades with it. So the island shows when
+-- each one fell, and the newest landing stands out. LandedAt is when it landed, on the Clock's seconds, which the
+-- island save keeps (with LandedAt, an attribute), so a restart goes on cooling it where it was. Heat is what the
+-- renderer and the replays draw: 1 white-hot, falling to 0 (cold) in HEAT_STEPs, fast at first, as a hot stone
+-- cools. Nothing else changes with it: a hot stone is picked up, built with and blasted as a cold one is.
+sky.meteor.COOL_SECONDS, sky.meteor.HEAT_STEP, sky.meteor.COOL_EVERY = DAY_SECONDS, 0.05, 2
+sky.meteor.hot, sky.meteor.coolBeat = {}, 0 -- what is still cooling; seconds since the last look
+
+function sky.meteor.heat(landedAt) -- how hot it is now: the time left to cool, squared; never 0 until it is cold
+    local m = sky.meteor
+    local left = 1 - (clockSeconds - landedAt) / m.COOL_SECONDS
+    if left <= 0 then
+        return 0
+    end
+    local steps = math.ceil(math.min(1, left * left) / m.HEAT_STEP - 1e-9)
+    return math.floor(steps * m.HEAT_STEP * 1000 + 0.5) / 1000
+end
+
+function sky.meteor.landed(part) -- a stone, or its crater: it starts to cool now
+    part:SetAttribute("LandedAt", math.floor(clockSeconds * 10 + 0.5) / 10)
+    part:SetAttribute("Heat", 1)
+    table.insert(sky.meteor.hot, part)
+end
+
+function sky.meteor.restored(part) -- put back by a restart: cooling on; one from before stones cooled is long cold
+    if part:GetAttribute("LandedAt") then
+        table.insert(sky.meteor.hot, part)
+    else
+        part:SetAttribute("Heat", 0)
+    end
+end
+
+function sky.meteor.cool(dt)
+    local m = sky.meteor
+    m.coolBeat = m.coolBeat + dt
+    if m.coolBeat < m.COOL_EVERY then
+        return
+    end
+    m.coolBeat = 0
+    local i = 1
+    while i <= #m.hot do
+        local part = m.hot[i]
+        local heat = part.Parent and m.heat(part:GetAttribute("LandedAt")) or 0
+        if part.Parent and part:GetAttribute("Heat") ~= heat then
+            part:SetAttribute("Heat", heat)
+        end
+        if heat > 0 then
+            i = i + 1
+        else
+            table.remove(m.hot, i) -- cold, or gone (smashed by another, or its crater no longer kept)
+        end
+    end
 end
 
 -- The guest panel's player has no body on the island, but the engine gives it one anyway. Parked once on joining, it
@@ -4958,6 +5016,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
     advanceSkyFalls(dt)
+    sky.meteor.cool(dt) -- a meteor's stone, and its crater, cool over a day
     sky.quake.tick(dt) -- an earthquake shakes what is loose
     sky.tickNotes(dt) -- notes from viewers drift down
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
@@ -5064,6 +5123,9 @@ function sky.restore(saved)
         kept[s.name] = true
         if role == "Crater" then
             table.insert(sky.meteor.craters, part) -- the oldest go first, as before (saved in number order)
+        end
+        if role == "Crater" or s.name:sub(1, 7) == "Meteor_" then
+            sky.meteor.restored(part)
         end
     end
     -- What the start made that was gone when the run stopped (smashed, burnt, eaten) stays gone.

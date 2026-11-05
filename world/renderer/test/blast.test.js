@@ -53,6 +53,34 @@ describe('meteor blasts', () => {
     expect(scene.children).toHaveLength(0)
   })
 
+  it('a landed stone smokes while it is hot, less as it cools, and not once it is cold', () => {
+    const resting = (heat) => ({ ...meteor(1, 1.25), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: heat } })
+    const puffs = (heat, seconds) => {
+      const blasts = createBlasts(new THREE.Scene(), HIGH)
+      let most = 0
+      for (let t = 0; t < seconds; t += 1 / 30) {
+        blasts.watch(resting(heat), 1 / 30)
+        blasts.update({ time: t, dt: 1 / 30, daylight: 1, camera: new THREE.PerspectiveCamera() })
+        most = Math.max(most, blasts.info().smoke)
+      }
+      blasts.dispose()
+      return most
+    }
+    const white = puffs(1, 6)
+    const dull = puffs(0.3, 6)
+    expect(white).toBeGreaterThan(2) // a puff each WISP_EVERY, each lasting a few seconds
+    expect(dull).toBeGreaterThan(0)
+    expect(dull).toBeLessThan(white)
+    expect(puffs(0.15, 6)).toBe(0) // warm, no longer smoking
+    expect(puffs(0, 6)).toBe(0)
+    const old = createBlasts(new THREE.Scene(), HIGH) // a replay from before stones cooled: no Heat, no smoke
+    for (let t = 0; t < 3; t += 1 / 30) {
+      old.watch(meteor(1, 1.25), 1 / 30)
+      old.update({ time: t, dt: 1 / 30, daylight: 1, camera: new THREE.PerspectiveCamera() })
+    }
+    expect(old.info().smoke).toBe(0)
+  })
+
   it('flares the ambient light on a tier without the flash\'s own light', () => {
     const scene = new THREE.Scene()
     const blasts = createBlasts(scene, LOW)
