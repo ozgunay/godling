@@ -237,8 +237,9 @@ you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. C
 Fire is made as people make it without matches: hold your spear and rub it hard against a log lying on the ground,
 over and over, with something dry and fine right beside the log for tinder (a coconut's dry husk). The wood grows warm,
 then hot and smoking after a dozen rubs or so, and then the tinder may catch and set the log burning. A fire burns
-about ten minutes and uses its log up. Rain puts fires out, and nothing catches while it rains or while the wood is
-still damp after it.
+about ten minutes and uses its log up; a log laid against a burning one takes the fire as it burns out, so a fire can
+be kept going. Rain puts out a fire in the open, but not one under a roof. Nothing catches while it rains or while the
+wood is still damp after it.
 Days turn into nights; nights are dark and cold. The weather turns: showers, spells of rain that last for days,
 thunderstorms, fog some mornings. Rain soaks you and slows your walking. The cold, at night or soaked in the rain,
 wears your health down and stops you mending. A roof over your head keeps the rain off and halves the cold; a fire

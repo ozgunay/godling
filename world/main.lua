@@ -2341,7 +2341,8 @@ end
 -- (a struck Spear) against a log that lies still heats the wood a little more with each rub in a row. It only catches
 -- once the wood is hot, after RUB_HOT rubs, and only into something dry and fine lying right beside it (a coconut's
 -- husk, as Chuck's tinder was), which burns away. Nothing catches in the rain or while the wood is still damp after it,
--- and rain puts every fire out (WEATHER). A fire burns ten minutes and uses the log up; over it a raw fish cooks.
+-- and rain puts out every fire in the open (WEATHER), but not one under a roof. A fire burns ten minutes and uses the
+-- log up, unless a log laid against it takes the fire on (ADR-019); over it a raw fish cooks.
 local FIRE_SECONDS, COOK_RANGE = 600, 6
 local fires = {} -- fire part -> { log, untilTime }
 local climate = { rain = 0, dampUntil = 0 } -- kept by WEATHER: how hard it rains, and until when wood stays damp
@@ -2406,30 +2407,73 @@ local rubLog = (function()
     end
 end)()
 
--- Rain puts fires out (WEATHER): the fire is gone, the log is left, charred but whole.
+-- Rain puts out the fires in the open (WEATHER): the fire is gone, the log is left, charred but whole. Under a roof, a
+-- fire burns on through the shower (ADR-019). (Its helper lives inside: the main chunk is near Luau's 200 locals.)
 local function douseFires()
-    for fire, f in pairs(fires) do
-        fires[fire] = nil
-        fire:Destroy()
-        if f.log.Parent then
-            f.log:SetAttribute("Burning", false)
-            f.log:SetAttribute("Heat", 0)
+    local function covered(fire, log) -- something solid and held in place over it
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { fire, log }
+        local probe = Instance.new("Part")
+        probe.Size = Vector3.new(2, 12, 2)
+        probe.CFrame = CFrame.new(fire.Position.X, log.Position.Y + halfExtents(log).Y + 6.2, fire.Position.Z)
+        local hits = Workspace:GetPartsInPart(probe, params)
+        probe:Destroy()
+        for _, hit in ipairs(hits) do
+            if hit.Anchored and isSolid(hit) and not isCarried(hit) and hit.Name ~= "HumanoidRootPart" then
+                return true
+            end
         end
-        print(string.format("DOUSED %s on %s", fire.Name, f.log.Name))
+        return false
+    end
+    for fire, f in pairs(fires) do
+        if not (f.log.Parent and covered(fire, f.log)) then
+            fires[fire] = nil
+            fire:Destroy()
+            if f.log.Parent then
+                f.log:SetAttribute("Burning", false)
+                f.log:SetAttribute("Heat", 0)
+            end
+            print(string.format("DOUSED %s on %s", fire.Name, f.log.Name))
+        end
     end
 end
 
+-- Feeding a fire (ADR-019): a log laid against a burning one, loose (not fastened, not carried), takes the fire as the
+-- first burns out, so one lighting can last the night. A fire lasts ten minutes on a log; a night is about thirteen.
 local function tickFires()
+    local function fuelFor(log)
+        local a = halfExtents(log)
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst ~= log and inst:IsA("BasePart") and inst:GetAttribute("RenderRole") == "Log" and not isCarried(inst)
+                and not inst:GetAttribute("Burning") and not inst:GetAttribute("Fastened") then
+                local b, d = halfExtents(inst), inst.Position - log.Position
+                if math.abs(d.X) <= a.X + b.X + 0.3 and math.abs(d.Y) <= a.Y + b.Y + 0.3
+                    and math.abs(d.Z) <= a.Z + b.Z + 0.3 then
+                    return inst
+                end
+            end
+        end
+        return nil
+    end
+    local fed = {} -- lit after the loop: a table must not gain keys while pairs walks it
     for fire, f in pairs(fires) do
         if os.clock() >= f.untilTime or not f.log.Parent then -- burnt out: the log is ash
             fires[fire] = nil
             fire:Destroy()
+            local fuel = f.log.Parent and fuelFor(f.log)
             if f.log.Parent then
                 wakeRestingOn(f.log)
                 trackedBlocks[f.log] = nil
                 f.log:Destroy()
             end
+            if fuel then
+                table.insert(fed, fuel)
+            end
         end
+    end
+    for _, fuel in ipairs(fed) do
+        print(string.format("FED %s burns on %s", lightFire(fuel).Name, fuel.Name))
     end
 end
 
@@ -2645,8 +2689,9 @@ local tickWeather = (function()
         climate.rain = weather.rain
         if weather.rain > 0.3 then
             climate.dampUntil = os.clock() + DAMP_AFTER
-            if next(fires) then
-                douseFires() -- no fire lives in the rain
+            if next(fires) and os.clock() >= (climate.douseAt or 0) then
+                climate.douseAt = os.clock() + 0.5
+                douseFires() -- no fire lives in the rain, but under a roof
             end
         end
         weather.beat = weather.beat + dt

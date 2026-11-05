@@ -94,6 +94,8 @@ def test_prompts(world, tmp_path):
     assert "Inside your house a fed body mends twice as fast." in system
     assert "hold your spear and rub it hard against a log lying on the ground" in system
     assert "a coconut's dry husk" in system
+    assert "a log laid against a burning one takes the fire as it burns out" in system
+    assert "Rain puts out a fire in the open, but not one under a roof." in system
     assert '"agenda"' in system
     one = make_mind(world, tmp_path, FakeLLM(), agenda=False)
     flat = one.system_prompt(s)

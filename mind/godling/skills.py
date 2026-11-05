@@ -68,6 +68,7 @@ BODY_HEIGHT = 5.0  # the engine's capsule: exactly two blocks
 STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block high (ADR-010)
 RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
 RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
+TINDER_RANGE = 3.0  # main.lua TINDER_RANGE: tinder this close to the log catches from it
 PEN_CELLS = 1600  # half-unit cells: floor the body can reach smaller than this (20 x 20 units) is a pen
 LIFTABLE = SNAPPED_KINDS + ("Brick_", "Ladder_")  # what the body lifts aside to get out of a pen
 GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is already in view, no turn needed
@@ -1557,9 +1558,29 @@ class Skills:
             return Result(kind == "StrikeRubBurning", "rub", why)
         if heat >= RUB_HOT:
             return Result(False, "rub", f"rubbed {held.name} against {object} {rubs} times in a row; the wood grew hot "
-                                        f"and smoked, but nothing beside it caught", {"rubs": rubs})
+                                        f"and smoked, but {self._tinder_by(self._observe(), object)}", {"rubs": rubs})
         return Result(False, "rub", f"rubbed {held.name} against {object} {rubs} times; the wood grew warm, no more",
                       {"rubs": rubs})
+
+    @staticmethod
+    def _tinder_by(snap, log):
+        """Why hot wood did not catch, as the body sees it: no tinder close enough (and where the nearest lies), or a
+        husk beside it that only smoulders yet. In run hut5 the husk lay a few steps off by the yard, and "nothing
+        beside it caught" read as bad luck: the mind never moved it (main.lua rubLog, TINDER_RANGE)."""
+        wood = snap.entities.get(log)
+        held = snap.held()
+        husks = [e for e in snap.movables() if e.name.startswith("Coconut_") and e is not held]
+        if wood is None or not husks:
+            return "no tinder lay beside it for a spark to catch: no coconut lies anywhere near"
+
+        def gap(e):  # from the nearest point of the log, as the world measures it
+            near = [min(max(c, p - s / 2), p + s / 2) for c, p, s in zip(e.pos, wood.pos, wood.size)]
+            return math.dist(near, e.pos)
+        husk = min(husks, key=gap)
+        if gap(husk) <= TINDER_RANGE:
+            return f"the dry husk of {husk.name} beside it only smoulders yet; rub on and it may catch"
+        return (f"no tinder lay within {TINDER_RANGE:.0f} of {log} for a spark to catch: the nearest coconut, {husk.name}, "
+                f"is {gap(husk):.1f} away")
 
     def skill_fasten(self, object):
         snap = self._observe()

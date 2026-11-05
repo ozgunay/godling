@@ -285,6 +285,41 @@ T.test("a fire burns its log away, cooks a fish beside it, and the rain puts it 
     T.logged(w, "DOUSED Fire_3 on Log_9")
 end)
 
+T.test("a log laid against a fire takes it on, a fastened one never; under a roof the rain leaves a fire burning", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    w.godling(V.new(25, 2.55, 30))
+    local function log(name, pos, attrs)
+        local a = { RenderRole = "Log", IsPickupObject = true, Settled = true }
+        for k, v in pairs(attrs or {}) do
+            a[k] = v
+        end
+        return e.part(name, { Size = V.new(7.5, 2.5, 2.5), Position = pos, Anchored = true, attrs = a })
+    end
+    -- ADR-019: one lighting can last the night. A fastened log (a built wall) never catches.
+    local first = log("Log_7", V.new(30, 1.25, 30))
+    local wall = log("Log_6", V.new(30, 1.25, 32.5), { Fastened = true }) -- along its side
+    local next = log("Log_8", V.new(37.5, 1.25, 30)) -- end to end
+    local fire = x.lightFire(first)
+    e.step(600, 10)
+    T.eq(first.Parent, nil)
+    T.eq(fire.Parent, nil)
+    T.eq(next:GetAttribute("Burning"), true, "the log laid against it took the fire")
+    T.eq(wall:GetAttribute("Burning"), nil, "a fastened log never catches")
+    T.logged(w, "FED Fire_2 burns on Log_8")
+    T.near(x.fires[e.find("Fire_2")].untilTime - e.now, 600, 10, "for another ten minutes")
+    -- Rain puts out the fire in the open, not the one under a roof.
+    local sheltered = log("Log_9", V.new(50, 1.25, 40))
+    e.part("Roof_1", { Size = V.new(7.5, 1, 7.5), Position = V.new(50, 8, 40), Anchored = true })
+    local dry = x.lightFire(sheltered)
+    local clear = w.openSpot(8, V.new(70, 0, 40)) -- open ground, nothing over it
+    local open = x.lightFire(log("Log_10", V.new(clear.X, 1.25, clear.Z)))
+    x.douseFires()
+    T.ok(dry.Parent, "under a roof it burns on")
+    T.eq(sheltered:GetAttribute("Burning"), true)
+    T.eq(open.Parent, nil)
+end)
+
 T.test("fastening: what can be fastened, and how", function()
     local w = T.boot()
     local e = w.e

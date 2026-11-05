@@ -570,7 +570,16 @@ def test_rub(make):
         r = body.run("rub", {"object": "Log_3"})
         assert r.ok is ok and words in r.summary
     island.results["Rub"] = "StrikeRubHot:14"
-    assert "grew hot and smoked" in body.run("rub", {"object": "Log_3"}).summary
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "the wood grew hot and smoked, but no tinder lay beside it for a spark to catch: no coconut lies anywhere near")
+    # Run hut5: the husk lay a few steps off. Hot wood says where the nearest tinder is, and how far is too far.
+    island.ents["Coconut_2"] = ent("Coconut_2", (6, 0.45, 6.1), (0.9, 0.9, 0.9))
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "no tinder lay within 3 of Log_3 for a spark to catch: the nearest coconut, Coconut_2, is 5.6 away")
+    island.ents["Coconut_2"]["position"] = [6, 0.45, 2]
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "the dry husk of Coconut_2 beside it only smoulders yet; rub on and it may catch")
+    del island.ents["Coconut_2"]
     island.results["Rub"] = "StrikeRubWarm:2"
     assert body.run("rub", {"object": "Log_3"}).summary.endswith("the wood grew warm, no more")
     assert body.run("rub", {"object": "Nothing"}).summary == "there is nothing called Nothing"

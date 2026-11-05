@@ -67,3 +67,21 @@ The user chose each of these.
   that again; out in the open a fire alone halves it.
 - Not yet: Godling building one and walking in. That is the live run's to show: the geometry passing the check, and
   the body walking in by the doorway and feeling "house".
+
+## Fire, made easier (after run hut5-house)
+In hut5 Godling made the spear, set a coconut out for tinder and rubbed 30 times: the wood grew hot and smoked, and
+nothing caught. The husk lay by the yard, more than 3 from the log, and the report said only "nothing beside it
+caught", which read as bad luck. With tinder in place, one try of 30 rubs nearly always lights a fire. The user chose:
+1. **Say why it did not catch.** Hot wood with no tinder within 3 of the log says where the nearest coconut lies and
+   how far ("no tinder lay within 3 of Log_3 for a spark to catch: the nearest coconut, Coconut_2, is 5.6 away"). With
+   a husk close enough, it says the husk only smoulders yet, and to rub on. The body works this out from what it sees;
+   the world is unchanged.
+2. **Feed a fire.** A log laid against a burning one, loose (not fastened, not carried), takes the fire as the first
+   burns out, so one lighting can last the night (a fire lasts ten minutes on a log; a night is about thirteen). A
+   fastened log never catches, so a built wall does not burn down.
+3. **A roof keeps a fire lit.** Rain puts out a fire in the open, but not one with something solid held in place over
+   it. Lighting is unchanged: nothing catches in the rain or on damp wood.
+
+The mind is told 2 and 3 with the rest of how fire works. Tested in `world/tests/test_build.luau` (a log laid end to end
+takes the fire for another ten minutes; a fastened one beside it does not; the rain leaves the roofed fire and puts out
+the open one) and `mind/tests/test_skills_moves.py` (the three reports).
