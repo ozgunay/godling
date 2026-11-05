@@ -85,3 +85,30 @@ caught", which read as bad luck. With tinder in place, one try of 30 rubs nearly
 The mind is told 2 and 3 with the rest of how fire works. Tested in `world/tests/test_build.luau` (a log laid end to end
 takes the fire for another ten minutes; a fastened one beside it does not; the rain leaves the roofed fire and puts out
 the open one) and `mind/tests/test_skills_moves.py` (the three reports).
+
+## One house, kept across plans (after run hut5-house)
+In hut5 the plans followed the house rule, but each one started a house afresh: building went up at five sites in 45
+minutes, and 20 pieces it had set next to others were picked up again. A plan saw what stood, not what it was for.
+1. **The mind chooses a house once.** A reply may carry `"house": {"inside": [[x, z], ...], "door": [x, z]}`. The
+   cells inside must touch side by side and the doorway lie beside them (`house.layout`); otherwise it is told why
+   and nothing is set. It is kept in memory across plans, meals, weather and failures.
+2. **Every plan hears how far it has come, first.** Right under where it stands: the cells and doorway, what is done,
+   the next step in the order a builder takes them (walls two blocks high, a clear room and doorway, the roof), and
+   what is built so far, by layer (`house.plan`, the same check as before, on the cells it chose).
+3. **Its pieces are kept for it.** Pieces in its walls (three layers) and over its room are refused to `pick_up`, as a
+   build's are, and left out of the loose things; what fills the room or blocks the doorway is not, so it can be
+   cleared.
+4. **Moving it needs a reason.** A change that keeps a cell of the old room (more cells, another doorway) is a
+   revision. A house elsewhere, or giving it up (`"inside": []`), needs `"why"`: without it the house stays and the
+   mind is told so. Every choice, revision, move, refusal and step forward is logged (`kind: "house"`).
+5. **A stalled house is named.** After 15 minutes with nothing gained, the plan hears that the next step needs another
+   way of doing it.
+6. **Walking in is felt.** When the world first says the body stands in a house, it notices: "You are inside a house
+   now: warm and dry, and fed you mend twice as fast".
+7. **Fire: no rubbing without tinder.** `rub` on a log with no coconut within 3 does not start, and says where the
+   nearest one lies (in hut5 it rubbed 30 times with the husk 5 away).
+
+`--no-house-project` turns 1 to 5 off, for the comparison: everything else (the house rule, the fire changes) stays.
+Tested in `mind/tests/test_house.py` (the next step at each stage, which pieces are its own, layouts that cannot be a
+house) and `mind/tests/test_mind.py` (choose, keep, refuse, revise, move with a reason, give up, the stall notice, a
+house that stands, and off).

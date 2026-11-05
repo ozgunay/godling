@@ -152,6 +152,11 @@ def test_body_weather_and_sky_news(mem):
     a.on_step(snap([ground()], clock={"Rain": 0}, attrs={"Cold": True}))
     texts = [e["text"] for e in a.take_events()]
     assert "Fire_3 has gone out" in texts and "You have grown cold: the night is chilly out here" in texts
+    # The world says it stands in a house (ADR-019): once, as it walks in.
+    a.on_step(snap([ground()], clock={"Rain": 0}, attrs={"Sheltered": "house"}))
+    a.on_step(snap([ground()], clock={"Rain": 0}, attrs={"Sheltered": "house"}))
+    texts = [e["text"] for e in a.take_events()]
+    assert texts.count("You are inside a house now: warm and dry, and fed you mend twice as fast") == 1
 
 
 def test_decide_is_the_interrupt_rule(mem):

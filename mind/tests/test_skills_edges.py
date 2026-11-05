@@ -229,7 +229,8 @@ def test_place_from_a_little_short(make):
 
 
 def test_rub_walks_up_to_the_log(make):
-    island, body = make([ent("Spear_1", (-3, 0.5, 0), (1, 1, 3)), ent("Log_3", (15, 0.5, 0), (7.5, 1, 1))])
+    island, body = make([ent("Spear_1", (-3, 0.5, 0), (1, 1, 3)), ent("Log_3", (15, 0.5, 0), (7.5, 1, 1)),
+                         ent("Coconut_1", (15, 0.45, 1.5), (0.9, 0.9, 0.9))])
     island.held = "Spear_1"
     island.results["Rub"] = "StrikeRubCaught:Fire_1"
     r = body.run("rub", {"object": "Log_3"})

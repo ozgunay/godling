@@ -183,3 +183,70 @@ def assess(pieces, terrain, build):
         bare = [c for c in best["cells"] if c not in best["roofed"]]
         short.append(f"the roof covers only {r} of the {n} cells inside (none over {', '.join(at(c) for c in bare[:4])})")
     return (", ".join(good) + ", but " if good else "") + "; ".join(short)
+
+
+def cell_of(xz):
+    """The cell a point [x, z] lies in."""
+    return (round(float(xz[0]) / CELL), round(float(xz[1]) / CELL))
+
+
+def layout(inside, door):
+    """A house the mind chose, read from its reply: (the cells inside, the doorway's cell), or a reason it cannot be
+    one. The cells inside must touch one another, side by side, and the doorway lie beside them."""
+    try:
+        room = sorted({cell_of(c) for c in inside})
+        door = cell_of(door)
+    except (TypeError, ValueError, IndexError, KeyError):
+        return "the cells inside and the doorway must each be a point [x, z]"
+    if not room:
+        return "a house needs at least one cell inside"
+    if len(room) > MOST:
+        return f"{len(room)} cells inside is more than a house: at most {MOST}"
+    joined, queue = {room[0]}, [room[0]]
+    while queue:
+        for n in _sides(queue.pop()):
+            if n in room and n not in joined:
+                joined.add(n)
+                queue.append(n)
+    if len(joined) < len(room):
+        return "the cells inside must touch one another side by side: " + ", ".join(at(c) for c in room if c not in joined)
+    if door in room or not any(n in room for n in _sides(door)):
+        return f"the doorway at {at(door)} must be a cell beside the room, not in it or away from it"
+    return room, door
+
+
+def plan(pieces, terrain, inside, door):
+    """How far a house the mind chose (cells from layout()) has come: what stands, what is still to do in the order
+    a builder does it (walls, a clear room and doorway, the roof), the next step in words, and the pieces that are
+    its own: in its walls and over its room, but not what fills the room or blocks the doorway.
+    Returns {"house", "next", "done", "score", "pieces"}; the score counts what stands, so it grows as the house does."""
+    grid = Grid(pieces, terrain)
+    room = sorted(inside)
+    floor = grid.floor(room[0])
+    side = {n for c in room for n in _sides(c) if n not in room}
+    walls = sorted(side - {door})
+    low = [n for n in walls if grid.standing(n, floor) < WALL]
+    filled = [c for c in room if not grid.clear(c, floor)]
+    blocked_door = not grid.clear(door, floor)
+    bare = [c for c in room if grid.roof(c, floor) is None]
+    in_the_way = {name for c in room + [door] for _, name in grid.filling(c, floor)}
+    own = sorted(({name for n in walls for b, _, name in grid.columns.get(n, ()) if b < floor + 3 * LAYER}
+                  | {name for c in room for b, _, name in grid.columns.get(c, ()) if b >= floor + CLEAR - 0.1})
+                 - in_the_way)
+    done = (["the walls stand two blocks high"] if not low else []) + (["the room is clear"] if not filled else [])         + ([f"the doorway at {at(door)} is clear"] if not blocked_door else [])         + (["the roof covers the room"] if not bare else [])
+    if low:
+        step = f"walls two blocks high at {', '.join(at(n) for n in low[:6])}" + (" and more" if len(low) > 6 else "")
+    elif filled:
+        step = "clear the room: " + ", ".join(
+            f"{at(c)} ({name} {'hangs too low over it' if b >= floor + LAYER - 0.15 else 'fills it'})"
+            for c in filled[:3] for b, name in sorted(grid.filling(c, floor))[:1])
+    elif blocked_door:
+        step = f"clear the doorway at {at(door)}: " + " and ".join(sorted({n for _, n in grid.filling(door, floor)})[:2])             + " in it"
+    elif bare:
+        step = (f"a roof over {', '.join(at(c) for c in bare[:6])}, with more than 5 of room under it (it rests on "
+                "walls three blocks high, set from a step beside them)")
+    else:
+        step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
+    score = (len(walls) - len(low)) + (len(room) - len(filled)) + (not blocked_door) + (len(room) - len(bare))
+    return {"house": not (low or filled or blocked_door or bare), "next": step, "done": done, "score": score,
+            "pieces": own}

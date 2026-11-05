@@ -559,6 +559,7 @@ def test_carve(make):
 def test_rub(make):
     log = ent("Log_3", (6, 0.5, 0), (7.5, 1, 1))
     island, body = tools(make, held="Spear_1", target=log)
+    island.ents["Coconut_1"] = ent("Coconut_1", (6, 0.45, 2), (0.9, 0.9, 0.9))  # tinder beside the log
     island.results["Rub"] = ["RubFailed:TooSoon", "StrikeRubWarm:1", "StrikeRubHot:12", "StrikeRubCaught:Fire_1"]
     r = body.run("rub", {"object": "Log_3"})
     assert r.ok and r.summary.startswith("rubbed Spear_1 against Log_3 3 times, and a flame caught: Fire_1")
@@ -571,17 +572,23 @@ def test_rub(make):
         assert r.ok is ok and words in r.summary
     island.results["Rub"] = "StrikeRubHot:14"
     assert body.run("rub", {"object": "Log_3"}).summary.endswith(
-        "the wood grew hot and smoked, but no tinder lay beside it for a spark to catch: no coconut lies anywhere near")
-    # Run hut5: the husk lay a few steps off. Hot wood says where the nearest tinder is, and how far is too far.
-    island.ents["Coconut_2"] = ent("Coconut_2", (6, 0.45, 6.1), (0.9, 0.9, 0.9))
-    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
-        "no tinder lay within 3 of Log_3 for a spark to catch: the nearest coconut, Coconut_2, is 5.6 away")
-    island.ents["Coconut_2"]["position"] = [6, 0.45, 2]
-    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
-        "the dry husk of Coconut_2 beside it only smoulders yet; rub on and it may catch")
-    del island.ents["Coconut_2"]
+        "the dry husk of Coconut_1 beside it only smoulders yet; rub on and it may catch")
     island.results["Rub"] = "StrikeRubWarm:2"
     assert body.run("rub", {"object": "Log_3"}).summary.endswith("the wood grew warm, no more")
+    # Run hut5: it rubbed 30 times with the husk 5 away. With no tinder beside the log it does not start, and says why.
+    island.ents["Coconut_1"]["position"] = [6, 0.45, 6.1]
+    rubs = island.actions().count("Rub")
+    assert body.run("rub", {"object": "Log_3"}).summary == (
+        "you did not start rubbing: no tinder lies within 3 of Log_3 for a spark to catch (the nearest coconut, "
+        "Coconut_1, is 5.6 away); set a coconut right beside the log first")
+    del island.ents["Coconut_1"]
+    assert body.run("rub", {"object": "Log_3"}).summary.endswith(
+        "(no coconut lies anywhere near); set a coconut right beside the log first")
+    assert island.actions().count("Rub") == rubs
+    # Hot wood whose tinder was carried off while it rubbed says so, and where the nearest lies.
+    island.ents["Coconut_2"] = ent("Coconut_2", (6, 0.45, 6.1), (0.9, 0.9, 0.9))
+    assert body._tinder_by(body._observe(), "Log_3") == (
+        "no tinder lay within 3 of Log_3 for a spark to catch: the nearest coconut, Coconut_2, is 5.6 away")
     assert body.run("rub", {"object": "Nothing"}).summary == "there is nothing called Nothing"
     island.held = None
     assert body.run("rub", {"object": "Log_3"}).summary.startswith("your hands are empty")
@@ -589,7 +596,7 @@ def test_rub(make):
 
 def test_rub_out_of_reach(make):
     sea = [ent("Sand", (0, -0.5, 0), (20, 1, 20), role="Ground"), ent("Spear_1", (-3, 0.5, 0), (1, 1, 3)),
-           ent("Log_3", (40, 0.5, 0), (7.5, 1, 1))]
+           ent("Log_3", (40, 0.5, 0), (7.5, 1, 1)), ent("Coconut_1", (40, 0.45, 1.5), (0.9, 0.9, 0.9))]
     island, body = make(sea, bare=True)
     island.held = "Spear_1"
     assert body.run("rub", {"object": "Log_3"}).summary.startswith("no clear spot to stand within reach of Log_3")

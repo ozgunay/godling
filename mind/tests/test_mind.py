@@ -323,6 +323,80 @@ def test_what_it_names_itself(monkeypatch, tmp_path):
     assert not body.run("pick_up", {"object": "Block_1"}).ok
 
 
+def test_one_house_kept_across_plans(monkeypatch, tmp_path):
+    # Run hut5-house: four sites in 45 minutes, 19 pieces of its own building taken back. One house, chosen once.
+    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
+    logs = []
+    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library, log=lambda **k: logs.append(k), house_project=True)
+    system = mind.system_prompt(island.snap())
+    assert '"house": {' in system and "A house you build is one project, kept across all your plans" in system
+    assert "Your house" not in mind.situation(island.snap(), [], [])
+
+    def reply(house):
+        mind.adopt({"reply": {"house": house}, "seconds": 1, "prepared": {"assumes": None}}, island.snap())
+    reply({"inside": [[10, 0]], "door": [10, -2.5]})
+    assert mem.state["house"]["inside"] == [[4, 0]] and mem.state["house"]["door"] == [4, -1]
+    text = mind.situation(island.snap(), [], [])
+    assert ("Your house, the one project you keep across your plans (chosen 0 minutes ago): inside (10.0, 0.0), the "
+            "doorway at (10.0, -2.5). Done: the room is clear. Next: walls two blocks high at (7.5, 0.0), (10.0, 2.5), "
+            "(12.5, 0.0). Built so far, kept for it (3 pieces): layer 1: (7.5, 0.0), (10.0, 2.5), (12.5, 0.0).") in text
+    # Its walls are kept for it; the block in its doorway is not.
+    r = body.run("pick_up", {"object": "Block_2"})
+    assert not r.ok and r.summary == ("Block_2 is part of your house at (10.0, 0.0), which you are building; move the "
+                                      'house or give it up first ("house", with why) if you mean to take it apart')
+    assert "Block_2" not in mind.situation(island.snap(), [], []).split("Loose objects")[1].split("Stacks")[0]
+    assert body.run("pick_up", {"object": "Block_4"}).ok
+    # Elsewhere only with a reason; the same site it may change as it likes.
+    reply({"inside": [[-12.5, 5]], "door": [-12.5, 2.5]})
+    assert mem.state["house"]["inside"] == [[4, 0]]
+    assert mind.notes[-1] == ("You did not move your house from (10.0, 0.0): a house moves only for a concrete reason "
+                              'it cannot stand there; give it with "why".')
+    reply({"inside": [[10, 0], [10, -2.5]], "door": [10, -5]})
+    assert mem.state["house"]["inside"] == [[4, -1], [4, 0]] and mem.state["house"]["moves"] == 0
+    reply({"inside": [[10, 0]], "door": [10, 5]})
+    assert "Your house was not set: the doorway at (10.0, 5.0) must be a cell beside the room" in mind.notes[-1]
+    # Stalled: it hears so after fifteen minutes with nothing gained.
+    mem.state["house"]["best_at"] -= 16 * 60
+    assert "It has come no further in 16 minutes: the next step needs another way of doing it." in mind.situation(
+        island.snap(), [], [])
+    reply({"inside": [[-12.5, 5]], "door": [-12.5, 2.5], "why": "the sand here is soft and the walls slide"})
+    house = mem.state["house"]
+    assert house["inside"] == [[-5, 2]] and house["moves"] == 1 and house["pieces"] == []
+    assert "(chosen 0 minutes ago, after moving it 1 time): inside (-12.5, 5.0)" in mind.situation(island.snap(), [], [])
+    assert body.run("pick_up", {"object": "Block_2"}).ok
+    reply({"inside": []})
+    assert mem.state["house"] == house and "You did not give up your house" in mind.notes[-1]
+    reply({"inside": [], "why": "no stone is left on the island"})
+    assert "house" not in mem.state
+    assert [(l["phase"], l.get("why", "")) for l in logs if l["kind"] == "house" and l["phase"] != "progress"] == [
+        ("chose", ""), ("refused", ""), ("revised", ""), ("rejected", ""),
+        ("moved", "the sand here is soft and the walls slide"), ("refused", ""),
+        ("abandoned", "no stone is left on the island")]
+
+
+def test_a_chosen_house_that_stands(monkeypatch, tmp_path):
+    posts = [block(f"Block_{side}{k}", x, (k - 0.5) * 2.5, z) for side, x, z in ((1, -2.5, 0), (2, 2.5, 0))
+             for k in (1, 2, 3)] + [block(f"Block_3{k}", 0, (k - 0.5) * 2.5, 2.5) for k in (1, 2)]
+    island = Island([ground(attrs={"Surface": "Sand"}), *posts, ent("Log_1", (0, 8.75, 0), (7.5, 2.5, 2.5))])
+    island.me = [0, BODY_CENTRE_Y, -8]
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    library, mem, logs = SkillLibrary(tmp_path / "skills.json"), NativeMemory(tmp_path / "mem"), []
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into)
+    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library, log=lambda **k: logs.append(k), house_project=True)
+    mind.adopt({"reply": {"house": {"inside": [[0, 0]], "door": [0, -2.5]}}, "seconds": 1,
+                "prepared": {"assumes": None}}, island.snap())
+    assert [l["phase"] for l in logs if l["kind"] == "house"] == ["chose", "progress", "built"]
+    assert "Next: none: it is a house. Walk in by the doorway at (0.0, -2.5) and stand inside." in mind.situation(
+        island.snap(), [], [])
+    # Off, as in the comparison's other arm: no house in the reply's shape, and a "house" in a reply does nothing.
+    mind.house_project = False
+    assert '"house"' not in mind.system_prompt(island.snap())
+    mem.set_house(None)
+    mind.adopt({"reply": {"house": {"inside": [[0, 0]], "door": [0, -2.5]}}, "seconds": 1,
+                "prepared": {"assumes": None}}, island.snap())
+    assert "house" not in mem.state
+
+
 def test_planning_ahead_counts_the_agendas_pieces_as_taken(monkeypatch, tmp_path):
     # Run rp3: the plan made while the body raised a column took the column's blocks for a ring round it.
     island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)

@@ -13,6 +13,12 @@ from pathlib import Path
 from .files import write_atomic
 
 
+def house_title(house):
+    """How the body names the house the mind is building: "your house at (x, z)", by its first cell inside."""
+    ix, iz = house["inside"][0]
+    return f"your house at ({ix * 2.5:.1f}, {iz * 2.5:.1f})"
+
+
 def _words(text):
     return {w for w in re.findall(r"[a-z0-9_]+", text.lower()) if len(w) > 3}
 
@@ -114,14 +120,25 @@ class NativeMemory:
             self.state["placed"] = [p for p in self.state.get("placed", []) if p not in released["cubes"]]
 
     def protected_cubes(self):
-        return {c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
+        return ({c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
+                | set((self.state.get("house") or {}).get("pieces", [])))
 
     def built_into(self, piece):
-        """The name of the build (Mind.keep_builds) a piece is built into, or None. Only these does the body refuse
-        to pick up; a piece the mind kept by name it may still take (in run hut2 it named a log lying on the sand
-        "camp roof beam", then could not lift it onto the roof)."""
+        """The name of the build (Mind.keep_builds) or the house (Mind.house_project) a piece is built into, or None.
+        Only these does the body refuse to pick up; a piece the mind kept by name it may still take (in run hut2 it
+        named a log lying on the sand "camp roof beam", then could not lift it onto the roof)."""
+        house = self.state.get("house") or {}
+        if piece in house.get("pieces", []):
+            return house_title(house)
         return next((title for title, s in self.state["structures"].items() if s.get("auto") and piece in s["cubes"]),
                     None)
+
+    def set_house(self, house):
+        """The house the mind is building (Mind.house_project), or None once it gives it up."""
+        if house is None:
+            self.state.pop("house", None)
+        else:
+            self.state["house"] = house
 
     def note_placed(self, pieces):
         """Pieces the body set down itself (place_at, put_down): what it builds with them is its own."""

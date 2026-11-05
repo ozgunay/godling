@@ -1136,6 +1136,9 @@ class Skills:
         if build:
             # What it built is its own: its plans took its own builds apart for material (runs rp3 and hut1).
             # Lifting a piece aside to step out of a pen is a reflex, and puts the piece back.
+            if build.startswith("your house"):  # kept for the house it is building (Mind.house_project)
+                return Result(False, "pick_up", f"{object} is part of {build}, which you are building; move the house or "
+                                                "give it up first (\"house\", with why) if you mean to take it apart")
             return Result(False, "pick_up", f"{object} is part of {build}, which you built; release that first if you "
                                             "mean to take it apart")
         held = snap.held()
@@ -1525,6 +1528,14 @@ class Skills:
         held = snap.held()
         if not held:
             return Result(False, "rub", "your hands are empty: there is nothing to rub with")
+        if target.name.startswith("Log_") and not target.attrs.get("Burning"):
+            husk, gap = self._tinder_near(snap, object)
+            if husk is None or gap > TINDER_RANGE:  # in run hut5 it rubbed 30 times with the husk 5 away
+                where = (f"the nearest coconut, {husk.name}, is {gap:.1f} away" if husk is not None
+                         else "no coconut lies anywhere near")
+                return Result(False, "rub", f"you did not start rubbing: no tinder lies within {TINDER_RANGE:.0f} of "
+                                            f"{object} for a spark to catch ({where}); set a coconut right beside the "
+                                            "log first")
         self.busy.add(held.name)
         level = self._level(snap)
         body = (snap.me[0], level + BODY_CENTRE_Y, snap.me[2])
@@ -1563,24 +1574,33 @@ class Skills:
                       {"rubs": rubs})
 
     @staticmethod
-    def _tinder_by(snap, log):
-        """Why hot wood did not catch, as the body sees it: no tinder close enough (and where the nearest lies), or a
-        husk beside it that only smoulders yet. In run hut5 the husk lay a few steps off by the yard, and "nothing
-        beside it caught" read as bad luck: the mind never moved it (main.lua rubLog, TINDER_RANGE)."""
+    def _tinder_near(snap, log):
+        """The coconut nearest the log, and how far it lies from the log's nearest point as the world measures it
+        (main.lua rubLog, TINDER_RANGE); (None, None) with no coconut about or no such log."""
         wood = snap.entities.get(log)
         held = snap.held()
         husks = [e for e in snap.movables() if e.name.startswith("Coconut_") and e is not held]
         if wood is None or not husks:
-            return "no tinder lay beside it for a spark to catch: no coconut lies anywhere near"
+            return None, None
 
-        def gap(e):  # from the nearest point of the log, as the world measures it
+        def gap(e):
             near = [min(max(c, p - s / 2), p + s / 2) for c, p, s in zip(e.pos, wood.pos, wood.size)]
             return math.dist(near, e.pos)
         husk = min(husks, key=gap)
-        if gap(husk) <= TINDER_RANGE:
+        return husk, gap(husk)
+
+    @classmethod
+    def _tinder_by(cls, snap, log):
+        """Why hot wood did not catch, as the body sees it: no tinder close enough (and where the nearest lies), or a
+        husk beside it that only smoulders yet. In run hut5 the husk lay a few steps off by the yard, and "nothing
+        beside it caught" read as bad luck: the mind never moved it."""
+        husk, gap = cls._tinder_near(snap, log)
+        if husk is None:
+            return "no tinder lay beside it for a spark to catch: no coconut lies anywhere near"
+        if gap <= TINDER_RANGE:
             return f"the dry husk of {husk.name} beside it only smoulders yet; rub on and it may catch"
         return (f"no tinder lay within {TINDER_RANGE:.0f} of {log} for a spark to catch: the nearest coconut, {husk.name}, "
-                f"is {gap(husk):.1f} away")
+                f"is {gap:.1f} away")
 
     def skill_fasten(self, object):
         snap = self._observe()

@@ -1,6 +1,6 @@
 """The house check (house.py, ADR-019): the layouts the world's copy (main.lua houseAt) is held to as well
 (world/tests/test_life.luau)."""
-from godling.house import assess, houses
+from godling.house import assess, houses, layout, plan
 
 C = 2.5
 GROUND = [{"name": "Ground", "pos": [0, -0.5, 0], "size": [400, 1, 400]}]
@@ -88,3 +88,36 @@ def test_a_wall_encloses_nothing():
     assert houses(wall, GROUND) == []
     assert assess(wall, GROUND, names(wall)) == "it encloses no space yet"
     assert assess(wall, GROUND, {"Nothing"}) == ""
+
+
+def test_a_chosen_house_says_what_it_needs_next():
+    room, door = layout([[0, 0]], [0, -2.5])
+    assert (room, door) == ([(0, 0)], (0, -1))
+    # Nothing built: walls first; nothing of it is its own yet.
+    empty = plan([], GROUND, room, door)
+    assert not empty["house"] and empty["pieces"] == [] and empty["score"] == 2
+    assert empty["next"] == "walls two blocks high at (-2.5, 0.0), (0.0, 2.5), (2.5, 0.0)"
+    # Walls up: the roof next, and its walls are its own.
+    bare = plan(hut(roof=False), GROUND, room, door)
+    assert bare["next"].startswith("a roof over (0.0, 0.0), with more than 5 of room under it")
+    assert bare["done"] == ["the walls stand two blocks high", "the room is clear", "the doorway at (0.0, -2.5) is clear"]
+    assert bare["pieces"] == ["E1", "E2", "E3", "N1", "N2", "W1", "W2", "W3"] and bare["score"] == 5
+    # A block in the doorway or the room is in the way, not its own.
+    blocked = plan(hut() + [block("Block_8", 0, -1, 1)], GROUND, room, door)
+    assert blocked["next"] == "clear the doorway at (0.0, -2.5): Block_8 in it" and "Block_8" not in blocked["pieces"]
+    filled = plan(hut() + [block("Block_7", 0, 0, 1)], GROUND, room, door)
+    assert filled["next"] == "clear the room: (0.0, 0.0) (Block_7 fills it)" and "Block_7" not in filled["pieces"]
+    done = plan(hut(), GROUND, room, door)
+    assert done["house"] and done["score"] == 6 and "Roof" in done["pieces"]
+    assert done["next"] == "none: it is a house. Walk in by the doorway at (0.0, -2.5) and stand inside"
+
+
+def test_a_house_layout_must_hold_together():
+    assert layout([[0, 0], [5, 0]], [0, -2.5]) == "the cells inside must touch one another side by side: (5.0, 0.0)"
+    assert layout([[0, 0]], [0, -5]) == ("the doorway at (0.0, -5.0) must be a cell beside the room, not in it or "
+                                         "away from it")
+    assert layout([[0, 0]], [0, 0]).startswith("the doorway at (0.0, 0.0) must be a cell beside the room")
+    assert layout([], [0, 0]) == "a house needs at least one cell inside"
+    assert layout([["a", 0]], [0, 0]) == layout([[0, 0]], None) == (
+        "the cells inside and the doorway must each be a point [x, z]")
+    assert layout([[0, 0], [2.4, 0.3]], [-2.5, 0]) == ([(0, 0), (1, 0)], (-1, 0))  # points snap to their cells

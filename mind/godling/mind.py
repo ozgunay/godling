@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from .learned import SkillError
 from .discovery import SIGHT
-from .house import assess
+from .house import assess, at, layout as house_layout, plan as house_plan
 from .structures import pieces_of, terrain_of
 from .world import CUBE, hdist
 
@@ -30,6 +30,18 @@ ANSWER_SHAPE = {
     "keep": [{"name": "a name for something you built", "cubes": ["Block_..."]}],
     "release": ["name of a kept structure you are willing to take apart"],
 }
+
+# A house is one project kept across plans (ADR-019, after run hut5-house: four sites in 45 minutes, 19 pieces of its
+# own building taken back). The mind chooses its site once; every plan is told how far it has come and what is next.
+HOUSE_SHAPE = {"inside": "[[x, z], ...] the cells inside your house (block centres)",
+               "door": "[x, z] its doorway: a cell beside them",
+               "why": "only to move or give up the house you chose: the concrete reason it cannot stand there"}
+HOUSE_RULE = """A house you build is one project, kept across all your plans until it stands. Choose where it will stand
+once, with "house": the cells inside it and its doorway; leave "house" out after that. Every plan is told how far it
+has come and what it needs next, and your body keeps the pieces in its walls and roof for it. You may change the house
+where it stands (more cells, another doorway). Move it elsewhere, or give it up ("inside": []), only with "why": a
+concrete reason it cannot stand there."""
+HOUSE_STALL = 15 * 60  # seconds without progress before the mind hears its house has come no further
 
 TEACHING = """## Teaching yourself skills
 You start with only your body's basic moves. When you find a sequence that works, give it a name with
@@ -171,7 +183,8 @@ class _Seen:
 
 
 class Mind:
-    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None):
+    def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None,
+                 house_project=False):
         self.llm = llm
         self.discovery = discovery  # what Godling has seen of the island; None: it knows everything (ADR-008)
         self.memory = memory
@@ -186,6 +199,7 @@ class Mind:
         self.failures = []  # recent failed goals, to break loops
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
         self.think_s = None  # running estimate of how long a plan takes to think up
+        self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
 
     def _knows(self, thing):
         return self.discovery is None or self.discovery.knows(thing)
@@ -212,6 +226,9 @@ class Mind:
             **{k: v for k, v in ANSWER_SHAPE.items() if k != "agenda"}, "intention": ANSWER_SHAPE["agenda"][0]["intention"],
             "project": {k: v for k, v in ANSWER_SHAPE["agenda"][0].items() if k != "intention"}}
         plan_rule = AGENDA_RULES if self.agenda else "Plan one project with 1-8 steps."
+        if self.house_project:
+            shape = {**shape, "house": HOUSE_SHAPE}
+            plan_rule += "\n" + HOUSE_RULE
         return f"""{self.soul}
 
 ## How you exist
@@ -390,6 +407,7 @@ thought and in that project's intention."""
         lines = [
             f"Awake for {int((time.time() - self.started) / 60)} minutes. World tick {snap.tick}.",
             f"You are at {_fmt_pos(snap.me)}, holding {held.name if held else 'nothing'}.",
+            *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
                + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
@@ -449,6 +467,95 @@ thought and in that project's intention."""
             lines.append("Your intentions for later: " + "; ".join(i["text"] for i in intentions))
         return "\n".join(lines)
 
+    # ---- the house it is building (HOUSE_RULE) ------------------------------------------
+    def house_progress(self, snap):
+        """How far the house it chose has come (house.plan), with its pieces kept for it, or None. Logs each step
+        forward and the moment it first stands as a house."""
+        house = self.memory.state.get("house")
+        if not self.house_project or not house or not snap.has_world:
+            return None
+        found = house_plan(pieces_of(snap), terrain_of(snap), [tuple(c) for c in house["inside"]], tuple(house["door"]))
+        house["pieces"] = found["pieces"]
+        if found["score"] > house.get("best", -1):
+            house["best"], house["best_at"] = found["score"], time.time()
+            self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
+        if found["house"] and not house.get("built"):
+            house["built"] = time.time()
+            self.log(kind="house", phase="built", inside=house["inside"], door=house["door"])
+        elif not found["house"]:
+            house["built"] = None
+        return found
+
+    def _house_line(self, snap):
+        house = self.memory.state["house"]
+        found = self.house_progress(snap)
+        if found is None:
+            return ""
+        cells = ", ".join(at(c) for c in house["inside"])
+        moved = house.get("moves", 0)
+        after = f", after moving it {moved} time{'s' if moved != 1 else ''}" if moved else ""
+        line = (f"Your house, the one project you keep across your plans (chosen "
+                f"{int((time.time() - house['since']) / 60)} minutes ago{after}): inside {cells}, the doorway at "
+                f"{at(house['door'])}. ")
+        if found["done"]:
+            line += f"Done: {', '.join(found['done'])}. "
+        line += f"Next: {found['next']}."
+        if found["pieces"]:
+            line += (f" Built so far, kept for it ({len(found['pieces'])} pieces): "
+                     f"{self._layout(snap, found['pieces'])}.")
+        still = time.time() - house.get("best_at", house["since"])
+        if not found["house"] and still >= HOUSE_STALL:
+            line += (f" It has come no further in {int(still / 60)} minutes: the next step needs another way of "
+                     "doing it.")
+        return line
+
+    def _choose_house(self, spec, snap):
+        """The mind chose a house, changed it, moved it or gave it up ("house" in its reply). Moving it elsewhere or
+        giving it up needs a reason (in run hut5 it began again at four sites in 45 minutes)."""
+        if not self.house_project or not isinstance(spec, dict):
+            return
+        now = self.memory.state.get("house")
+        why = str(spec.get("why") or "").strip()[:200]
+        inside = spec.get("inside")
+        if not inside:
+            if now is None:
+                return
+            if not why:
+                self.notes.append("You did not give up your house: say why it cannot stand where it is (\"why\").")
+                self.log(kind="house", phase="refused", inside=[], door=None)
+                return
+            self.log(kind="house", phase="abandoned", why=why, inside=now["inside"], door=now["door"])
+            self.memory.set_house(None)
+            return
+        chosen = house_layout(inside if isinstance(inside, list) else [], spec.get("door"))
+        if isinstance(chosen, str):
+            self.notes.append(f"Your house was not set: {chosen}.")
+            self.log(kind="house", phase="rejected", reason=chosen)
+            return
+        room, door = [list(c) for c in chosen[0]], list(chosen[1])
+        moves = 0
+        if now is not None:
+            if now["inside"] == room and now["door"] == door:
+                return
+            same_site = any(c in now["inside"] for c in room)
+            if not same_site and not why:
+                self.notes.append(f"You did not move your house from {at(now['inside'][0])}: a house moves only for a "
+                                  "concrete reason it cannot stand there; give it with \"why\".")
+                self.log(kind="house", phase="refused", inside=room, door=door)
+                return
+            self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
+                     was=now["inside"])
+            if same_site:
+                self.memory.set_house({**now, "inside": room, "door": door})
+                self.house_progress(snap)
+                return
+            moves = now.get("moves", 0) + 1
+        else:
+            self.log(kind="house", phase="chose", why=why, inside=room, door=door)
+        self.memory.set_house({"inside": room, "door": door, "since": time.time(), "best": -1, "best_at": time.time(),
+                               "pieces": [], "moves": moves, "why": why})
+        self.house_progress(snap)
+
     # ---- thinking ---------------------------------------------------------------------
     def prepare(self, snap, events, chat, doing=None):
         """Main thread: build the prompt (reads memory). Returns what think() needs."""
@@ -496,6 +603,7 @@ thought and in that project's intention."""
                                  importance=int(str(item.get("importance", 3))[:1] or 3))
         for name in reply.get("release") or []:
             self.memory.release_structure(str(name))
+        self._choose_house(reply.get("house"), snap)
         for item in reply.get("keep") or []:
             cubes = [c for c in item.get("cubes", []) if c in snap.entities]
             if item.get("name") and cubes:
@@ -539,6 +647,7 @@ thought and in that project's intention."""
         self.memory.store_experience(self.last_outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
         self.memory.note_placed(self.skills.take_placed())
         self.keep_builds(snap)
+        self.house_progress(snap)
         for r in results:
             if r.skill == "build_tower" and len(r.facts.get("cubes", [])) >= 3:
                 where = snap.entities.get(r.facts["cubes"][0])
