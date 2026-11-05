@@ -385,7 +385,8 @@ class Island:
         if c.get("GodlingHealth") is not None:
             godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,
                        "cold": bool(c.get("GodlingCold")), "bracing": bool(c.get("GodlingBracing")),
-                       "knockedDown": bool(c.get("GodlingKnockedDown"))}
+                       "knockedDown": bool(c.get("GodlingKnockedDown")),
+                       "drowning": bool(c.get("GodlingDrowning"))}  # in the sea (main.lua THE SEA)
         with self.lock:
             mine = self.last_note.get(client, 0)
             notes = {"limit": NOTE_LIMIT, "every": self.note_every, "queue": len(self.notes),

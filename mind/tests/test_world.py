@@ -82,7 +82,8 @@ def test_snapshot_reads_the_body_and_the_clock():
              "MeteorThrown": 1.0}
     attrs = {"LastActionResult": "ok", "Hunger": 80, "Health": 90, "Faints": 1, "Hurts": 2, "Hurt": "Meteor",
              "Freed": 1, "Wet": 60, "Cold": True, "InRain": 1, "Sheltered": "roof", "WalkSpeed": 12,
-             "ViewForwardX": 0.0, "ViewForwardZ": 1.0, "Bracing": True, "KnockedDown": 0}
+             "ViewForwardX": 0.0, "ViewForwardZ": 1.0, "Bracing": True, "KnockedDown": 0, "Drowning": True,
+             "Drowned": 2, "Ashore": 1}
     s = snap([ground()], attrs=attrs, clock=clock, others=[("Sky", (0, 0, 0)), ("Ann", (1, 2, 3))], tick=9)
     assert s.tick == 9 and s.has_world
     assert s.last_result == "ok" and s.hunger == 80 and s.health == 90 and s.faints == 1
@@ -96,6 +97,8 @@ def test_snapshot_reads_the_body_and_the_clock():
     assert s.meteor_id == 2 and s.meteor_at == (1, 0, -1)
     assert s.meteor_did == {"Smashed": 3, "Thrown": 1, "Unfastened": 0, "Felled": 0, "Hurt": 0}
     assert s.bracing and not s.knocked_down
+    assert (s.drowning, s.drowned, s.ashore) == (True, 2, 1)
+    assert snap([ground()]).drowning is False and (snap([ground()]).drowned, snap([ground()]).ashore) == (0, 0)
 
 
 def test_snapshot_without_a_clock_or_world():

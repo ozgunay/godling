@@ -8,7 +8,7 @@ local function at(part)
     return { p.X, p.Y, p.Z }
 end
 
-T.test("hunger empties, then health; well fed it mends; at none, Godling faints by the raft", function()
+T.test("hunger empties, then health; well fed it mends; at none, Godling faints and wakes at the start spot", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling(V.new(10, 2.55, 10))
@@ -41,7 +41,7 @@ T.test("hunger empties, then health; well fed it mends; at none, Godling faints 
     T.eq(s.hunger, 50)
     T.eq(s.health, 30)
     T.eq(block.CanCollide, true, "dropped where it fainted")
-    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "wakes by the raft")
+    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "wakes at the start spot")
     T.eq(e.humanoid(g).Health, 30)
     -- a bodiless player and the guest panel are not fed; a body without a character faints all the same
     local sky = w.skyPlayer()

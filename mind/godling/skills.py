@@ -604,9 +604,10 @@ class Skills:
                 self.world.act("MoveTo", {"position": [x, BODY_CENTRE_Y, z]})
                 sent = time.time()
             snap = self._observe()
-            if snap.me[1] < 0.8:
+            if snap.me[1] < 0.8:  # in the water: the island's edge is too high to climb back onto (main.lua THE SEA)
                 self.world.act("Stop")
-                raise Stuck("fell off the edge into the sea")
+                raise Stuck("fell off the edge into the sea: you cannot climb back out, and the water is drowning you; "
+                            "you will wake at the start spot in the middle of the island")
             dist = hdist(snap.me, (x, 0, z))
             if dist < best - 0.05:
                 best, last_progress = dist, time.time()
@@ -641,13 +642,37 @@ class Skills:
         if gap(wall) > 2.5:
             return False
         touching = [w for w in walls if gap(w) <= 1.2] or [wall]
+        names = ", ".join(w.name for w in touching)
         pushes = [away(w) for w in touching]
         dx, dz = sum(p[0] for p in pushes), sum(p[1] for p in pushes)
-        if math.hypot(dx, dz) < 0.3:  # pushed equally from opposite sides: along the gap instead
+        squeezed = math.hypot(dx, dz) < 0.3
+        if squeezed:  # pushed equally from opposite sides: along the gap instead, either way
             dx, dz = -pushes[0][1], pushes[0][0]
         norm = math.hypot(dx, dz) or 1.0
-        ex, ez = me[0] + dx / norm * 2.5, me[2] + dz / norm * 2.5
-        self.log(kind="reflex", text=f"snagged by {', '.join(w.name for w in touching)}; stepping away to ({ex:.1f}, {ez:.1f})")
+        # Only onto our own floor, all the way and with the whole body: stepping straight away from Log_3 walked Godling
+        # off the end of the west beach, where it hung on the sand's lip over the sea and then slipped in (live run,
+        # 2026-11-05). If straight away is not floor, turn a little, then sideways along what snags it; never back into it.
+        level = self._level(snap)
+
+        def floor(x, z):
+            ground = snap.surface(x, z, below=level + STEP)[0]
+            return ground is not None and abs(ground - level) <= 0.3
+
+        def safe(ux, uz):
+            if any(ux * px + uz * pz < -0.01 for px, pz in pushes):  # into something that snags it
+                return False
+            return all(floor(me[0] + ux * d + ox, me[2] + uz * d + oz) for d in (0.5, 1.0, 1.5, 2.0, 2.5)
+                       for ox, oz in ((0, 0), (BODY_RADIUS, 0), (-BODY_RADIUS, 0), (0, BODY_RADIUS), (0, -BODY_RADIUS)))
+        for turn in (0, 45, -45, 90, -90) + ((180,) if squeezed else ()):
+            c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+            ux, uz = (dx * c - dz * s) / norm, (dx * s + dz * c) / norm
+            if safe(ux, uz):
+                break
+        else:
+            self.log(kind="reflex", text=f"snagged by {names}; no floor to step away onto (the sea or a drop)")
+            return False
+        ex, ez = me[0] + ux * 2.5, me[2] + uz * 2.5
+        self.log(kind="reflex", text=f"snagged by {names}; stepping away to ({ex:.1f}, {ez:.1f})")
         self.world.act("MoveTo", {"position": [ex, BODY_CENTRE_Y, ez]})
         time.sleep(0.8)
         self.world.act("Stop")

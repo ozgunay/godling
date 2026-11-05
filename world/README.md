@@ -100,8 +100,8 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - A `SkyNote_n` paper glider (`RenderRole` "SkyNote", never touched) drifts down from 9 near Godling in 4 s, by the same spot rule as the drops, and lies there 4 minutes.
   - The Clock carries the latest note: `NoteId`, `NoteText` (at most 160 characters, one line), `NoteX`, `NoteZ`. The world log prints `SKY Note #n drifted down at (x, z): text`.
   - The panel filters a note before it reaches the world (`tools/guest_panel.py clean_note`). The mind reads it as a stranger's quoted words and decides for itself.
-- **What viewers see of Godling.** The guest panel's bodiless player cannot see other players, so every half second the world copies Godling's `Health`, `Hunger`, `Wet`, `Cold`, `Bracing` and `KnockedDown` onto the Clock as `GodlingHealth` and so on (`sky.mirrorGodling`). The Clock also carries `Day`, counted from the first morning.
-- **One table for the sky's parts** (`local sky`: `turners`, `power`, `quake`, `pedestal`, `parkGuest`, `mirrorGodling`, `notes`, `aim`, `meteor`). The main chunk is at Luau's limit of 200 locals; one more stopped the world with "Out of local registers".
+- **What viewers see of Godling.** The guest panel's bodiless player cannot see other players, so every half second the world copies Godling's `Health`, `Hunger`, `Wet`, `Cold`, `Bracing`, `KnockedDown` and `Drowning` onto the Clock as `GodlingHealth` and so on (`sky.mirrorGodling`). The Clock also carries `Day`, counted from the first morning.
+- **One table for the sky's parts** (`local sky`: `turners`, `power`, `quake`, `pedestal`, `parkGuest`, `mirrorGodling`, `notes`, `aim`, `meteor`, `tickSea`, `bodyFits`). The main chunk is at Luau's limit of 200 locals; one more stopped the world with "Out of local registers".
 - **The guest panel's "Sky" body stays parked.** A character's body does not stay anchored. The parked Sky body fell out of the world and was put back on the spawn spot, on Godling's head (since PR #3; found by the renderer session). It now stands on an invisible `SkyPedestal` at (0, -40, 0) under the island, and is put back there every half second if it drifts.
 - **Weather (ADR-010).** Showers every 20–50 minutes, 4–10 long; the Clock carries `Rain` (0–1).
   - Out in the rain, a body walks at 0.65 of its pace and gets soaked (`Wet` 0–100).
@@ -118,6 +118,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - From the 12th rub it may catch, but only with a coconut within 3 as tinder, which burns away.
   - Nothing warms in the rain or for 5 minutes after it.
 - **A ship (ADR-010)** sails along the horizon for five minutes every 2.5–5 hours: parts `Ship`, `Ship_Cabin`, `Ship_Mast` and `Ship_Sail`.
+- **The sea (ADR-020).** A body hanging on the beach's lip for 3 s is put back on the nearest sand (`Ashore`, log `ASHORE`). A body in the water drowns over 90 s (`Drowning`), then faints and wakes at the start spot, the middle meadow at (15, -27.5) (`Drowned`, log `DROWNED`).
 - **Driftwood (ADR-010).** Every 3 minutes a `Log_n` marked `Driftwood` washes up on open sand, while fewer than 6 lie on the beach.
 - **Renderer (ADR-006).** Godling's own, in `renderer/src/`; it no longer uses the runtime's model helpers.
   - **No CDN.**

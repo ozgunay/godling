@@ -86,7 +86,8 @@ def test_move_renews_long_walks(make):
 
 def test_move_falls_into_the_sea(make):
     island, body = make(bare=True, entities=[ent("Sand", (0, -0.5, 0), (6, 1, 6), role="Ground")])
-    with pytest.raises(Stuck, match="fell off the edge"):
+    with pytest.raises(Stuck, match="fell off the edge into the sea: you cannot climb back out, and the water is "
+                                    "drowning you; you will wake at the start spot"):
         body._move_once(10, 0, 0.6)
 
 
@@ -112,6 +113,31 @@ def test_unstick_cases(make):
                                                                                   role="Mesa")])
     assert body4._unstick(island4.snap())
     assert abs(island4.acts[0][1]["position"][0]) < 0.01 and abs(island4.acts[0][1]["position"][2]) > 2
+
+
+def test_unstick_keeps_to_the_floor_at_the_beach_edge(make):
+    # Live run, 2026-11-05: snagged by a log, the body stepped straight away from it, off the end of the west beach,
+    # hung on the sand's lip over the sea and slipped in. Now it steps sideways along the beach instead.
+    island, body = make(bare=True, entities=[ent("Sand", (0, -0.5, 0), (20, 1, 20), role="Ground"),
+                                             block("Block_1", -6.0, 1.25, 0)])
+    island.me = [-8.5, BODY_CENTRE_Y, 0]  # 1.5 from the water's edge, the block to the east
+    assert body._unstick(island.snap())
+    ex, _, ez = island.acts[0][1]["position"]
+    assert ex == pytest.approx(-8.5) and abs(ez) == pytest.approx(2.5)  # along the edge, not out over the sea
+    assert reflexes(body) == [f"snagged by Block_1; stepping away to (-8.5, {ez:.1f})"]
+    # On a strip of sand too small to step anywhere on: it stays put and says why.
+    island2, body2 = make(bare=True, entities=[ent("Sand", (-8.5, -0.5, 0), (3, 1, 3), role="Ground"),
+                                               block("Block_1", -6.0, 1.25, 0)])
+    island2.me = [-8.5, BODY_CENTRE_Y, 0]
+    assert body2._unstick(island2.snap()) is False
+    assert not [a for a, _ in island2.acts if a == "MoveTo"]
+    assert reflexes(body2) == ["snagged by Block_1; no floor to step away onto (the sea or a drop)"]
+    # Squeezed in a gap that runs out to sea one way: it slips out the other way.
+    island3, body3 = make(bare=True, entities=[ent("Sand", (0, -0.5, 4), (20, 1, 12), role="Ground"),
+                                               ent("Mesa_1", (2, 5, 0), (2, 10, 6), role="Mesa"),
+                                               ent("Mesa_2", (-2, 5, 0), (2, 10, 6), role="Mesa")])
+    assert body3._unstick(island3.snap())
+    assert island3.acts[0][1]["position"][2] == pytest.approx(2.5)  # inland (+z), not out to sea at z < -2
 
 
 def test_route_steps_out_of_clearance_first(make):

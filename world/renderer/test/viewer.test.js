@@ -11,7 +11,7 @@ function panelStatus(more = {}) {
   return {
     world: true, watching: 1284, now: NOW, testMode: true, view: 'http://island/?spectator_token=t',
     clock: { hour: 14.5, day: 3, rain: 0, fog: 0, wind: 0.2, quake: '' },
-    godling: { health: 75, hunger: 45, wet: 40, cold: true, bracing: true, knockedDown: true },
+    godling: { health: 75, hunger: 45, wet: 40, cold: true, bracing: true, knockedDown: true, drowning: true },
     notes: { limit: 140, every: 180, queue: 0, wait: 0 },
     mind: {
       thought: 'Two logs now.', needs: '3 logs for the gate lintel; a stone', intention: 'carry logs',
@@ -127,6 +127,7 @@ describe('the viewer screen', () => {
     expect($('.b-now .aside').textContent).toBe('2 of 4')
     expect($('.b-objective .what').textContent).toBe('3 logs for the gate lintel')
     expect($('.b-vitals .states').textContent).toContain('Knocked down')
+    expect($('.b-vitals .states').textContent).toContain('Drowning')
     expect($('.b-vitals .states').textContent).toContain('Wet')
     expect(stage.querySelectorAll('.b-pop')).toHaveLength(2) // the old one is not shown again
     expect($('.b-pop.harm .head').textContent).toBe('mara called a meteor')

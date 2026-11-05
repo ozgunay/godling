@@ -178,6 +178,10 @@ class Snapshot:
         self.faints = attrs.get("Faints") or 0
         self.hurts, self.hurt_by = attrs.get("Hurts") or 0, attrs.get("Hurt")  # what the sky did to the body last
         self.freed = attrs.get("Freed") or 0  # times the world moved the body out from inside a piece
+        # The sea (main.lua THE SEA): in the water and drowning now; times it drowned (and woke at the start spot); times
+        # the world put it back on the sand after it hung on the beach's edge.
+        self.drowning = bool(attrs.get("Drowning"))
+        self.drowned, self.ashore = attrs.get("Drowned") or 0, attrs.get("Ashore") or 0
         # Weather on the body (main.lua WEATHER): soaked 0-100, cold, out in the rain, and what shelters it.
         self.wet, self.cold, self.in_rain = attrs.get("Wet") or 0, bool(attrs.get("Cold")), bool(attrs.get("InRain"))
         self.sheltered = attrs.get("Sheltered") or ""  # what is over and round it: "", "roof" or "enclosed"
