@@ -96,12 +96,23 @@ def test_a_chosen_house_says_what_it_needs_next():
     # Nothing built: walls first; nothing of it is its own yet.
     empty = plan([], GROUND, room, door)
     assert not empty["house"] and empty["pieces"] == [] and empty["score"] == 2
-    assert empty["next"] == "walls two blocks high at (-2.5, 0.0), (0.0, 2.5), (2.5, 0.0)"
-    # Walls up: the roof next, and its walls are its own.
+    assert empty["next"] == ("walls two blocks high at (-2.5, 0.0), (0.0, 2.5), (2.5, 0.0); the roof will rest on "
+                             "(-2.5, 0.0) and (2.5, 0.0), so raise those to three")
+    # Walls two high meet the walls' rule, but a roof on them would leave only 5 of room: its supports come next.
+    two = column("W", -1, 0, 2) + column("E", 1, 0, 2) + column("N", 0, 1, 2)
+    raise_ = plan(two, GROUND, room, door)
+    assert raise_["next"] == ("raise the roof's supports to three blocks high (tops at 7.5): (-2.5, 0.0) stands 5.0, "
+                              "(2.5, 0.0) stands 5.0; on walls two blocks high a roof leaves only 5 of room, your own "
+                              "height")
+    assert "the walls stand two blocks high" in raise_["done"] and raise_["score"] == 5
+    # Supports up: the roof, where it lies and at what height; its walls are its own.
     bare = plan(hut(roof=False), GROUND, room, door)
-    assert bare["next"].startswith("a roof over (0.0, 0.0), with more than 5 of room under it")
-    assert bare["done"] == ["the walls stand two blocks high", "the room is clear", "the doorway at (0.0, -2.5) is clear"]
-    assert bare["pieces"] == ["E1", "E2", "E3", "N1", "N2", "W1", "W2", "W3"] and bare["score"] == 5
+    assert bare["next"] == ("the roof: over (0.0, 0.0), a log along x from (-2.5, 0.0) to (2.5, 0.0), lying on their "
+                            "tops with its centre at height 8.75 (set from a step one block high beside them), so 7.5 "
+                            "of room is left under it")
+    assert bare["done"] == ["the walls stand two blocks high", "the room is clear", "the doorway at (0.0, -2.5) is clear",
+                            "the roof's supports stand three blocks high"]
+    assert bare["pieces"] == ["E1", "E2", "E3", "N1", "N2", "W1", "W2", "W3"] and bare["score"] == 7
     # A block in the doorway or the room is in the way, not its own.
     blocked = plan(hut() + [block("Block_8", 0, -1, 1)], GROUND, room, door)
     assert blocked["next"] == "clear the doorway at (0.0, -2.5): Block_8 in it" and "Block_8" not in blocked["pieces"]
@@ -109,7 +120,10 @@ def test_a_chosen_house_says_what_it_needs_next():
     filled = plan(hut() + [block("Block_7", 0, 0, 1)], GROUND, room, door)
     assert filled["next"] == "clear the room: (0.0, 0.0) (Block_7 fills it)" and "Block_7" not in filled["pieces"]
     done = plan(hut(), GROUND, room, door)
-    assert done["house"] and done["score"] == 6 and "Roof" in done["pieces"]
+    assert done["house"] and done["score"] == 8 and "Roof" in done["pieces"]
+    # A room two wide: no log reaches across it from wall to wall, so the roof is described round it.
+    wide, wide_door = layout([[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], [0, -2.5])
+    assert plan([], GROUND, wide, wide_door)["next"].startswith("walls two blocks high at ")
     assert done["next"] == "none: it is a house. Walk in by the doorway at (0.0, -2.5) and stand inside"
 
 

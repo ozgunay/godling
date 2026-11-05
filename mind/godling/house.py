@@ -222,6 +222,27 @@ def layout(inside, door):
     return room, door
 
 
+SUPPORT = 3 * LAYER - 0.1  # a roof with more than five of room under it rests on supports three blocks high
+
+
+def supports(grid, room, walls, floor):
+    """What the roof rests on: for each cell inside, a log laid across it reaches the walls on two opposite sides, so
+    those two (never the doorway) are its supports; of the two ways across, the one nearer done. Returns
+    [(cell, axis, (support, support))], or None when some cell has no wall on two opposite sides (a wider room)."""
+    out = []
+    for c in room:
+        ways = []
+        for axis, (dx, dz) in (("x", (1, 0)), ("z", (0, 1))):
+            ends = ((c[0] - dx, c[1] - dz), (c[0] + dx, c[1] + dz))
+            if all(e in walls for e in ends):
+                ways.append((-min(grid.standing(e, floor) for e in ends), axis, ends))
+        if not ways:
+            return None
+        _, axis, ends = min(ways)
+        out.append((c, axis, ends))
+    return out
+
+
 def plan(pieces, terrain, inside, door):
     """How far a house the mind chose (cells from layout()) has come: what stands, what is still to do in the order
     a builder does it (walls, a clear room and doorway, the roof), the next step in words, and the pieces that are
@@ -241,20 +262,42 @@ def plan(pieces, terrain, inside, door):
     own = sorted(({name for n in walls for b, _, name in grid.columns.get(n, ()) if b < floor + 3 * LAYER}
                   | {name for c in room for b, _, name in grid.columns.get(c, ()) if b >= floor + CLEAR - 0.1})
                  - in_the_way)
-    done = (["the walls stand two blocks high"] if not low else []) + (["the room is clear"] if not filled else [])         + ([f"the doorway at {at(door)} is clear"] if not blocked_door else [])         + (["the roof covers the room"] if not bare else [])
+    across = supports(grid, room, walls, floor)
+    carry = sorted({e for _, _, ends in across for e in ends}) if across else walls
+    short = [n for n in carry if grid.standing(n, floor) < SUPPORT]
+    centre = floor + 3.5 * LAYER  # a roof piece one block thick lying on supports three blocks high
+    done = ((["the walls stand two blocks high"] if not low else []) + (["the room is clear"] if not filled else [])
+            + ([f"the doorway at {at(door)} is clear"] if not blocked_door else [])
+            + (["the roof's supports stand three blocks high"] if bare and not short else [])
+            + (["the roof covers the room"] if not bare else []))
     if low:
         step = f"walls two blocks high at {', '.join(at(n) for n in low[:6])}" + (" and more" if len(low) > 6 else "")
+        if bare and short:
+            step += (f"; the roof will rest on {' and '.join(at(n) for n in short[:4])}, so raise "
+                     f"{'that' if len(short) == 1 else 'those'} to three")
     elif filled:
         step = "clear the room: " + ", ".join(
             f"{at(c)} ({name} {'hangs too low over it' if b >= floor + LAYER - 0.15 else 'fills it'})"
             for c in filled[:3] for b, name in sorted(grid.filling(c, floor))[:1])
     elif blocked_door:
-        step = f"clear the doorway at {at(door)}: " + " and ".join(sorted({n for _, n in grid.filling(door, floor)})[:2])             + " in it"
+        step = (f"clear the doorway at {at(door)}: "
+                + " and ".join(sorted({n for _, n in grid.filling(door, floor)})[:2]) + " in it")
+    elif bare and short:
+        step = ("raise the roof's supports to three blocks high (tops at "
+                f"{floor + 3 * LAYER:.1f}): " + ", ".join(f"{at(n)} stands {grid.standing(n, floor):.1f}" for n in short[:6])
+                + "; on walls two blocks high a roof leaves only 5 of room, your own height")
+    elif bare and across:
+        lay = [(c, axis, ends) for c, axis, ends in across if c in bare]
+        step = ("the roof: " + "; ".join(f"over {at(c)}, a log along {axis} from {at(a)} to {at(b)}"
+                                        for c, axis, (a, b) in lay[:4])
+                + f", lying on their tops with its centre at height {centre:.2f} (set from a step one block high "
+                "beside them), so 7.5 of room is left under it")
     elif bare:
-        step = (f"a roof over {', '.join(at(c) for c in bare[:6])}, with more than 5 of room under it (it rests on "
-                "walls three blocks high, set from a step beside them)")
+        step = (f"a roof over {', '.join(at(c) for c in bare[:6])}, its pieces centred at height {centre:.2f} on the "
+                "supports round it, so 7.5 of room is left under it")
     else:
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
-    score = (len(walls) - len(low)) + (len(room) - len(filled)) + (not blocked_door) + (len(room) - len(bare))
+    score = (len(walls) - len(low)) + (len(room) - len(filled)) + (not blocked_door) + (len(room) - len(bare)) \
+        + (len(carry) - len(short))
     return {"house": not (low or filled or blocked_door or bare), "next": step, "done": done, "score": score,
             "pieces": own, "in_the_way": sorted(in_the_way)}

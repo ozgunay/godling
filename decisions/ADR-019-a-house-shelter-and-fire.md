@@ -120,3 +120,12 @@ build's own house verdict named a different room, so the mind spent a plan worki
 moved its house because a log in its doorway was held by such a build. Now what fills a chosen house's room or blocks
 its doorway is free to move whatever build holds it, and a build where the house stands says so instead of judging a
 house of its own. A point may also be given as `{"x": x, "z": z}`.
+
+**Raise the roof's supports (after the restarted runs, hp-proj5 and hp-proj6; not in those runs' code).** Walls two
+blocks high meet the walls' rule, but a roof lying on them leaves exactly the body's height, so it fails the headroom
+rule: the walls a roof rests on must stand three high. The next step said only "a roof ... (it rests on walls three
+blocks high)", which reads as done once the walls are two high. Now the house finds what its roof rests on (for each
+cell inside, the two walls on opposite sides that a log across it reaches, never the doorway), and while those stand
+lower than three blocks the next step is "raise the roof's supports to three blocks high (tops at 7.5): (-2.5, 0.0)
+stands 5.0, ...". With them up it says where the roof lies and at what height its centre goes (8.75 on flat ground).
+Raising a support counts as progress, so the stall notice does not fire while it is being done.

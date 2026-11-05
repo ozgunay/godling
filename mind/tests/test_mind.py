@@ -339,7 +339,8 @@ def test_one_house_kept_across_plans(monkeypatch, tmp_path):
     text = mind.situation(island.snap(), [], [])
     assert ("Your house, the one project you keep across your plans (chosen 0 minutes ago): inside (10.0, 0.0), the "
             "doorway at (10.0, -2.5). Done: the room is clear. Next: walls two blocks high at (7.5, 0.0), (10.0, 2.5), "
-            "(12.5, 0.0). Built so far, kept for it (3 pieces): layer 1: (7.5, 0.0), (10.0, 2.5), (12.5, 0.0).") in text
+            "(12.5, 0.0); the roof will rest on (7.5, 0.0) and (12.5, 0.0), so raise those to three. Built so far, kept "
+            "for it (3 pieces): layer 1: (7.5, 0.0), (10.0, 2.5), (12.5, 0.0).") in text
     # Its walls are kept for it; the block in its doorway is not.
     r = body.run("pick_up", {"object": "Block_2"})
     assert not r.ok and r.summary == ("Block_2 is part of your house at (10.0, 0.0), which you are building; move the "
