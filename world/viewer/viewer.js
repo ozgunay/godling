@@ -436,14 +436,15 @@ const say = el('p', 'b-say')
 say.setAttribute('role', 'status')
 const composer = el('form', 'b-note stone')
 composer.hidden = true
-composer.innerHTML = `<div class="n-head">${icon('glider', 3)}<label for="note-text">A note for Godling</label><span class="count">0/140</span></div>
+composer.innerHTML = `<div class="n-head">${icon('glider', 3)}<label for="note-text">A note for Godling</label><span class="count">0/140</span>
+  <button type="button" class="n-close" aria-label="Close the note">${icon('close', 2)}</button></div>
   <textarea id="note-text" rows="2" maxlength="140" placeholder="Cheer it on, ask it something, tell it what you see…"></textarea>
   <div class="n-foot"><input id="note-name" maxlength="18" placeholder="Your name" autocomplete="nickname" aria-label="Your name">
   <button type="submit" class="get">Fold and send</button></div>
   <p class="n-hint">Godling reads every note and decides for itself what to do. No links. One note every 3 minutes.</p>`
 const noteText = composer.querySelector('textarea')
 const noteName = composer.querySelector('input')
-const noteSend = composer.querySelector('button')
+const noteSend = composer.querySelector('button[type=submit]')
 const noteCount = composer.querySelector('.count')
 const noteHint = composer.querySelector('.n-hint')
 noteName.value = store.get('godling.name') || ''
@@ -655,6 +656,11 @@ function toggleNote(open = composer.hidden) {
   slots[POWERS.findIndex((p) => p.note)].classList.toggle('open', open)
   if (open) noteText.focus()
 }
+// Its own way out, for whoever does not know the slot or Escape closes it too; the focus goes back to the slot.
+composer.querySelector('.n-close').addEventListener('click', () => {
+  toggleNote(false)
+  slots[POWERS.findIndex((p) => p.note)].focus()
+})
 
 noteText.addEventListener('input', () => {
   const n = [...noteText.value].length

@@ -668,6 +668,17 @@ describe('the viewer screen', () => {
     expect($('.b-tip')).toBeNull()
   })
 
+  it('the note closes by its own button, for whoever does not know the slot or Escape close it', async () => {
+    const { $, slot } = await boot({ statuses: [panelStatus({ account: account({ signedIn: false, username: '' }) })] })
+    slot('Note').click()
+    expect($('.b-note').hidden).toBe(false)
+    $('.b-note .n-close').click()
+    expect($('.b-note').hidden).toBe(true)
+    expect(slot('Note').classList.contains('open')).toBe(false)
+    expect(document.activeElement).toBe(slot('Note')) // the focus goes back where the note came from
+    expect($('.b-note .get').textContent).toBe('Fold and send') // the send button is still the send button
+  })
+
   it('the bottle: only behind the site; a signed-in viewer sends a bug with what their screen shows', async () => {
     let screen = await boot()
     expect(screen.$('.b-bottle-open').hidden).toBe(true) // the panel on its own has nowhere to send it

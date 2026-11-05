@@ -248,6 +248,8 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .b-note .n-head { display: flex; align-items: center; gap: 0.6rem; }
 .b-note label { font: 400 1.3rem/1 'Tiny5', sans-serif; color: var(--gold); }
 .b-note .count { margin-left: auto; font: 400 0.75rem/1 'Silkscreen', monospace; color: var(--fog); font-variant-numeric: tabular-nums; }
+.n-close { display: grid; place-items: center; padding: 0.35rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); }
+.n-close:hover { background: rgba(14, 17, 18, 0.95); }
 .b-note .count.full { color: var(--heart); }
 .b-note textarea {
   display: block; width: 100%; margin: 0.55rem 0; padding: 0.55rem 0.65rem; resize: none;
