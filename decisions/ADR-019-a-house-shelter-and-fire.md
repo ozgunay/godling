@@ -311,3 +311,30 @@ What it needs next, before another full trial: the guidance to name each roof lo
 lintel: the two wall cells beside the opening; a log over the room: the wall cell it is centred on and the cell it
 reaches in over), and the hands-full reflex to keep what it sets down out of the chosen house's room, doorway and
 way out.
+
+## The two causes fixed, each reproduced first, then checked together in a real world
+**The hands-full reflex keeps the house clear.** To free its hands the body sets what it holds on clear floor beside
+it. It now passes over any spot where the whole of the piece, as it would lie (a log three cells long, either way
+round), covers the chosen house's room, doorway or way out (`memory.reserved_cells`), before choosing the spots to
+try; with no safe spot in reach it keeps hold and says the house's cells were kept clear. Reproduced on a site with
+no other floor near (`test_house_recovery.py`): before, a stone and a log, from the doorway, the room and its far
+corner, went into the house all six times; after, five went beyond the way out and the sixth stayed in hand.
+
+**The roof's next step names each log's axis and what it rests on** (`house.roof_layout`): the lintel first, a log
+along the wall centred on the doorway, resting on the two wall cells beside it, with any stone already capping them
+named as in the way and free to lift off, from a step; then over each cell of the room a log centred on a wall beside
+it (not the doorway, not the lintel's walls), along the line to the cell, resting on its middle and reaching in over
+it; then a block on the walls left over. Reproduced first: with the flanks capped the lintel laid along the wall was
+refused for room, and laid across the doorway it rested on nothing and fell into it, as in hp-full2; as the step now
+says, the caps lifted off and the lintel rested across its two walls with the doorway open; and a log over the room,
+laid on its named wall, covered its named cell.
+
+**Both together, in the real world** (`make_roofcheck.py`, `bench_roofcheck.py`): the benchmark house with its
+lintel gone, both flank walls capped, the log over the far cell gone, a stone fallen in the room and clutter round
+it, as hp-full2 left its house. In order: the caps lifted off from steps; the stone picked up in the room, and, the
+lintel log taken up with the stone still in hand, the reflex set the stone down outside the room, doorway and way out
+(as it did the two caps); the lintel laid along x came to rest across its two flank walls; the log over the far cell,
+centred on its bearing wall, came to rest on it. The check then said "none: it is a house", and Godling walked in:
+`InHouse` true, the house counted. Two body troubles were seen on the way, and are not fixed here: stepping up onto a
+block to reach the roof snagged once (the place came good on the next try), and walking from one step straight onto
+another as high, the body walks off the first and stays on the ground beside the second.
