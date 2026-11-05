@@ -299,6 +299,11 @@ T.test("a log laid against a fire takes it on, a fastened one never; under a roo
     -- ADR-019: one lighting can last the night. A fastened log (a built wall) never catches.
     local first = log("Log_7", V.new(30, 1.25, 30))
     local wall = log("Log_6", V.new(30, 1.25, 32.5), { Fastened = true }) -- along its side
+    -- Nor does one built in without fastening: a wall's bottom course with a block on it, a beam up off the floor.
+    local course = log("Log_4", V.new(22.5, 1.25, 30)) -- end to end, the other way
+    e.part("Block_40", { Size = V.new(2.5, 2.5, 2.5), Position = V.new(22.5, 3.75, 30), Anchored = true,
+        attrs = { Settled = true } })
+    local beam = log("Log_5", V.new(30, 3.75, 27.5)) -- touching it, a layer up
     local next = log("Log_8", V.new(37.5, 1.25, 30)) -- end to end
     local fire = x.lightFire(first)
     e.step(600, 10)
@@ -306,6 +311,8 @@ T.test("a log laid against a fire takes it on, a fastened one never; under a roo
     T.eq(fire.Parent, nil)
     T.eq(next:GetAttribute("Burning"), true, "the log laid against it took the fire")
     T.eq(wall:GetAttribute("Burning"), nil, "a fastened log never catches")
+    T.eq(course:GetAttribute("Burning"), nil, "a log holding a wall up never catches")
+    T.eq(beam:GetAttribute("Burning"), nil, "a log up off its floor never catches")
     T.logged(w, "FED Fire_2 burns on Log_8")
     T.near(x.fires[e.find("Fire_2")].untilTime - e.now, 600, 10, "for another ten minutes")
     -- Rain puts out the fire in the open, not the one under a roof.
@@ -314,10 +321,14 @@ T.test("a log laid against a fire takes it on, a fastened one never; under a roo
     local dry = x.lightFire(sheltered)
     local clear = w.openSpot(8, V.new(70, 0, 40)) -- open ground, nothing over it
     local open = x.lightFire(log("Log_10", V.new(clear.X, 1.25, clear.Z)))
+    local apart = w.openSpot(8, V.new(90, 0, 40)) -- and a log laid on top of one is no roof over it
+    local stacked = x.lightFire(log("Log_11", V.new(apart.X, 1.25, apart.Z)))
+    log("Log_12", V.new(apart.X, 3.75, apart.Z))
     x.douseFires()
     T.ok(dry.Parent, "under a roof it burns on")
     T.eq(sheltered:GetAttribute("Burning"), true)
     T.eq(open.Parent, nil)
+    T.eq(stacked.Parent, nil, "a log on the burning one keeps no rain off")
 end)
 
 T.test("fastening: what can be fastened, and how", function()

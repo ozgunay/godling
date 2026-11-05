@@ -606,7 +606,8 @@ thought and in that project's intention."""
         line = (f"Your house, the one project you keep across your plans (chosen "
                 f"{int((time.time() - house['since']) / 60)} minutes ago{after}): inside {cells}, the doorway at "
                 f"{at(house['door'])}. ")
-        if self.discovery is not None and not any(n in self.discovery.visible for n in found["pieces"]):
+        if (self.discovery is not None and found["pieces"]
+                and not any(n in self.discovery.visible for n in found["pieces"])):
             line += "Last observed. "
         if found["done"]:
             line += f"Done: {', '.join(found['done'])}. "
@@ -656,8 +657,8 @@ thought and in that project's intention."""
                 return
             self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
                      was=now["inside"])
-            if same_site:
-                self.memory.set_house({**now, "inside": room, "door": door})
+            if same_site:  # its progress is measured afresh: the old best was scored against another layout
+                self.memory.set_house({**now, "inside": room, "door": door, "best": -1, "best_at": time.time()})
                 self.house_progress(snap)
                 return
             moves = now.get("moves", 0) + 1

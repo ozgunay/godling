@@ -429,6 +429,21 @@ def test_one_house_kept_across_plans(monkeypatch, tmp_path):
     assert [l["pieces"] for l in logs if l["kind"] == "house" and l["phase"] == "installed"][:1] == [13]
 
 
+def test_a_revised_house_is_measured_afresh(monkeypatch, tmp_path):
+    # Its best so far was scored against the old layout: with the doorway moved onto a wall, the house scores less
+    # than it did, and measured against that the work never counted as progress, until the stall note said it had come
+    # no further.
+    island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, benchmark())
+    room = [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]]
+    mind._choose_house({"inside": room, "door": [0, -2.5]}, island.snap())
+    mem.state["house"]["best_at"] -= 20 * 60
+    mind._choose_house({"inside": room, "door": [-2.5, 0]}, island.snap())  # the doorway onto the west wall
+    house = mem.state["house"]
+    progress = [l for l in logs if l["kind"] == "house" and l["phase"] == "progress"]
+    assert len(progress) == 2 and house["best"] == progress[-1]["score"] < progress[0]["score"]
+    assert "come no further" not in mind.situation(island.snap(), [], [])
+
+
 def test_a_chosen_house_that_stands(monkeypatch, tmp_path):
     island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, benchmark())
     mind.adopt({"reply": {"house": {"inside": [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], "door": [0, -2.5]}},
@@ -526,6 +541,14 @@ def test_house_geometry_is_observed_cached_and_revisited(monkeypatch, tmp_path):
     unseen = mind.situation(island.snap(), [], [])
     assert "needs an inspection" in unseen and "Block_hidden" not in unseen and "Log_W1" not in unseen
     assert mem.state["house"]["pieces"] == []
+    bare = {"inside": [[-100, 0], [-100, 2.5], [-97.5, 0], [-97.5, 2.5]], "door": [-100, -2.5]}
+    island.me = [-100, BODY_CENTRE_Y, -10]
+    discovery.see(island.snap())
+    mind._choose_house({**bare, "why": "the first site is too far"}, island.snap())
+    empty = mind.situation(island.snap(), [], [])  # nothing built there yet: nothing to have last observed
+    assert "Next: walls three blocks high" in empty and "Last observed." not in empty, empty
+    mind._choose_house({"inside": [[100, 0], [100, 2.5], [102.5, 0], [102.5, 2.5]], "door": [100, -2.5],
+                        "why": "the stone is over there"}, island.snap())
     island.me = [100, BODY_CENTRE_Y, -10]
     discovery.see(island.snap())
     assert "Next: none: it is a house." in mind.situation(island.snap(), [], [])
