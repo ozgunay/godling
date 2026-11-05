@@ -147,11 +147,13 @@ class Stuck(Interrupted):
 
 class Skills:
     def __init__(self, world, protected=lambda: set(), on_step=None, log=None, gifted=False, library=None,
-                 walk_speed=WALK_SPEED, kept_in=lambda piece: None):
+                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set()):
         self.world = world
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
         self.kept_in = kept_in  # the name of the build a piece is built into (memory.built_into), or None
+        self.reserved = reserved  # grid cells (ix, iz) to keep clear: the house's room, doorway and way out
+        self._kept_clear = False  # the last hands-full reflex passed over spots in those cells
         self.placed = []  # pieces set down since the mind last asked (take_placed), by any skill, learned ones too
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
@@ -1211,7 +1213,9 @@ class Skills:
         if held:
             freed = self._set_down_nearby(snap, held, obj.pos)
             if freed is None:
-                return Result(False, "pick_up", f"hands are full: holding {held.name}, and there is no clear spot nearby to set it down")
+                return Result(False, "pick_up", f"hands are full: holding {held.name}, and there is no clear spot nearby to "
+                                                "set it down" + (" outside your house's room, doorway and way out"
+                                                                 if self._kept_clear else ""))
             note = f" (first {freed.summary.replace('put', 'set', 1)}, to free your hands)"
             snap = self._observe()
             obj = snap.entities.get(object)
@@ -1262,14 +1266,31 @@ class Skills:
                  if on_our_floor(x, z)
                  and hdist((x, 0, z), away_from) > CUBE + 0.5 and all(hdist((x, 0, z), e.pos) > CUBE for e in kept)]
         long = max(held.local_size) > CUBE + 0.1 and not held.name.startswith("Ladder_")
-        for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))[:8]:
-            for turn in ((0, 90) if long else (0,)):
-                result = self.skill_put_down(x, z, turn)
-                if result.ok:
-                    if self.placed and self.placed[-1] == held.name:
-                        self.placed.pop()  # set down to free the hands, not built with
-                    self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
-                    return result
+        reserved = set(self.reserved())
+        self._kept_clear = False
+
+        def clear_of_reserved(x, z, turn):  # the whole of it as it would lie, not only where its middle goes
+            if not reserved:
+                return True
+            if held.name.startswith(SNAPPED_KINDS):
+                x, z = grid(x), grid(z)
+            size = turned_size(held.local_size, turn, False)
+            cells = {(ix, iz) for ix in range(math.ceil((x - size[0] / 2) / CUBE - 1e-9), math.ceil((x + size[0] / 2) / CUBE - 1e-9))
+                     for iz in range(math.ceil((z - size[2] / 2) / CUBE - 1e-9), math.ceil((z + size[2] / 2) / CUBE - 1e-9))}
+            if cells & reserved:
+                self._kept_clear = True
+                return False
+            return True
+        # The house's room, doorway and way out stay clear (run hp-full2), before the nearest few are tried.
+        tries = [(x, z, turn) for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))
+                 for turn in ((0, 90) if long else (0,)) if clear_of_reserved(x, z, turn)]
+        for x, z, turn in tries[:16]:
+            result = self.skill_put_down(x, z, turn)
+            if result.ok:
+                if self.placed and self.placed[-1] == held.name:
+                    self.placed.pop()  # set down to free the hands, not built with
+                self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
+                return result
         return None
 
     def skill_put_down(self, x, z, turn=0, upright=False):

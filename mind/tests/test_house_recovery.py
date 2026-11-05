@@ -111,3 +111,50 @@ def test_reaching_over_a_block_on_the_floor(monkeypatch):
     assert reaches(0, -2)  # across Block_low
     island.ents["Block_low2"] = block("Block_low2", 0, 3.75, 2.5)  # now a wall two blocks high between
     assert not body._reach_fn(island.snap(), (0, 1.25, 5), {"Block_far"}, 0.0)(0, -2)
+
+
+def platform():
+    """The house's footprint and a strip of floor south of its doorway, and sea round them: no other floor near, as
+    round run hp-full2's house, crowded with steps and stones."""
+    return [ent("Ground", (1.25, -0.5, 1.25), (10, 1, 10), role="Ground"),
+            ent("Strip", (0, -0.5, -8.125), (5, 1, 8.75), role="Ground")]
+
+
+def footprint(e):
+    (x, _, z), (sx, _, sz) = e["position"], e["size"]
+    return {(ix, iz) for ix in range(math.ceil((x - sx / 2) / C - 1e-9), math.ceil((x + sx / 2) / C - 1e-9))
+            for iz in range(math.ceil((z - sz / 2) / C - 1e-9), math.ceil((z + sz / 2) / C - 1e-9))}
+
+
+RESERVED = set(ROOM) | {DOOR, (0, -2)}  # the room, the doorway and the way out
+
+
+@pytest.mark.parametrize("held", ["stone", "log"])
+@pytest.mark.parametrize("start", [(0, -1), (0, 0), (1, 1)])
+def test_hands_full_sets_nothing_down_in_the_house(monkeypatch, held, start):
+    # Run hp-full2: to free its hands the body set a stone, another stone and a log down in the house it was
+    # building, wherever floor was clear beside it. Now the whole of what it sets down, a log three cells long too,
+    # stays off the room, the doorway and the way out; with nowhere else in reach it keeps hold and says so.
+    piece = (block("Block_held", 0, 1.25, 30) if held == "stone" else ent("Log_held", (0, 1.25, 30), (7.5, 2.5, 2.5)))
+    island = Island([*platform(), *benchmark(), piece, ent("Hammer_1", (0, 0.2, -11), (0.6, 0.4, 2.0))],
+                    me=(start[0] * C, BODY_CENTRE_Y, start[1] * C))
+    island.held = piece["name"]
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    body = Skills(island, reserved=lambda: RESERVED)
+    r = body.run("pick_up", {"object": "Hammer_1"})
+    if r.ok:
+        assert island.held == "Hammer_1" and not footprint(island.ents[piece["name"]]) & RESERVED, r.summary
+    else:
+        assert island.held == piece["name"] and r.summary == (
+            f"hands are full: holding {piece['name']}, and there is no clear spot nearby to set it down outside your "
+            "house's room, doorway and way out")
+    if start != (1, 1):  # from the doorway or the room, the strip beyond the way out is in reach
+        assert r.ok
+
+
+def test_the_cells_a_house_needs_clear(tmp_path):
+    from godling.memory import NativeMemory
+    mem = NativeMemory(tmp_path / "mem")
+    assert mem.reserved_cells() == set()
+    mem.set_house({"inside": [list(c) for c in ROOM], "door": list(DOOR)})
+    assert mem.reserved_cells() == RESERVED

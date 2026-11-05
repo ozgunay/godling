@@ -136,6 +136,18 @@ class NativeMemory:
         return next((title for title, s in self.state["structures"].items() if s.get("auto") and piece in s["cubes"]),
                     None)
 
+    def reserved_cells(self):
+        """The cells the house the mind is building needs clear (Mind.house_project): its room, its doorway and the
+        way out of it. The body sets nothing down there to free its hands (run hp-full2: three pieces it set down in
+        the house stopped the house being finished)."""
+        house = self.state.get("house") or {}
+        if not house.get("inside") or not house.get("door"):
+            return set()
+        from .house import outside_of
+        room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
+        out = outside_of(room, door)
+        return set(room) | {door} | ({out} if out else set())
+
     def set_house(self, house):
         """The house the mind is building (Mind.house_project), or None once it gives it up."""
         if house is None:
