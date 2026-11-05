@@ -126,28 +126,38 @@ end)
 T.test("a house: only inside one is the body warm at night, mending twice as fast; a roof or a fire halves the cold", function()
     local w = T.boot()
     local e, x = w.e, w.x
-    local spot = w.openSpot(10)
+    local spot = w.openSpot(14)
     local cx, cz = math.floor(spot.X / 2.5 + 0.5) * 2.5, math.floor(spot.Z / 2.5 + 0.5) * 2.5
     local g = w.godling(V.new(cx, 2.55, cz))
+    e.step(1400, 10) -- into the night, then build (the house check runs once a second under a roof)
     local n = 0
-    local function block(dx, dz, layer)
+    local function piece(kind, size, dx, dz, layer)
         n = n + 1
-        return e.part("Block_" .. 900 + n, { Size = V.new(2.5, 2.5, 2.5),
-            Position = V.new(cx + dx * 2.5, (layer - 0.5) * 2.5, cz + dz * 2.5), Anchored = true,
-            attrs = { RenderRole = "PickupObject", IsPickupObject = true } })
+        return e.part(kind .. "_" .. 900 + n, { Size = size, Position = V.new(cx + dx * 2.5, (layer - 0.5) * 2.5, cz + dz * 2.5),
+            Anchored = true, attrs = { RenderRole = kind == "Log" and "Log" or "PickupObject", IsPickupObject = true } })
     end
-    for layer = 1, 3 do -- posts three blocks high, west and east
-        block(-1, 0, layer)
-        block(1, 0, layer)
+    local BLOCK, ALONG_X = V.new(2.5, 2.5, 2.5), V.new(7.5, 2.5, 2.5)
+    -- The benchmark house (mind/tests/test_house.py house()): a room two by two at cells (0..1, 0..1), walls three
+    -- blocks high all round it, corners too, the doorway south at (0, -1), and the roof in layer 4 over all of it.
+    local walls = {}
+    for dx = -1, 2 do
+        for dz = -1, 2 do
+            local inRoom = dx >= 0 and dx <= 1 and dz >= 0 and dz <= 1
+            if not inRoom and not (dx == 0 and dz == -1) then
+                for layer = 1, 3 do
+                    walls[dx .. "," .. dz .. "," .. layer] = piece("Block", BLOCK, dx, dz, layer)
+                end
+            end
+        end
     end
-    local north = { block(0, 1, 1), block(0, 1, 2) } -- the doorway is south
-    local roof = e.part("Log_901", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(cx, 8.75, cz), Anchored = true,
-        attrs = { RenderRole = "Log", IsPickupObject = true } })
-    e.step(1400, 10) -- into the night
+    local roof = { piece("Log", ALONG_X, 0, -1, 4), piece("Block", BLOCK, 2, -1, 4), piece("Log", ALONG_X, 0, 2, 4),
+        piece("Block", BLOCK, 2, 2, 4), piece("Log", ALONG_X, -1, 0, 4), piece("Log", ALONG_X, 2, 0, 4),
+        piece("Log", ALONG_X, -1, 1, 4), piece("Log", ALONG_X, 2, 1, 4) }
     local s = x.surviving[g]
     s.wet, s.hunger, s.health = 0, 100, 50
     e.step(2, 1)
-    T.eq(g:GetAttribute("Sheltered"), "house")
+    T.eq(g:GetAttribute("InHouse"), true, "inside the house")
+    T.eq(g:GetAttribute("Sheltered"), "roof", "a roof overhead; the room is wider than an arm's reach to the walls")
     T.eq(g:GetAttribute("Cold"), false, "warm in a house at night")
     local function over(seconds)
         local before = s.health
@@ -155,21 +165,56 @@ T.test("a house: only inside one is the body warm at night, mending twice as fas
         return s.health - before
     end
     T.near(over(10), 10 * 100 / 1800 * 2, 0.05, "mending twice as fast")
-    north[2]:Destroy() -- the north wall one block high: walls on three sides and a roof, but no house
+    walls["2,2,3"]:Destroy() -- the north-east corner a block short of the roof: a roof and walls, but no house
     e.step(2, 1)
-    T.eq(g:GetAttribute("Sheltered"), "enclosed")
+    T.eq(g:GetAttribute("InHouse"), false, "a corner short of the roof")
+    T.eq(g:GetAttribute("Sheltered"), "roof")
     T.eq(g:GetAttribute("Cold"), true, "cold, under a roof")
     T.near(over(10), -10 * 100 / 2400 * 0.5, 0.02, "a roof halves the cold")
-    local log = e.part("Log_902", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(cx + 2, 1.25, cz - 6), Anchored = true,
+    local log = e.part("Log_950", { Size = V.new(2.5, 2.5, 7.5), Position = V.new(cx - 5, 1.25, cz), Anchored = true,
         attrs = { RenderRole = "Log", IsPickupObject = true } })
     x.lightFire(log)
     e.step(2, 1)
     T.eq(g:GetAttribute("ByFire"), true)
     T.near(over(10), -10 * 100 / 2400 * 0.25, 0.02, "and a fire close by halves it again")
-    roof:Destroy()
+    for _, part in ipairs(roof) do
+        part:Destroy()
+    end
     e.step(2, 1)
     T.eq(g:GetAttribute("Sheltered"), "")
     T.near(over(10), -10 * 100 / 2400 * 0.5, 0.02, "out in the open, a fire alone halves it")
+end)
+
+-- The shelter run hp-proj8 built (ADR-019), which passed the first check: one cell between two posts and a wall, a
+-- log over it. It keeps the rain off and the walls round it halve the cold, but it is no house.
+T.test("a one-cell shelter between posts is enclosed, not a house", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local spot = w.openSpot(10)
+    local cx, cz = math.floor(spot.X / 2.5 + 0.5) * 2.5, math.floor(spot.Z / 2.5 + 0.5) * 2.5
+    local g = w.godling(V.new(cx, 2.55, cz))
+    local n = 0
+    local function block(dx, dz, layer)
+        n = n + 1
+        return e.part("Block_" .. 960 + n, { Size = V.new(2.5, 2.5, 2.5),
+            Position = V.new(cx + dx * 2.5, (layer - 0.5) * 2.5, cz + dz * 2.5), Anchored = true,
+            attrs = { RenderRole = "PickupObject", IsPickupObject = true } })
+    end
+    for layer = 1, 3 do -- posts three blocks high, west and east
+        block(-1, 0, layer)
+        block(1, 0, layer)
+    end
+    block(0, 1, 1) -- a wall two blocks high north; the doorway south
+    block(0, 1, 2)
+    e.part("Log_961", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(cx, 8.75, cz), Anchored = true,
+        attrs = { RenderRole = "Log", IsPickupObject = true } })
+    e.step(1400, 10)
+    local s = x.surviving[g]
+    s.wet, s.hunger, s.health = 0, 100, 50
+    e.step(2, 1)
+    T.eq(g:GetAttribute("Sheltered"), "enclosed")
+    T.eq(g:GetAttribute("InHouse"), false, "a room one cell wide, open at the corners: no house")
+    T.eq(g:GetAttribute("Cold"), true)
 end)
 
 -- Many days of weather, with Godling on the beach by the raft: it rains and dries, a wet spell sets in, storms

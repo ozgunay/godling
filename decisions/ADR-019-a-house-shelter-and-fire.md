@@ -1,6 +1,6 @@
 # ADR-019: A house: one definition for the world, the mind and the measure; warmth in tiers; how fire is made
 
-Date: 2026-11-04. Status: built and tested; measured in live runs on 2026-11-05 (see Results): one house built and walked into in two guided runs.
+Date: 2026-11-04. Status: built and tested; measured in live runs on 2026-11-05 (see Results). One guided run built a roofed shelter that passed the first check, which proved too weak to mean a house; the house is now the stricter first-house benchmark (see The first-house benchmark).
 
 ## Why
 With deepseek-flash, Godling carried blocks about and never built a house. Four 45-minute runs on the same persona
@@ -65,8 +65,9 @@ The user chose each of these.
 - `world/tests/test_life.luau`, the same hut in the world script, at night: inside it the body is warm and mends
   twice as fast; with the north wall one block high it is "enclosed" and cold at half pace; a fire close by halves
   that again; out in the open a fire alone halves it.
-- Live, in run hp-proj8 (see Results): the geometry passed the check, a structure measure still counted the house
-  after it settled, and the body walked in and the world said "house".
+- Live, in run hp-proj8 (see Results): a one-cell roofed shelter passed this check and the body walked in, but it
+  was no house: pillars round one cell with a log over it, open at a corner, with a gap under the roof. The check was
+  too weak, and is replaced by the first-house benchmark.
 
 ## Fire, made easier (after run hut5-house)
 In hut5 Godling made the spear, set a coconut out for tinder and rubbed 30 times: the wood grew hot and smoked, and
@@ -153,7 +154,7 @@ Comparison at the same minute, with the house rule and the fire changes in every
 | hp-proj5 | yes | 2 | 3 | 9 | three of four walls two high | no |
 | hp-proj6 | yes | 2 | 3 | 9 | walls two high, room and doorway clear, from minute 9 | no |
 | hp-proj7 | yes, with the supports wording | 1 | 0 | 4 | walls and both supports three high, minute 23.5 | no |
-| hp-proj8 | yes, with the supports wording | 2 | 3 | 8 | a house at minute 40.3 | yes |
+| hp-proj8 | yes, with the supports wording | 2 | 3 | 8 | a roofed one-cell shelter, minute 40.3 | no (passed the old check) |
 
 A site is where pieces went up (above the first layer, or stood on end), within 7.5 of its centre; "taken back" is a
 piece it set beside another it had set, picked up again. Keeping one house cut switching between sites about five
@@ -161,11 +162,24 @@ fold and halved what it took back. With the old roof wording neither run raised 
 single block over its room (it fell), put steps in its own doorway, and fastened a block hanging in its room;
 proj5 tried to set the roof from the ground, out of reach. With the supports wording both runs raised them.
 
-hp-proj8, the first house: walls at minute 2, the supports step at 4; a block tried early as a roof fell into the
-room and was fastened there, so at 19 it moved one cell over, giving that reason; supports and roof step at 32; at
-40.3 it stood on a block outside the corner and laid a log across the supports at 8.75 ("came to rest across Block_9
-and Log_7"). The check passed, the 5-minute measure counted the house at 40.8 and at the end, and at 41.8 it walked
-in: "You are inside a house now". Its first try to walk in, from the step, failed on the body bug above.
+hp-proj8, a roofed shelter, not a house: walls at minute 2, the supports step at 4; a block tried early as a roof
+fell into the room and was fastened there, so at 19 it moved one cell over, giving that reason; supports and roof step
+at 32; at 40.3 it stood on a block outside the corner and laid a log across the supports at 8.75 ("came to rest
+across Block_9 and Log_7"). The old check passed, the 5-minute measure counted it at 40.8 and at the end, and at 41.8
+it walked in: "You are inside a house now". Its first try to walk in, from the step, failed on the body bug above.
+What stood was no house. Round the one cell inside (top of each cell; north up):
+
+```
+        x: -92.5   -90.0   -87.5
+z -30.0     2.5    10.0      .      NW one block; N support three blocks with the roof log on it; NE corner empty
+z -32.5     5.0   [room]     D      W wall two blocks; the room, 2.5 x 2.5; the doorway
+z -35.0     5.0    10.0     2.5     SW two blocks; S support one upright log; SE one block
+```
+
+A nook as wide as the body, between pillars, open at a corner, with a 2.5-high gap between the west wall and the roof,
+under one log 2.5 wide. From outside it reads as a lintel on two posts. It showed that Godling can follow the roof
+method and that a roofed shelter can be walked into; the check that called it a house only asked for something two
+blocks high on each of the room's four sides.
 
 hp-proj7 did everything the wording said up to the roof (walls and both supports at 23.5, and the step it would use
 set outside a corner, not in the doorway), then for 21 minutes could not get to its own house: five walks to the

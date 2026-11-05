@@ -73,7 +73,7 @@ def test_island_map_and_feelings():
                      "house, which would keep it off. You are cold, and it is wearing your health down.")
     assert "You are wet (20%)" in _how_it_feels(snap([ground()], attrs={"Wet": 20, "Sheltered": "roof"}))
     # ADR-019: only a house keeps the cold off; a fire close by halves it, or warms by day.
-    assert _how_it_feels(snap([ground()], attrs={"Sheltered": "house", "ByFire": True})) == (
+    assert _how_it_feels(snap([ground()], attrs={"Sheltered": "roof", "InHouse": True, "ByFire": True})) == (
         "You are inside a house: warm and dry, mending twice as fast while fed. A fire close by warms you.")
     assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
         "A fire close by halves the cold. You are cold, and it is wearing your health down.")
@@ -90,7 +90,8 @@ def test_prompts(world, tmp_path):
     assert "- Trees (1, about 10 tall): Tree_x (-12, 12)" in system
     assert "- Peak: centre" in system and "- Quarry: centre" in system
     # ADR-019: what a house is, what keeps the cold off, and how fire is made, as plain facts of the world.
-    assert "A house is at least one clear space" in system and "one doorway you can walk through" in system
+    assert "A house is a room at least two cells by\ntwo" in system and "walls all round it, corners too" in system
+    assert "a roof over all of it, the walls and the doorway too" in system
     assert "Inside your house a fed body mends twice as fast." in system
     assert "hold your spear and rub it hard against a log lying on the ground" in system
     assert "a coconut's dry husk" in system
@@ -275,8 +276,10 @@ def test_what_it_builds_is_kept_and_shown(monkeypatch, tmp_path):
     assert ("build at (10.0, 0.0) (10 pieces): layer 1: (7.5, -2.5), (7.5, 0.0), (7.5, 2.5), (10.0, -2.5), "
             "(10.0, 2.5), (12.5, -2.5), (12.5, 0.0), (12.5, 2.5); layer 2: (7.5, -2.5), (12.5, 2.5)") in text
     # A closed ring one block high (two corners higher): no house yet, and the check says why.
-    assert (". As a house: there is no doorway to walk in by; the wall is lower than two blocks at (7.5, 0.0), "
-            "(10.0, -2.5), (10.0, 2.5), (12.5, 0.0); there is no roof over the cell inside, at (10.0, 0.0)") in text
+    assert (". As a house: the room inside is 1 cell, at (10.0, 0.0): a house's room holds at least two by two "
+            "cells; there is no doorway: leave one cell on a side open up to the roof; the walls do not reach the roof "
+            "(7.5 up) at (7.5, -2.5), (7.5, 0.0), (7.5, 2.5), (10.0, -2.5), (10.0, 2.5), (12.5, -2.5) and 2 more, "
+            "corners too; there is no roof over (10.0, 0.0) inside") in text
     r = body.run("pick_up", {"object": "Block_2"})
     assert not r.ok and r.summary == ("Block_2 is part of build at (10.0, 0.0), which you built; release that first "
                                       "if you mean to take it apart")
@@ -323,89 +326,123 @@ def test_what_it_names_itself(monkeypatch, tmp_path):
     assert not body.run("pick_up", {"object": "Block_1"}).ok
 
 
+def benchmark(x0=0, z0=0, high=3, roof=True):
+    """The benchmark house (test_house.py house()) as island pieces, its room at cells (x0..x0+1, z0..z0+1): walls
+    `high` blocks all round, corners too, the doorway south at (x0, z0 - 1), and the roof in the layer above."""
+    pieces = []
+    for dx in range(-1, 3):
+        for dz in range(-1, 3):
+            if (0 <= dx <= 1 and 0 <= dz <= 1) or (dx, dz) == (0, -1):
+                continue
+            pieces += [block(f"Block_w{dx + 1}{dz + 1}{k}", (x0 + dx) * 2.5, (k - 0.5) * 2.5, (z0 + dz) * 2.5)
+                       for k in range(1, high + 1)]
+    if roof:
+        y = (high + 0.5) * 2.5
+        logs = [("Log_S", 0, -1), ("Log_N", 0, 2), ("Log_W0", -1, 0), ("Log_E0", 2, 0), ("Log_W1", -1, 1), ("Log_E1", 2, 1)]
+        pieces += [ent(name, ((x0 + dx) * 2.5, y, (z0 + dz) * 2.5), (7.5, 2.5, 2.5)) for name, dx, dz in logs]
+        pieces += [block("Block_SE", (x0 + 2) * 2.5, y, (z0 - 1) * 2.5), block("Block_NE", (x0 + 2) * 2.5, y, (z0 + 2) * 2.5)]
+    return pieces
+
+
+def house_island(monkeypatch, tmp_path, pieces):
+    island = Island([ground(attrs={"Surface": "Sand"}), *pieces, block("Block_30", -12, 1.25, 0),
+                     ent("Log_1", (-20, 1.25, 10), (7.5, 2.5, 2.5))])
+    island.me = [0, BODY_CENTRE_Y, -20]
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    library, mem, logs = SkillLibrary(tmp_path / "skills.json"), NativeMemory(tmp_path / "mem"), []
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into)
+    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library, log=lambda **k: logs.append(k), house_project=True)
+    return island, body, mem, mind, logs
+
+
 def test_one_house_kept_across_plans(monkeypatch, tmp_path):
     # Run hut5-house: four sites in 45 minutes, 19 pieces of its own building taken back. One house, chosen once.
-    island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)
-    logs = []
-    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library, log=lambda **k: logs.append(k), house_project=True)
+    # Here its first course stands round a room two by two at (10..12.5, 0..2.5), two corners a block higher, and a
+    # block lies in its doorway.
+    course = benchmark(x0=4, high=1, roof=False)
+    course += [block("Block_c1", 7.5, 3.75, -2.5), block("Block_c2", 15, 3.75, 5), block("Block_door", 10, 1.25, -2.5)]
+    island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, course)
     system = mind.system_prompt(island.snap())
     assert '"house": {' in system and "A house you build is one project, kept across all your plans" in system
     assert "Your house" not in mind.situation(island.snap(), [], [])
 
     def reply(house):
         mind.adopt({"reply": {"house": house}, "seconds": 1, "prepared": {"assumes": None}}, island.snap())
-    reply({"inside": [[10, 0]], "door": [10, -2.5]})
-    assert mem.state["house"]["inside"] == [[4, 0]] and mem.state["house"]["door"] == [4, -1]
+    reply({"inside": [[10, 0], [12.5, 0], [10, 2.5], [12.5, 2.5]], "door": [10, -2.5]})
+    assert mem.state["house"]["inside"] == [[4, 0], [4, 1], [5, 0], [5, 1]] and mem.state["house"]["door"] == [4, -1]
     text = mind.situation(island.snap(), [], [])
-    assert ("Your house, the one project you keep across your plans (chosen 0 minutes ago): inside (10.0, 0.0), the "
-            "doorway at (10.0, -2.5). Done: the room is clear. Next: walls two blocks high at (7.5, 0.0), (10.0, 2.5), "
-            "(12.5, 0.0); the roof will rest on (7.5, 0.0) and (12.5, 0.0), so raise those to three. Built so far, kept "
-            "for it (3 pieces): layer 1: (7.5, 0.0), (10.0, 2.5), (12.5, 0.0).") in text
+    assert ("Your house, the one project you keep across your plans (chosen 0 minutes ago): inside (10.0, 0.0), (10.0, "
+            "2.5), (12.5, 0.0), (12.5, 2.5), the doorway at (10.0, -2.5). Done: the room is clear. Next: walls three "
+            "blocks high all round the room, corners too, but for the doorway at (10.0, -2.5): (7.5, -2.5) stands 5.0, "
+            "(7.5, 0.0) stands 2.5,") in text
+    assert "Built so far, kept for it (13 pieces): layer 1: (7.5, -2.5)," in text
     # Its walls are kept for it; the block in its doorway is not.
-    r = body.run("pick_up", {"object": "Block_2"})
-    assert not r.ok and r.summary == ("Block_2 is part of your house at (10.0, 0.0), which you are building; move the "
+    r = body.run("pick_up", {"object": "Block_w002"[:-1] + "1"})
+    assert not r.ok and r.summary == ("Block_w001 is part of your house at (10.0, 0.0), which you are building; move the "
                                       'house or give it up first ("house", with why) if you mean to take it apart')
-    assert "Block_2" not in mind.situation(island.snap(), [], []).split("Loose objects")[1].split("Stacks")[0]
-    assert body.run("pick_up", {"object": "Block_4"}).ok
+    assert "Block_w001" not in mind.situation(island.snap(), [], []).split("Loose objects")[1].split("Stacks")[0]
+    assert body.run("pick_up", {"object": "Block_door"}).ok
     # Elsewhere only with a reason; the same site it may change as it likes.
-    reply({"inside": [[-12.5, 5]], "door": [-12.5, 2.5]})
-    assert mem.state["house"]["inside"] == [[4, 0]]
+    elsewhere = {"inside": [[-12.5, 5], [-10, 5], [-12.5, 7.5], [-10, 7.5]], "door": [-12.5, 2.5]}
+    reply(elsewhere)
+    assert mem.state["house"]["inside"] == [[4, 0], [4, 1], [5, 0], [5, 1]]
     assert mind.notes[-1] == ("You did not move your house from (10.0, 0.0): a house moves only for a concrete reason "
                               'it cannot stand there; give it with "why".')
-    reply({"inside": [[10, 0], [10, -2.5]], "door": [10, -5]})
-    assert mem.state["house"]["inside"] == [[4, -1], [4, 0]] and mem.state["house"]["moves"] == 0
-    reply({"inside": [[10, 0]], "door": [10, 5]})
-    assert "Your house was not set: the doorway at (10.0, 5.0) must be a cell beside the room" in mind.notes[-1]
+    reply({"inside": [[10, 0], [12.5, 0], [10, 2.5], [12.5, 2.5], [10, 5], [12.5, 5]], "door": [10, -2.5]})
+    assert len(mem.state["house"]["inside"]) == 6 and mem.state["house"]["moves"] == 0
+    reply({"inside": [[10, 0], [12.5, 0], [10, 2.5], [12.5, 2.5]], "door": [7.5, -2.5]})
+    assert ("Your house was not set: the doorway at (7.5, -2.5) must be a cell beside the room on one of its sides"
+            in mind.notes[-1])
+    reply({"inside": [[10, 0], [12.5, 0], [10, 2.5], [12.5, 2.5]], "door": [10, -2.5]})  # two by two again
+    assert len(mem.state["house"]["inside"]) == 4
     # Run hp-proj1: a block left in the room was part of a build it kept, so the body would not lift it out, and the
     # build's own house verdict named another room. What is in the house's way is free to move, and the house has one
     # account: its own line.
-    island.ents["Block_30"]["position"] = [10, 1.25, 0]  # set down in the room, beside the wall: built in
-    built(mind, island, *wall, "Block_30")
+    island.ents["Block_30"]["position"] = [12.5, 1.25, 2.5]  # set down in the room, beside the east wall: built in
+    built(mind, island, *[p["name"] for p in course if p["name"] != "Block_door"], "Block_30")
     text = mind.situation(island.snap(), [], [])
     assert mem.state["house"]["in_the_way"] == ["Block_30"] and "Block_30" not in mem.protected_cubes()
     assert ". It is where your house stands: what the house still needs is said above" in text and "As a house" not in text
     assert any("Block_30" in s["cubes"] for s in mem.state["structures"].values())
-    assert body.run("pick_up", {"object": "Block_30"}).ok
+    assert mem.built_into("Block_30") is None  # no build keeps it from the body (reaching into a room two cells wide
+    # is a body matter: from 1.6 off the walls and 1.2 off a loose piece, nowhere in the room is close enough)
     mem.release_structure(next(iter(mem.state["structures"])))
     # Stalled: it hears so after fifteen minutes with nothing gained.
     mem.state["house"]["best_at"] -= 16 * 60
     assert "It has come no further in 16 minutes: the next step needs another way of doing it." in mind.situation(
         island.snap(), [], [])
-    reply({"inside": [[-12.5, 5]], "door": [-12.5, 2.5], "why": "the sand here is soft and the walls slide"})
+    reply({**elsewhere, "why": "the sand here is soft and the walls slide"})
     house = mem.state["house"]
-    assert house["inside"] == [[-5, 2]] and house["moves"] == 1 and house["pieces"] == []
+    assert house["inside"] == [[-5, 2], [-5, 3], [-4, 2], [-4, 3]] and house["moves"] == 1 and house["pieces"] == []
     assert "(chosen 0 minutes ago, after moving it 1 time): inside (-12.5, 5.0)" in mind.situation(island.snap(), [], [])
-    assert body.run("pick_up", {"object": "Block_2"}).ok
+    assert body.run("pick_up", {"object": "Block_w001"}).ok
     reply({"inside": []})
     assert mem.state["house"] == house and "You did not give up your house" in mind.notes[-1]
     reply({"inside": [], "why": "no stone is left on the island"})
     assert "house" not in mem.state
-    assert [(l["phase"], l.get("why", "")) for l in logs if l["kind"] == "house" and l["phase"] != "progress"] == [
-        ("chose", ""), ("refused", ""), ("revised", ""), ("rejected", ""),
+    assert [(l["phase"], l.get("why", "")) for l in logs if l["kind"] == "house"
+            and l["phase"] not in ("progress", "installed")] == [
+        ("chose", ""), ("refused", ""), ("revised", ""), ("rejected", ""), ("revised", ""),
         ("moved", "the sand here is soft and the walls slide"), ("refused", ""),
         ("abandoned", "no stone is left on the island")]
+    # What stays built at the house is counted as it changes: the work that is not taken back.
+    assert [l["pieces"] for l in logs if l["kind"] == "house" and l["phase"] == "installed"][:1] == [13]
 
 
 def test_a_chosen_house_that_stands(monkeypatch, tmp_path):
-    posts = [block(f"Block_{side}{k}", x, (k - 0.5) * 2.5, z) for side, x, z in ((1, -2.5, 0), (2, 2.5, 0))
-             for k in (1, 2, 3)] + [block(f"Block_3{k}", 0, (k - 0.5) * 2.5, 2.5) for k in (1, 2)]
-    island = Island([ground(attrs={"Surface": "Sand"}), *posts, ent("Log_1", (0, 8.75, 0), (7.5, 2.5, 2.5))])
-    island.me = [0, BODY_CENTRE_Y, -8]
-    monkeypatch.setattr(sk, "time", FakeTime(island))
-    library, mem, logs = SkillLibrary(tmp_path / "skills.json"), NativeMemory(tmp_path / "mem"), []
-    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into)
-    mind = Mind(FakeLLM(), mem, "I am a castaway.", body, library, log=lambda **k: logs.append(k), house_project=True)
-    mind.adopt({"reply": {"house": {"inside": [[0, 0]], "door": [0, -2.5]}}, "seconds": 1,
-                "prepared": {"assumes": None}}, island.snap())
-    assert [l["phase"] for l in logs if l["kind"] == "house"] == ["chose", "progress", "built"]
+    island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, benchmark())
+    mind.adopt({"reply": {"house": {"inside": [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], "door": [0, -2.5]}},
+                "seconds": 1, "prepared": {"assumes": None}}, island.snap())
+    assert [l["phase"] for l in logs if l["kind"] == "house"] == ["chose", "installed", "progress", "built"]
+    assert [l["pieces"] for l in logs if l.get("phase") == "installed"] == [41]
     assert "Next: none: it is a house. Walk in by the doorway at (0.0, -2.5) and stand inside." in mind.situation(
         island.snap(), [], [])
     # Off, as in the comparison's other arm: no house in the reply's shape, and a "house" in a reply does nothing.
     mind.house_project = False
     assert '"house"' not in mind.system_prompt(island.snap())
     mem.set_house(None)
-    mind.adopt({"reply": {"house": {"inside": [[0, 0]], "door": [0, -2.5]}}, "seconds": 1,
-                "prepared": {"assumes": None}}, island.snap())
+    mind.adopt({"reply": {"house": {"inside": [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], "door": [0, -2.5]}},
+                "seconds": 1, "prepared": {"assumes": None}}, island.snap())
     assert "house" not in mem.state
 
 

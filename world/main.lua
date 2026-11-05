@@ -2513,7 +2513,8 @@ end
 --   too. Only inside a house (ADR-019) is the body warm, and there a fed body mends twice as fast. Rain puts every
 --   fire out, and leaves the wood too damp to light for a while after.
 -- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, ByFire, InRain,
--- Sheltered ("", "roof", "enclosed": a roof with walls on three sides, or "house") and its current WalkSpeed.
+-- Sheltered (what is over and round it: "", "roof", or "enclosed": a roof with walls on three sides), InHouse (it
+-- stands inside a finished house, ADR-019) and its current WalkSpeed.
 local stormStrike -- with the sky events below: lightning on a palm near Godling
 -- Rain, cold and shelter. Like the other newer sections, a function of its own, so its locals stay out of the main
 -- chunk's (Luau allows 200 locals in one function, and the world script has come close).
@@ -2616,12 +2617,15 @@ local tickWeather = (function()
         return sides >= 3 and "enclosed" or "roof"
     end
 
-    -- A house (ADR-019; mind/godling/house.py is the same check, held to the same layouts by the tests): the body
-    -- stands in a room of clear cells, each with a roof over it more than the body's height up, walls at least two
-    -- blocks high round the room, and one doorway it can walk through. Shelter is what the body feels where it
-    -- stands; a house is what was built, and only inside one is the body warm.
+    -- A house (ADR-019's first-house benchmark; mind/godling/house.py is the same check, held to the same layouts by
+    -- the tests): the body stands in a room of clear cells at least two by two, each with a roof over it more than the
+    -- body's height up (three blocks: the grid is 2.5); walls all round the room, corners too, filled from the floor
+    -- up to the roof with the roof on them; and one doorway on a side, open up to the roof with the roof over it, onto
+    -- open ground. Shelter is what the body feels where it stands; a house is what was built, and only inside one is
+    -- the body warm.
     local HOUSE_MOST = 64 -- cells: more is open ground under something wide, not a house
     local SIDES = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+    local AROUND = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
     local function houseAt(player, hrp)
         local p = hrp.Position
         local floor = p.Y - BODY_ABOVE_FEET
@@ -2629,44 +2633,117 @@ local tickWeather = (function()
             return anchoredIn(player, Vector3.new(c[1] * GRID, floor + (lo + hi) / 2, c[2] * GRID),
                 Vector3.new(GRID - 0.2, hi - lo, GRID - 0.2))
         end
+        local function band(c, k) -- the cell's k-th block up from the floor (0 the lowest) holds something
+            return solid(c, k * GRID + 0.2, (k + 1) * GRID - 0.2)
+        end
         local function clear(c) -- room to stand, on a floor
             return not solid(c, 0.2, 5.02) and solid(c, -0.7, 0.05)
         end
-        local function roofed(c)
-            return solid(c, 4.95, 15)
+        local function underside(c) -- which block up the roof over the cell starts at (3 is 7.5 up), or nil
+            for k = 2, 5 do
+                if band(c, k) then
+                    return k
+                end
+            end
+            return nil
         end
         local function key(c)
             return c[1] .. "," .. c[2]
         end
+        local function near(c, i)
+            return { c[1] + i[1], c[2] + i[2] }
+        end
         local start = { math.floor(p.X / GRID + 0.5), math.floor(p.Z / GRID + 0.5) }
-        if not (clear(start) and roofed(start)) then
+        local under = {} -- cell key -> where its roof starts
+        under[key(start)] = clear(start) and underside(start)
+        if not under[key(start)] then
             return false
         end
-        local room, side, queue, n = { [key(start)] = true }, {}, { start }, 1
+        local room, seen, queue, n = { [key(start)] = start }, { [key(start)] = true }, { start }, 1
         while #queue > 0 do
             local c = table.remove(queue)
             for _, d in ipairs(SIDES) do
-                local next = { c[1] + d[1], c[2] + d[2] }
+                local next = near(c, d)
                 local k = key(next)
-                if not room[k] and not side[k] then
-                    if clear(next) and roofed(next) then
-                        room[k], n = true, n + 1
+                if not seen[k] then
+                    seen[k] = true
+                    under[k] = clear(next) and underside(next)
+                    if under[k] then
+                        room[k], n = next, n + 1
                         if n > HOUSE_MOST then
                             return false
                         end
                         table.insert(queue, next)
-                    else
-                        side[k] = next
                     end
                 end
             end
         end
+        local function inside(c)
+            return room[key(c)] ~= nil
+        end
+        local function inner(c) -- the cells of the room beside this one
+            local cells = {}
+            for _, d in ipairs(SIDES) do
+                if inside(near(c, d)) then
+                    table.insert(cells, near(c, d))
+                end
+            end
+            return cells
+        end
+        local function wall(c)
+            return band(c, 0) and band(c, 1)
+        end
+        -- A doorway clear to the roof, with the roof over it, is as clear and roofed as the room: a cell sticking out
+        -- of it between two walls, leading out, is the doorway (house.py _peel).
+        local doorway = {}
+        for k, c in pairs(room) do
+            local by = inner(c)
+            if #by == 1 and #inner(by[1]) >= 2 then
+                local dx, dz = c[1] - by[1][1], c[2] - by[1][2]
+                if wall({ c[1] + dz, c[2] + dx }) and wall({ c[1] - dz, c[2] - dx }) and not wall({ c[1] + dx, c[2] + dz }) then
+                    doorway[k] = true
+                end
+            end
+        end
+        if doorway[key(start)] then
+            return false -- standing in the doorway, not in the house
+        end
+        local top = 0
+        for k in pairs(doorway) do
+            room[k] = nil
+        end
+        local square = false
+        for k, c in pairs(room) do
+            top = math.max(top, under[k])
+            square = square or (inside(near(c, { 1, 0 })) and inside(near(c, { 0, 1 })) and inside(near(c, { 1, 1 })))
+        end
+        if not square then
+            return false -- a room smaller than two by two
+        end
+        local ring = {}
+        for _, c in pairs(room) do
+            for _, d in ipairs(AROUND) do
+                local next = near(c, d)
+                if not inside(next) then
+                    ring[key(next)] = next
+                end
+            end
+        end
         local doors = 0
-        for _, c in pairs(side) do
-            if clear(c) then
+        for _, c in pairs(ring) do
+            local by = inner(c)
+            if #by > 0 and not solid(c, 0.2, top * GRID - 0.2) and solid(c, -0.7, 0.05) then
+                local out = { 2 * c[1] - by[1][1], 2 * c[2] - by[1][2] }
+                if not (band(c, top) and clear(out)) then
+                    return false -- an opening that is no doorway: no roof over it, or no way out
+                end
                 doors = doors + 1
-            elseif not (solid(c, 0.2, 2.3) and solid(c, 2.7, 4.8)) then
-                return false -- a wall lower than two blocks
+            else
+                for b = 0, top do
+                    if not band(c, b) then
+                        return false -- a wall short of the roof, or with no roof on it
+                    end
+                end
             end
         end
         return doors == 1
@@ -2710,8 +2787,17 @@ local tickWeather = (function()
             local s = hrp and surviving[player]
             if s then
                 local shelter = shelterOf(player, hrp)
-                if shelter ~= "" and houseAt(player, hrp) then
-                    shelter = "house"
+                local inHouse = false -- under a roof, the house check, at most once a second (it probes a good deal)
+                if shelter == "" then
+                    s.houseCheckAt = 0
+                elseif os.clock() >= (s.houseCheckAt or 0) then
+                    s.houseCheckAt = os.clock() + 1
+                    s.houseSeen = houseAt(player, hrp)
+                end
+                inHouse = shelter ~= "" and s.houseSeen == true
+                if inHouse and not s.house then
+                    local at = hrp.Position
+                    print(string.format("HOUSE %s stands inside a house at (%.1f, %.1f)", player.Name, at.X, at.Z))
                 end
                 local inRain = weather.rain > 0.3 and shelter == ""
                 local byFire = false
@@ -2725,7 +2811,7 @@ local tickWeather = (function()
                     or -step * 100 / DRY_SECONDS * (byFire and FIRE_DRIES or 1)), 0, 100)
                 -- Night, or soaked in the rain, is cold; only a house keeps it off. A fire close by halves it, and so
                 -- does a roof over the head (ADR-019).
-                s.house = shelter == "house"
+                s.house = inHouse
                 s.cold = not s.house and (night or (inRain and s.wet >= 50))
                 s.coldPace = (byFire and HARM.coldHalves or 1) * (shelter ~= "" and HARM.coldHalves or 1)
                 if player:GetAttribute("InRain") ~= inRain then
@@ -2737,6 +2823,7 @@ local tickWeather = (function()
                 player:SetAttribute("Cold", s.cold)
                 player:SetAttribute("ByFire", byFire)
                 player:SetAttribute("Sheltered", shelter)
+                player:SetAttribute("InHouse", inHouse)
             end
         end
     end

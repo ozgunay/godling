@@ -33,8 +33,8 @@ ANSWER_SHAPE = {
 
 # A house is one project kept across plans (ADR-019, after run hut5-house: four sites in 45 minutes, 19 pieces of its
 # own building taken back). The mind chooses its site once; every plan is told how far it has come and what is next.
-HOUSE_SHAPE = {"inside": "[[x, z], ...] the cells inside your house (block centres)",
-               "door": "[x, z] its doorway: a cell beside them",
+HOUSE_SHAPE = {"inside": "[[x, z], ...] the cells inside your house (block centres), at least two by two",
+               "door": "[x, z] its doorway: a cell beside them on one side, not at a corner",
                "why": "only to move or give up the house you chose: the concrete reason it cannot stand there"}
 HOUSE_RULE = """A house you build is one project, kept across all your plans until it stands. Choose where it will stand
 once, with "house": the cells inside it and its doorway; leave "house" out after that. Every plan is told how far it
@@ -162,7 +162,7 @@ def _how_it_feels(snap):
         parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
     if snap.wet >= 15:
         parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
-    if snap.sheltered == "house":
+    if snap.in_house:
         parts.append("You are inside a house: warm and dry, mending twice as fast while fed")
     elif snap.sheltered:
         parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else "")
@@ -260,9 +260,11 @@ wood is still damp after it.
 Days turn into nights; nights are dark and cold. The weather turns: showers, spells of rain that last for days,
 thunderstorms, fog some mornings. Rain soaks you and slows your walking. The cold, at night or soaked in the rain,
 wears your health down and stops you mending. A roof over your head keeps the rain off and halves the cold; a fire
-close by halves it too. Only inside a house are you warm, whatever the night. A house is at least one clear space
-inside where you can stand, walls at least two blocks high all round it, one doorway you can walk through, and a roof
-over every space inside with more room under it than your height. Inside your house a fed body mends twice as fast.
+close by halves it too. Only inside a house are you warm, whatever the night. A house is a room at least two cells by
+two, clear to stand in on one floor; walls all round it, corners too, filled from the ground up to the roof, but for one
+doorway on a side, open up to the roof and onto open ground; and a roof over all of it, the walls and the doorway too,
+with more room under it than your height (on walls three blocks high).
+Inside your house a fed body mends twice as fast.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before.
 Now and then the ground shakes. Loose pieces can fall; fastened pieces hold where they are, and a wide base stands
@@ -483,6 +485,9 @@ thought and in that project's intention."""
             return None
         found = house_plan(pieces_of(snap), terrain_of(snap), [tuple(c) for c in house["inside"]], tuple(house["door"]))
         house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
+        if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
+            house["installed"] = len(found["pieces"])
+            self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
         if found["score"] > house.get("best", -1):
             house["best"], house["best_at"] = found["score"], time.time()
             self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
