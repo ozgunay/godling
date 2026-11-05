@@ -123,3 +123,6 @@ def test_a_house_layout_must_hold_together():
         "the cells inside and the doorway must each be a point [x, z]")
     assert layout([[0, 0], [2.4, 0.3]], [-2.5, 0]) == ([(0, 0), (1, 0)], (-1, 0))  # points snap to their cells
     assert layout([{"x": 0, "z": 0}], {"x": -2.5, "z": 0}) == ([(0, 0)], (-1, 0))
+    assert layout("[[0, 0], [2.5, 0]]", "[-2.5, 0]") == ([(0, 0), (1, 0)], (-1, 0))
+    assert layout("the cells inside", [0, 0]) == layout({"x": 0}, [0, 0]) == (
+        "the cells inside and the doorway must each be a point [x, z]")

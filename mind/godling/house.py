@@ -11,6 +11,7 @@ rain off long before it is a house.
 Works on the building pieces and terrain as structures.py reads them (records with "pos" and "size", world-aligned),
 cut into the world's grid of 2.5 cells.
 """
+import json
 import math
 from collections import deque
 
@@ -194,8 +195,12 @@ def cell_of(xz):
 
 def layout(inside, door):
     """A house the mind chose, read from its reply: (the cells inside, the doorway's cell), or a reason it cannot be
-    one. The cells inside must touch one another, side by side, and the doorway lie beside them."""
+    one. The cells inside must touch one another, side by side, and the doorway lie beside them. A list written out
+    as a string is read as one (run hp-proj4 sent "[[-107.5, -37.5], ...]", copying the shape's description)."""
     try:
+        inside, door = (json.loads(v) if isinstance(v, str) else v for v in (inside, door))
+        if not isinstance(inside, list):
+            raise TypeError(inside)
         room = sorted({cell_of(c) for c in inside})
         door = cell_of(door)
     except (TypeError, ValueError, IndexError, KeyError):

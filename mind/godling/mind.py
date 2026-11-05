@@ -534,7 +534,7 @@ thought and in that project's intention."""
             self.log(kind="house", phase="abandoned", why=why, inside=now["inside"], door=now["door"])
             self.memory.set_house(None)
             return
-        chosen = house_layout(inside if isinstance(inside, list) else [], spec.get("door"))
+        chosen = house_layout(inside, spec.get("door"))
         if isinstance(chosen, str):
             self.notes.append(f"Your house was not set: {chosen}.")
             self.log(kind="house", phase="rejected", reason=chosen, spec=json.dumps(spec)[:300])
