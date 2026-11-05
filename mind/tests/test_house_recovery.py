@@ -152,6 +152,21 @@ def test_hands_full_sets_nothing_down_in_the_house(monkeypatch, held, start):
         assert r.ok
 
 
+@pytest.mark.parametrize("name, size", [("Coconut_held", (0.9, 0.9, 0.9)), ("Axe_held", (0.4, 0.4, 1.0))])
+def test_hands_full_keeps_unsnapped_objects_wholly_out_of_the_room(monkeypatch, name, size):
+    island = Island([*platform(), *benchmark(), ent(name, (0, 1.25, 30), size),
+                     ent("Hammer_1", (0, 0.2, -11), (0.6, 0.4, 2.0))],
+                    me=(0, BODY_CENTRE_Y, -C))
+    island.held = name
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    body = Skills(island, reserved=lambda: RESERVED)
+    r = body.run("pick_up", {"object": "Hammer_1"})
+    assert r.ok and island.held == "Hammer_1", r.summary
+    (x, _, z), (sx, _, sz) = island.ents[name]["position"], size
+    for ix, iz in RESERVED:
+        assert abs(x - ix * C) >= (sx + C) / 2 - 1e-9 or abs(z - iz * C) >= (sz + C) / 2 - 1e-9
+
+
 def test_the_cells_a_house_needs_clear(tmp_path):
     from godling.memory import NativeMemory
     mem = NativeMemory(tmp_path / "mem")

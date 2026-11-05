@@ -354,3 +354,22 @@ the roof fixes in the real world:
 In the real example world, fresh, with the body choosing its own steps: it walked from step to step, lifted both
 caps, cleared the room, laid the lintel and the log over the far cell (snagging once on the way to its step, and
 going up on the next try), and walked in: `InHouse`, the house counted.
+
+## Review corrections
+
+Missing or uneven terrain now produces a site verdict that leaves the mind able to plan again. The world and the
+Python check require continuous, settled, grid-aligned material across each wall and roof cell. Their regression
+layouts include sparse walls, tilted and moving material, fractional roof heights, missing ground and terrain seams.
+
+Guided projects validate that every interior cell has a separate perimeter bearing for the current roof method.
+Unsupported layouts receive an explanation before construction begins; saved incomplete layouts request revision.
+General recognition still accepts completed larger houses, up to 64 interior cells.
+
+Ownership updates after each placement, including nested learned moves and gifted stacking. Accepted placements
+remain recorded when attention interrupts settling. Temporary deposits to free the hands use the whole object's
+footprint, including small tools and coconuts, and stay separate from installed work. Routing keeps valid paths
+across connected platforms before attempting a descent.
+
+Established builds survive trimming the material history. Disabling the house project releases its runtime
+ownership while preserving the saved project. House feedback and build-damage notices use observed geometry;
+hidden changes are learned when Godling revisits, and the construction observations persist across restarts.

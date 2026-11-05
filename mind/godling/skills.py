@@ -155,6 +155,8 @@ class Skills:
         self.reserved = reserved  # grid cells (ix, iz) to keep clear: the house's room, doorway and way out
         self._kept_clear = False  # the last hands-full reflex passed over spots in those cells
         self.placed = []  # pieces set down since the mind last asked (take_placed), by any skill, learned ones too
+        self.on_placed = lambda snap: None  # refresh ownership before the next step, including inside learned skills
+        self._setting_aside = False  # freeing the hands is not building with the piece
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
         self.log = log or (lambda **kw: None)
@@ -927,7 +929,7 @@ class Skills:
         # Up on something, to a spot as high across lower floor (from one step to another): walking straight there
         # walks off this one and stays on the ground beside that one. Down first, then up onto it.
         gap = self._gap_between(snap, (x, z), level) if level > 0.3 and floor is not None else None
-        if gap is not None:
+        if gap is not None and self._route(snap, (snap.me[0], snap.me[2]), (x, z)) is None:
             down = self._hop_down(snap, x, z, level, gap, walk_on=False)
             if not down.ok:
                 return down
@@ -1329,9 +1331,8 @@ class Skills:
             if held.name.startswith(SNAPPED_KINDS):
                 x, z = grid(x), grid(z)
             size = turned_size(held.local_size, turn, False)
-            cells = {(ix, iz) for ix in range(math.ceil((x - size[0] / 2) / CUBE - 1e-9), math.ceil((x + size[0] / 2) / CUBE - 1e-9))
-                     for iz in range(math.ceil((z - size[2] / 2) / CUBE - 1e-9), math.ceil((z + size[2] / 2) / CUBE - 1e-9))}
-            if cells & reserved:
+            if any(abs(x - ix * CUBE) < (size[0] + CUBE) / 2 - 1e-9
+                   and abs(z - iz * CUBE) < (size[2] + CUBE) / 2 - 1e-9 for ix, iz in reserved):
                 self._kept_clear = True
                 return False
             return True
@@ -1339,10 +1340,12 @@ class Skills:
         tries = [(x, z, turn) for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))
                  for turn in ((0, 90) if long else (0,)) if clear_of_reserved(x, z, turn)]
         for x, z, turn in tries[:16]:
-            result = self.skill_put_down(x, z, turn)
+            setting_aside, self._setting_aside = self._setting_aside, True
+            try:
+                result = self.skill_put_down(x, z, turn)
+            finally:
+                self._setting_aside = setting_aside
             if result.ok:
-                if self.placed and self.placed[-1] == held.name:
-                    self.placed.pop()  # set down to free the hands, not built with
                 self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
                 return result
         return None
@@ -1389,12 +1392,14 @@ class Skills:
             if why == "PlaceFailed:Occupied":
                 why = f"that space is taken by {', '.join(self._overlapping(snap, target, size, ignore={held.name})) or 'something'}"
             return Result(False, "put_down", f"place failed: {why}")
+        if not self._lifting and not self._setting_aside:
+            self.placed.append(held.name)  # accepted by the world, even if settling is interrupted
         snap = self._settle(PLACE_SECONDS + 0.4)
+        if not self._lifting and not self._setting_aside:
+            self.on_placed(snap)
         landed = snap.entities.get(held.name)
         where = f"({landed.pos[0]:.1f}, {landed.pos[1]:.2f}, {landed.pos[2]:.1f})" if landed else "nowhere (lost)"
         how = " standing upright" if ladder else _orientation(turn, upright)
-        if not self._lifting:  # set back after stepping out of a pen: not newly built
-            self.placed.append(held.name)
         return Result(True, "put_down", f"put {held.name} down{how} at {where}", {"object": held.name})
 
     def skill_stack_on(self, object):
@@ -1416,7 +1421,11 @@ class Skills:
         snap = self.world.act("Place", {"position": list(target), "rotation": {"yaw": 0, "pitch": 0, "roll": 0}})
         if snap.last_result != "PlaceSuccess":
             return Result(False, "stack_on", f"place failed: {snap.last_result}")
+        if not self._lifting and not self._setting_aside:
+            self.placed.append(held.name)
         snap = self._settle(PLACE_SECONDS + 0.7)
+        if not self._lifting and not self._setting_aside:
+            self.on_placed(snap)
         column = snap.column(column[0].name)
         names = [c.name for c in column]
         if held.name in names and names[-1] == held.name:
@@ -1524,7 +1533,11 @@ class Skills:
                 blocking = self._overlapping(snap, target, size, ignore={held.name})
                 why = f"that space is taken by {', '.join(blocking) or 'something'}"
             return Result(False, "place_at", f"place rejected: {why}", {"object": held.name})
+        if not self._lifting and not self._setting_aside:
+            self.placed.append(held.name)  # accepted by the world, even if settling is interrupted
         snap = self._settle(PLACE_SECONDS + 0.7)
+        if not self._lifting and not self._setting_aside:
+            self.on_placed(snap)
         said = self._describe(snap, held.name) + _orientation(turn, upright) + snapped
         now = snap.entities.get(held.name)
         if beam and now is not None and (now.pos[1] < target[1] - 0.6 or "not resting" in said):
@@ -1533,8 +1546,6 @@ class Skills:
         if stepped:  # and back down again, as a person would: the mind never asked to stand up there
             down = self._hop_down(snap, floor[0], floor[1], self._level(snap), floor[2], walk_on=False)
             said += stepped + (", and stepped back down" if down.ok else f"; {down.summary}")
-        if not self._lifting:
-            self.placed.append(held.name)
         return Result(True, "place_at", said, {"object": held.name})
 
     def skill_throw(self, x, y, z, speed=6):

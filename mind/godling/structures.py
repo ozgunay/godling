@@ -10,8 +10,8 @@ heights are measured from the terrain top under the cell, so building on a mesa 
   span       a long piece lying on its two ends with a gap under its middle (a lintel, a beam, a bridge)
   post       a long piece stood on its end
   floor      a flat top at least two layers up, at least 4 cells wide, that one could stand on
-  house      the house check (house.py, ADR-019): a clear room, walls two blocks high round it but for one doorway,
-             and a roof over every cell of it with more than the body's height of room under it
+  house      the house check (house.py, ADR-019): a clear room at least two by two, continuous walls to the roof but
+             for one doorway, and a settled roof over its whole footprint with more than the body's height below it
 """
 import math
 from collections import deque
@@ -28,7 +28,8 @@ def pieces_of(snap):
     """The building pieces in a Snapshot as plain records (carried ones excluded)."""
     held = snap.held()
     return [{"name": e.name, "pos": [round(v, 3) for v in e.pos], "size": [round(v, 3) for v in e.size],
-             "fastened": bool(e.attrs.get("Fastened"))}
+             "fastened": bool(e.attrs.get("Fastened")), "anchored": e.anchored, "aligned": e.aligned,
+             "settled": e.attrs.get("Settled", True) or bool(e.attrs.get("Fastened"))}
             for e in snap.movables() if e.name.startswith(PIECE_PREFIXES) and e is not held]
 
 

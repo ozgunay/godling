@@ -466,6 +466,119 @@ def test_planning_ahead_counts_the_agendas_pieces_as_taken(monkeypatch, tmp_path
     assert "1) a walk. Plan what comes AFTER all of it, assuming it succeeds." in plain
 
 
+def test_learned_wall_skill_keeps_each_piece_before_the_next_pickup(monkeypatch, tmp_path):
+    island, body, mem, mind, _ = house_island(monkeypatch, tmp_path, [block("Block_31", -17, 1.25, 0)])
+    mind._choose_house({"inside": [[10, 0], [10, 2.5], [12.5, 0], [12.5, 2.5]], "door": [10, -2.5]}, island.snap())
+    body.library.define({"name": "wall_pair", "steps": [
+        {"skill": "pick_up", "args": {"object": {"nearest_free": "cube"}}},
+        {"skill": "put_down", "args": {"x": 7.5, "z": 0}},
+        {"skill": "pick_up", "args": {"object": {"nearest_free": "cube"}}},
+        {"skill": "put_down", "args": {"x": 7.5, "z": 2.5}}]})
+    result = body.run("wall_pair", {})
+    assert result.ok, result.summary
+    assert {tuple(island.ents[n]["position"][::2]) for n in ("Block_30", "Block_31")} == {(7.5, 0), (7.5, 2.5)}
+    assert {"Block_30", "Block_31"} <= mem.protected_cubes()
+    assert body.take_placed() == ["Block_30", "Block_31"]
+
+
+def test_automatic_build_members_survive_placement_history_limit(world, tmp_path):
+    island, body, _ = world
+    mind = make_mind(world, tmp_path, FakeLLM())
+    body.protected = mind.memory.protected_cubes
+    body.kept_in = mind.memory.built_into
+    built(mind, island, "Block_1", "Block_2")
+    title = next(iter(mind.memory.state["structures"]))
+    later = [block(f"Stone_{n}", -190 + 5 * (n % 39), 1.25, 30 + 5 * (n // 39)) for n in range(399)]
+    island.ents.update({e["name"]: e for e in later})
+    built(mind, island, *(e["name"] for e in later))
+    assert len(mind.memory.state["placed"]) == 400 and "Block_1" not in mind.memory.state["placed"]
+    assert mind.memory.state["structures"][title]["cubes"] == ["Block_1", "Block_2"]
+    assert {"Block_1", "Block_2"} <= NativeMemory(mind.memory.root).protected_cubes()
+    assert not body.run("pick_up", {"object": "Block_2"}).ok
+
+
+def test_resuming_without_house_project_releases_only_its_ownership(monkeypatch, tmp_path):
+    island, body, mem, mind, _ = house_island(monkeypatch, tmp_path, benchmark(x0=4, high=1, roof=False))
+    mind._choose_house({"inside": [[10, 0], [10, 2.5], [12.5, 0], [12.5, 2.5]], "door": [10, -2.5]}, island.snap())
+    mem.add_structure("chosen keeps", ["Log_1"], (-20, 10), {"Log_1": (-20, 1.25, 10)})
+    mem.save()
+    saved_house = mem.state["house"]
+    resumed = NativeMemory(mem.root)
+    body = Skills(island, library=body.library, protected=resumed.protected_cubes, kept_in=resumed.built_into,
+                  reserved=resumed.reserved_cells)
+    mind = Mind(FakeLLM(), resumed, "", body, body.library, house_project=False)
+    assert '"house": {' not in mind.system_prompt(island.snap())
+    assert resumed.reserved_cells() == set() and resumed.protected_cubes() == {"Log_1"}
+    assert resumed.built_into("Block_w001") is None
+    assert body.run("pick_up", {"object": "Block_w001"}).ok
+    resumed.save()
+    assert NativeMemory(resumed.root).state["house"] == saved_house
+
+
+def test_house_geometry_is_observed_cached_and_revisited(monkeypatch, tmp_path):
+    island, body, mem, mind, _ = house_island(monkeypatch, tmp_path, benchmark(x0=40))
+    island.ents["Block_hidden"] = block("Block_hidden", 110, 1.25, 20)
+    island.ents["Log_W1"]["anchored"] = True
+    discovery = Discovery(tmp_path / "discovery.json")
+    mind.discovery = discovery
+    discovery.see(island.snap())
+    mind._choose_house({"inside": [[100, 0], [100, 2.5], [102.5, 0], [102.5, 2.5]], "door": [100, -2.5]}, island.snap())
+    unseen = mind.situation(island.snap(), [], [])
+    assert "needs an inspection" in unseen and "Block_hidden" not in unseen and "Log_W1" not in unseen
+    assert mem.state["house"]["pieces"] == []
+    island.me = [100, BODY_CENTRE_Y, -10]
+    discovery.see(island.snap())
+    assert "Next: none: it is a house." in mind.situation(island.snap(), [], [])
+    island.me = [-100, BODY_CENTRE_Y, -20]
+    discovery.see(island.snap())
+    island.ents["Block_hidden"]["position"] = [100, 1.25, 0]
+    island.ents["Log_W1"].update(anchored=False, rotation=[[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    hidden = mind.situation(island.snap(), [], [])
+    assert "Last observed." in hidden and "Next: none: it is a house." in hidden
+    assert "Block_hidden fills it" not in hidden
+    mem.save()
+    discovery.save()
+    restored = NativeMemory(mem.root)
+    discovery = Discovery(discovery.path)
+    body = Skills(island, library=body.library, protected=restored.protected_cubes, kept_in=restored.built_into)
+    mind = Mind(FakeLLM(), restored, "", body, body.library, discovery=discovery, house_project=True)
+    assert "Next: none: it is a house." in mind.situation(island.snap(), [], [])
+    cached = mind._construction_view(island.snap()).entities["Log_W1"]
+    assert cached.anchored and cached.size == (7.5, 2.5, 2.5)
+    island.me = [100, BODY_CENTRE_Y, -10]
+    discovery.see(island.snap())
+    revisited = mind.situation(island.snap(), [], [])
+    assert "Block_hidden fills it" in revisited and "Next: none: it is a house." not in revisited
+    observed = mind._construction_view(island.snap()).entities["Log_W1"]
+    assert not observed.anchored and observed.size == (2.5, 7.5, 2.5)
+    assert "Block_hidden" not in restored.protected_cubes()
+
+
+def test_uneven_house_site_keeps_planning_available(monkeypatch, tmp_path):
+    raised = ent("Mesa_raised", (12.5, 0.5, 2.5), (2.4, 1, 2.4), role="Mesa")
+    island, body, mem, mind, _ = house_island(monkeypatch, tmp_path, [raised])
+    spec = {"inside": [[10, 0], [10, 2.5], [12.5, 0], [12.5, 2.5]], "door": [10, -2.5]}
+    mind.adopt({"reply": {"house": spec}, "seconds": 1, "prepared": {"assumes": None}}, island.snap())
+    assert "choose level ground" in mind.prepare(island.snap(), [], [])["user"]
+    mind.adopt({"reply": {"house": {"inside": [], "why": "uneven floor"}}, "seconds": 1,
+                "prepared": {"assumes": None}}, island.snap())
+    assert "house" not in mem.state
+
+
+def test_legacy_build_waits_for_inspection_then_releases_missing_members(world, tmp_path):
+    island, _, _ = world
+    mind = make_mind(world, tmp_path, FakeLLM())
+    built(mind, island, "Block_1", "Block_2")
+    title = next(iter(mind.memory.state["structures"]))
+    mind.discovery = Discovery()
+    mind.keep_builds(island.snap())
+    assert title in mind.memory.state["structures"]
+    island.ents.pop("Block_1")
+    mind.discovery.see(island.snap())
+    mind.keep_builds(island.snap())
+    assert title not in mind.memory.state["structures"]
+
+
 def test_sleep(world, tmp_path):
     island, body, library = world
     mem = BrainMemory(tmp_path / "brain")

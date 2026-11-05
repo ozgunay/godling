@@ -76,6 +76,67 @@ def test_run_turns_errors_into_failures(make):
     assert skill_logs[-1]["ok"] is False and "seconds" in skill_logs[-1]
 
 
+@pytest.mark.parametrize("skill, args", [("put_down", {"x": 5, "z": 0}),
+                                         ("place_at", {"x": 5, "y": 1.25, "z": 0})])
+def test_accepted_placement_survives_interrupted_settling(make, skill, args):
+    island, body = make([block("Block_1", 3, 1.25, 3)])
+    island.held = "Block_1"
+    settled = []
+    body.on_placed = settled.append
+
+    def interrupt(snap):
+        if island.actions("Place"):
+            raise Interrupted("a stone falls nearby")
+    body.on_step = interrupt
+    result = body.run(skill, args)
+    assert not result.ok and "interrupted: a stone falls nearby" in result.summary
+    assert island.held is None and island.ents["Block_1"]["position"][0] == 5
+    assert body.take_placed() == ["Block_1"] and settled == []
+
+
+@pytest.mark.parametrize("skill, args", [("put_down", {"x": 5, "z": 0}),
+                                         ("place_at", {"x": 5, "y": 1.25, "z": 0})])
+def test_learned_skill_publishes_placement_before_its_next_step(make, tmp_path, skill, args):
+    from godling.learned import SkillLibrary
+    library = SkillLibrary(tmp_path / "skills.json")
+    library.define({"name": "build_then_reuse", "params": [], "steps": [
+        {"skill": "pick_up", "args": {"object": "Block_1"}},
+        {"skill": skill, "args": args},
+        {"skill": "pick_up", "args": {"object": "Block_1"}}]})
+    island, body = make([block("Block_1", 3, 1.25, 3)], library=library)
+    built = set()
+
+    def keep(snap):
+        assert snap.held() is None
+        built.update(body.placed)
+    body.on_placed = keep
+    body.kept_in = lambda name: "a completed build" if name in built else None
+    result = body.run("build_then_reuse", {})
+    assert not result.ok and "which you built; release that first" in result.summary
+    assert built == {"Block_1"} and body.take_placed() == ["Block_1"]
+    assert island.held is None and island.ents["Block_1"]["position"][0] == 5
+
+
+def test_gifted_stack_publishes_its_installed_piece(make):
+    island, body = make([block("Block_1", 3, 1.25, 3), block("Block_2", 5, 1.25, 0)], gifted=True)
+    island.held = "Block_1"
+    snapshots = []
+    body.on_placed = snapshots.append
+    result = body.run("stack_on", {"object": "Block_2"})
+    assert result.ok and snapshots[-1].entities["Block_1"].pos[1] > 3.5
+    assert body.take_placed() == ["Block_1"]
+
+
+def test_hands_full_staging_does_not_publish_a_build(make):
+    island, body = make([block("Block_1", 3, 1.25, 3), block("Block_2", 5, 1.25, 0)])
+    island.held = "Block_1"
+    settled = []
+    body.on_placed = settled.append
+    result = body.run("pick_up", {"object": "Block_2"})
+    assert result.ok and island.held == "Block_2", result.summary
+    assert settled == [] and body.take_placed() == []
+
+
 class FakeLibrary:
     def __init__(self, behaviour=None):
         self.skills = {"mine": {}}

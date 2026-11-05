@@ -2628,24 +2628,90 @@ local tickWeather = (function()
     local AROUND = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
     local function houseAt(player, hrp)
         local p = hrp.Position
-        local floor = p.Y - BODY_ABOVE_FEET
-        local function solid(c, lo, hi) -- anything held in place in the cell between these heights above the floor
-            return anchoredIn(player, Vector3.new(c[1] * GRID, floor + (lo + hi) / 2, c[2] * GRID),
-                Vector3.new(GRID - 0.2, hi - lo, GRID - 0.2))
-        end
-        local function band(c, k) -- the cell's k-th block up from the floor (0 the lowest) holds something
-            return solid(c, k * GRID + 0.2, (k + 1) * GRID - 0.2)
-        end
-        local function clear(c) -- room to stand, on a floor
-            return not solid(c, 0.2, 5.02) and solid(c, -0.7, 0.05)
-        end
-        local function underside(c) -- which block up the roof over the cell starts at (3 is 7.5 up), or nil
-            for k = 2, 5 do
-                if band(c, k) then
-                    return k
+        local gap, flat, clearance = 0.15, 0.6, 5.05 -- house.py GAP, FLAT, CLEAR
+        local building = { Block = true, ImpactBlock = true, SupplyBlock = true, Stone = true, Meteor = true,
+            Brick = true, Log = true, Boulder = true }
+        local terrainRoles = { Ground = true, Mesa = true, Tree = true, Quarry = true, Stump = true, Wreck = true }
+        local pieces, terrain = {}, {}
+        for _, inst in ipairs(Workspace:GetChildren()) do
+            if inst:IsA("BasePart") and isSolid(inst) and not isCarried(inst) then
+                local record = { pos = inst.Position, half = halfExtents(inst) }
+                if terrainRoles[inst:GetAttribute("RenderRole")] and inst.Anchored then
+                    table.insert(terrain, record)
+                elseif building[inst.Name:match("^(%a+)_")] then
+                    record.stable = inst.Anchored and (inst:GetAttribute("Settled") ~= false or inst:GetAttribute("Fastened") == true)
+                    for _, axis in ipairs({ inst.CFrame.RightVector, inst.CFrame.UpVector, inst.CFrame.LookVector }) do
+                        local nonzero = (math.abs(axis.X) > 0.01 and 1 or 0) + (math.abs(axis.Y) > 0.01 and 1 or 0)
+                            + (math.abs(axis.Z) > 0.01 and 1 or 0)
+                        record.stable = record.stable and nonzero == 1
+                    end
+                    table.insert(pieces, record)
                 end
             end
-            return nil
+        end
+        local cache = {}
+        local function column(c)
+            local k = c[1] .. "," .. c[2]
+            if cache[k] then
+                return cache[k]
+            end
+            local x, z = c[1] * GRID, c[2] * GRID
+            local data = { spans = {}, supports = {} }
+            for _, t in ipairs(terrain) do
+                if math.abs(x - t.pos.X) <= t.half.X and math.abs(z - t.pos.Z) <= t.half.Z then
+                    data.floor = math.max(data.floor or -math.huge, t.pos.Y + t.half.Y)
+                end
+            end
+            for _, piece in ipairs(pieces) do
+                local q, h = piece.pos, piece.half
+                if x >= q.X - h.X - 1e-9 and x < q.X + h.X - 1e-9
+                    and z >= q.Z - h.Z - 1e-9 and z < q.Z + h.Z - 1e-9 then
+                    local span = { q.Y - h.Y, q.Y + h.Y }
+                    table.insert(data.spans, span)
+                    if piece.stable and math.abs(x - q.X) + GRID / 2 <= h.X + gap
+                        and math.abs(z - q.Z) + GRID / 2 <= h.Z + gap then
+                        table.insert(data.supports, span)
+                    end
+                end
+            end
+            table.sort(data.supports, function(a, b) return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2]) end)
+            cache[k] = data
+            return data
+        end
+        local start = { math.floor(p.X / GRID + 0.5), math.floor(p.Z / GRID + 0.5) }
+        local floor = column(start).floor
+        if not floor or math.abs(p.Y - BODY_ABOVE_FEET - floor) > flat then
+            return false
+        end
+        local function filled(c, height)
+            for _, span in ipairs(column(c).spans) do
+                if span[1] < floor + height and span[2] > floor + gap then
+                    return true
+                end
+            end
+            return false
+        end
+        local function clear(c, height)
+            local actual = column(c).floor
+            return actual ~= nil and math.abs(actual - floor) <= flat and not filled(c, height or clearance)
+        end
+        local function standing(c)
+            local level = floor
+            for _, span in ipairs(column(c).supports) do
+                if span[1] <= level + gap then
+                    level = math.max(level, span[2])
+                end
+            end
+            return level - floor
+        end
+        local function underside(c)
+            local lowest = nil
+            for _, span in ipairs(column(c).supports) do
+                if span[1] >= floor + clearance - 0.1 and span[1] <= floor + 15 then
+                    lowest = math.min(lowest or math.huge, span[1] - floor)
+                end
+            end
+            return lowest
         end
         local function key(c)
             return c[1] .. "," .. c[2]
@@ -2653,7 +2719,6 @@ local tickWeather = (function()
         local function near(c, i)
             return { c[1] + i[1], c[2] + i[2] }
         end
-        local start = { math.floor(p.X / GRID + 0.5), math.floor(p.Z / GRID + 0.5) }
         local under = {} -- cell key -> where its roof starts
         under[key(start)] = clear(start) and underside(start)
         if not under[key(start)] then
@@ -2670,7 +2735,7 @@ local tickWeather = (function()
                     under[k] = clear(next) and underside(next)
                     if under[k] then
                         room[k], n = next, n + 1
-                        if n > HOUSE_MOST then
+                        if n > HOUSE_MOST + 1 then -- the doorway is peeled off after the flood
                             return false
                         end
                         table.insert(queue, next)
@@ -2691,7 +2756,7 @@ local tickWeather = (function()
             return cells
         end
         local function wall(c)
-            return band(c, 0) and band(c, 1)
+            return standing(c) >= 2 * GRID - gap
         end
         -- A doorway clear to the roof, with the roof over it, is as clear and roofed as the room: a cell sticking out
         -- of it between two walls, leading out, is the doorway (house.py _peel).
@@ -2717,7 +2782,11 @@ local tickWeather = (function()
             top = math.max(top, under[k])
             square = square or (inside(near(c, { 1, 0 })) and inside(near(c, { 0, 1 })) and inside(near(c, { 1, 1 })))
         end
-        if not square then
+        local count = 0
+        for _ in pairs(room) do
+            count = count + 1
+        end
+        if not square or count > HOUSE_MOST or top <= 5 then
             return false -- a room smaller than two by two
         end
         local ring = {}
@@ -2732,17 +2801,16 @@ local tickWeather = (function()
         local doors = 0
         for _, c in pairs(ring) do
             local by = inner(c)
-            if #by > 0 and not solid(c, 0.2, top * GRID - 0.2) and solid(c, -0.7, 0.05) then
+            if #by == 1 and clear(c, top - gap) then
                 local out = { 2 * c[1] - by[1][1], 2 * c[2] - by[1][2] }
-                if not (band(c, top) and clear(out)) then
+                local roof = underside(c)
+                if not (roof and roof <= top + gap and clear(out)) then
                     return false -- an opening that is no doorway: no roof over it, or no way out
                 end
                 doors = doors + 1
             else
-                for b = 0, top do
-                    if not band(c, b) then
-                        return false -- a wall short of the roof, or with no roof on it
-                    end
+                if standing(c) < top + GRID - 2 * gap then
+                    return false -- the wall must be continuously filled through its roof cap
                 end
             end
         end

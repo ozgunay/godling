@@ -219,6 +219,76 @@ end)
 
 -- Many days of weather, with Godling on the beach by the raft: it rains and dries, a wet spell sets in, storms
 -- strike palms near it, fog comes some mornings, logs wash up, and a ship passes far out.
+T.test("house material is continuous, settled and on a real level floor, matching the mind", function()
+    for _, case in ipairs({ "complete", "seam", "fractional", "missing-floor", "uneven", "sparse", "unanchored", "unsettled", "tilted", "narrow" }) do
+        local w = T.boot()
+        local e = w.e
+        local cx, cz = 600, 600 -- isolated from the island's own terrain and pieces
+        local g = w.godling(V.new(cx, 2.55, cz))
+        local function ground(name, x, size)
+            return e.part(name, { Position = V.new(x, -0.5, cz), Size = V.new(size, 1, 80), Anchored = true,
+                attrs = { RenderRole = "Ground" } })
+        end
+        if case == "seam" then
+            ground("Ground_W", cx - 18.75, 40)
+            ground("Ground_E", cx + 21.25, 40)
+        elseif case ~= "missing-floor" then
+            ground("Ground_Test", cx, 80)
+        end
+        if case == "uneven" then
+            e.part("Raised", { Position = V.new(cx + 2.5, 0.5, cz + 2.5), Size = V.new(2.5, 1, 2.5), Anchored = true,
+                attrs = { RenderRole = "Ground" } })
+        end
+        local n = 2000
+        local function piece(kind, dx, dz, layer, roof)
+            n = n + 1
+            local size = V.new(kind == "Log" and 7.5 or 2.5, 2.5, 2.5)
+            local y = (layer - 0.5) * 2.5
+            if case == "fractional" then
+                if roof then
+                    y = y - 1.2
+                else
+                    y, size = y * 0.84, V.new(size.X, 2.1, size.Z)
+                end
+            elseif not roof and case == "sparse" then
+                size = V.new(size.X, 0.5, size.Z)
+            elseif not roof and case == "narrow" then
+                size = V.new(0.5, size.Y, size.Z)
+            end
+            local p = e.part(kind .. "_" .. n, { Position = V.new(cx + dx * 2.5, y, cz + dz * 2.5), Size = size,
+                Anchored = true, attrs = { RenderRole = kind == "Log" and "Log" or "PickupObject", IsPickupObject = true } })
+            if not roof and case == "unanchored" then
+                p.Anchored = false
+                p.AssemblyLinearVelocity = V.new(1, 0, 0) -- it has not come to rest and cannot settle during this check
+            elseif not roof and case == "unsettled" then
+                p:SetAttribute("Settled", false)
+            elseif not roof and case == "tilted" then
+                p.CFrame = T.CFrame.new(p.Position) * T.CFrame.fromOrientation(0, 0, math.rad(10))
+            end
+            return p
+        end
+        for dx = -1, 2 do
+            for dz = -1, 2 do
+                if not (dx >= 0 and dx <= 1 and dz >= 0 and dz <= 1) and not (dx == 0 and dz == -1) then
+                    for layer = 1, 3 do
+                        piece("Block", dx, dz, layer, false)
+                    end
+                end
+            end
+        end
+        piece("Log", 0, -1, 4, true)
+        piece("Block", 2, -1, 4, true)
+        piece("Log", 0, 2, 4, true)
+        piece("Block", 2, 2, 4, true)
+        for dz = 0, 1 do
+            piece("Log", -1, dz, 4, true)
+            piece("Log", 2, dz, 4, true)
+        end
+        e.step(2, 0.5)
+        T.eq(g:GetAttribute("InHouse"), case == "complete" or case == "seam" or case == "fractional", case)
+    end
+end)
+
 T.test("the weather over nine days, the driftwood, and a passing ship", function()
     local w = T.boot()
     local e, x = w.e, w.x

@@ -2,6 +2,7 @@ import pytest
 
 from godling import attention as att
 from godling.attention import Attention, _bearing, _sky_arrival
+from godling.discovery import Discovery
 from godling.memory import NativeMemory
 from godling.skills import Interrupted
 from godling.world import Entity
@@ -11,6 +12,8 @@ from helpers import block, ent, ground, snap
 class Seen:
     def __init__(self):
         self.snaps = []
+        self.visible = set()
+        self.seen = {}
 
     def see(self, s):
         self.snaps.append(s)
@@ -105,6 +108,21 @@ def test_kept_structures_damage_and_gone(mem):
     later = snap([ground(), block("Block_1", 0.6, 1.25, 0), block("Block_2", 4, 1.25, 0), block("Block_3", 5, 1.25, 0)])
     with pytest.raises(Interrupted, match="something I built"):
         a.on_step(later)
+
+
+@pytest.mark.parametrize("removed", [False, True])
+def test_build_damage_is_not_seen_until_the_site_is_revisited(mem, removed):
+    mem.add_structure("tower", ["Block_1"], (5, 0), {"Block_1": (5, 3.75, 0)})
+    attention = Attention(mem, discovery=Discovery())
+    attention.on_step(snap([ground(), block("Block_1", 5, 3.75, 0)]))
+    attention.on_step(snap([ground(), block("Block_1", 5, 3.75, 0)], me=(100, 2.55, 0)))
+    changed = [] if removed else [block("Block_1", 5, 1.25, 0)]
+    attention.on_step(snap([ground(), *changed], me=(100, 2.55, 0)))
+    assert attention.take_events() == []
+    assert mem.state["structures"]["tower"]["positions"]["Block_1"] == [5, 3.75, 0]
+    with pytest.raises(Interrupted):
+        attention.on_step(snap([ground(), *changed]))
+    assert any("Block_1" in e["text"] for e in attention.take_events())
 
 
 def test_held_cube_movement_is_not_news(mem):

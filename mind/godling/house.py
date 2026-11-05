@@ -71,7 +71,8 @@ def squared(room):
 
 def outside_of(room, door):
     """The cell outside a doorway: beyond it, away from the room."""
-    inner = next((c for c in _sides(door) if c in set(room)), None)
+    adjacent = [c for c in _sides(door) if c in set(room)]
+    inner = adjacent[0] if len(adjacent) == 1 else None
     return None if inner is None else (2 * door[0] - inner[0], 2 * door[1] - inner[1])
 
 
@@ -81,11 +82,17 @@ class Grid:
     def __init__(self, pieces, terrain):
         self.terrain = terrain
         self.columns = {}  # (ix, iz) -> [(bottom, top, name)]
+        self.supports = {}  # settled, aligned pieces covering a whole cell, for walls and roofs
         for p in pieces:
             (x, y, z), (sx, sy, sz) = p["pos"], p["size"]
             for ix in _cells(x - sx / 2, x + sx / 2):
                 for iz in _cells(z - sz / 2, z + sz / 2):
-                    self.columns.setdefault((ix, iz), []).append((y - sy / 2, y + sy / 2, p["name"]))
+                    span = (y - sy / 2, y + sy / 2, p["name"])
+                    self.columns.setdefault((ix, iz), []).append(span)
+                    if (p.get("anchored", True) and p.get("aligned", True) and p.get("settled", True)
+                            and abs(ix * CELL - x) + CELL / 2 <= sx / 2 + GAP
+                            and abs(iz * CELL - z) + CELL / 2 <= sz / 2 + GAP):
+                        self.supports.setdefault((ix, iz), []).append(span)
         self.floors = {}
 
     def floor(self, c):
@@ -93,7 +100,7 @@ class Grid:
             x, z = c[0] * CELL, c[1] * CELL
             tops = [t["pos"][1] + t["size"][1] / 2 for t in self.terrain
                     if abs(x - t["pos"][0]) <= t["size"][0] / 2 and abs(z - t["pos"][2]) <= t["size"][2] / 2]
-            self.floors[c] = max(tops) if tops else 0.0
+            self.floors[c] = max(tops) if tops else None
         return self.floors[c]
 
     def filling(self, c, floor, up_to=CLEAR):
@@ -101,19 +108,20 @@ class Grid:
         return [(b, name) for b, t, name in self.columns.get(c, ()) if b < floor + up_to and t > floor + GAP]
 
     def clear(self, c, floor, up_to=CLEAR):
-        return abs(self.floor(c) - floor) <= FLAT and not self.filling(c, floor, up_to)
+        actual = self.floor(c)
+        return actual is not None and abs(actual - floor) <= FLAT and not self.filling(c, floor, up_to)
 
     def standing(self, c, floor):
         """How high the pieces in the cell stand from its floor, stacked without a gap."""
         level = floor
-        for b, t, _ in sorted(self.columns.get(c, ())):
+        for b, t, _ in sorted(self.supports.get(c, ())):
             if b <= level + GAP:
                 level = max(level, t)
         return level - floor
 
     def roof(self, c, floor):
         """The underside of what is over the cell with room under it to stand, or None."""
-        over = [b for b, t, _ in self.columns.get(c, ()) if floor + CLEAR - 0.1 <= b <= floor + OVER]
+        over = [b for b, t, _ in self.supports.get(c, ()) if floor + CLEAR - 0.1 <= b <= floor + OVER]
         return min(over) if over else None
 
 
@@ -130,7 +138,10 @@ def judge(grid, room, floor):
     roofed = [u for u in undersides if u is not None]
     top = max(roofed) - floor if roofed else ROOF_AT
     filled = [c for c in room if not grid.clear(c, floor)]
-    hanging = [c for c in filled if min(b for b, _ in grid.filling(c, floor)) >= floor + LAYER - GAP]  # a roof too low
+    floorless = [c for c in room if grid.floor(c) is None]
+    unlevel = [c for c in room if grid.floor(c) is not None and abs(grid.floor(c) - floor) > FLAT]
+    hanging = [c for c in filled if grid.filling(c, floor)
+               and min(b for b, _ in grid.filling(c, floor)) >= floor + LAYER - GAP]  # a roof too low
     bare = [c for c, u in zip(room, undersides) if u is None]
 
     def doorway(c):  # open from the floor to the roof, on one floor with the room, onto open ground
@@ -150,7 +161,7 @@ def judge(grid, room, floor):
     house = (squared(room) and len(room) <= MOST and not filled and not bare and len(doors) == 1 and not gaps
              and not short and not uncovered and top > HEADROOM)
     return {"cells": room, "ring": around, "top": top, "square": squared(room), "filled": filled, "hanging": hanging,
-            "bare": bare,
+            "bare": bare, "floorless": floorless, "unlevel": unlevel,
             "doors": doors, "gaps": gaps, "short": short, "uncovered": uncovered, "floor": floor, "house": house}
 
 
@@ -159,6 +170,8 @@ def _rooms(grid, cells, floor_of, roofed_only, space=False):
     doorways. With `space`, every cell that is not a wall two blocks high counts, clear or not: the room of a build, with
     whatever lies in it."""
     def room_like(c):
+        if floor_of(c) is None:
+            return False
         if space:
             return grid.standing(c, floor_of(c)) < 2 * LAYER - GAP
         return grid.clear(c, floor_of(c)) and (not roofed_only or grid.roof(c, floor_of(c)) is not None)
@@ -167,9 +180,9 @@ def _rooms(grid, cells, floor_of, roofed_only, space=False):
         seed = left.pop()
         floor = floor_of(seed)
         room, queue = {seed}, deque([seed])
-        while queue and len(room) <= MOST:
+        while queue:
             for n in _sides(queue.popleft()):
-                if n in left and abs(grid.floor(n) - floor) <= FLAT:
+                if n in left and grid.floor(n) is not None and abs(grid.floor(n) - floor) <= FLAT:
                     left.discard(n)
                     room.add(n)
                     queue.append(n)
@@ -196,7 +209,8 @@ def _peel(grid, room, floor):
 def houses(pieces, terrain):
     """The houses among the pieces: the roofed rooms that pass the benchmark. The build measure counts these."""
     grid = Grid(pieces, terrain)
-    roofed = {c for c, spans in grid.columns.items() if any(b > grid.floor(c) + GAP for b, _, _ in spans)}
+    roofed = {c for c, spans in grid.supports.items() if grid.floor(c) is not None
+              and any(b > grid.floor(c) + GAP for b, _, _ in spans)}
     found = []
     for room, floor in _rooms(grid, roofed, grid.floor, roofed_only=True):
         verdict = judge(grid, room, floor) if room else None
@@ -212,7 +226,11 @@ def shortfalls(v):
     if not v["square"]:
         out.append(f"the room inside is {n} cell{'s' if n != 1 else ''}, at {_list(v['cells'], 4)}: a house's room holds "
                    "at least two by two cells")
-    standing_in = [c for c in v["filled"] if c not in v["hanging"]]
+    if v["floorless"]:
+        out.append(f"there is no ground under {_list(v['floorless'], 4)}: choose a site with a real floor")
+    if v["unlevel"]:
+        out.append(f"the ground is not level with the room at {_list(v['unlevel'], 4)}: choose level ground")
+    standing_in = [c for c in v["filled"] if c not in v["hanging"] + v["floorless"] + v["unlevel"]]
     if standing_in:
         out.append(f"the room is not clear at {_list(standing_in, 4)}")
     if v["hanging"]:
@@ -297,7 +315,8 @@ def layout(inside, door):
         return f"the room must hold at least two by two cells, a square 5 across: {_list(room, 4)} does not"
     if door not in sides(room):
         return f"the doorway at {at(door)} must be a cell beside the room on one of its sides, not in it, at a corner or away"
-    return room, door
+    issue = guidance_issue(room, door)
+    return issue if issue else (room, door)
 
 
 def roof_layout(grid, room, door, walls, floor, top):
@@ -310,28 +329,66 @@ def roof_layout(grid, room, door, walls, floor, top):
       three cells long cannot reach across a room two cells wide;
     - on the walls left over, a block on top.
     Returns {"lintel": (axis, (support, support)), "logs": [(room cell, bearing wall, axis)], "caps": [wall cells]}."""
-    inner = next(c for c in _sides(door) if c in set(room))
+    inner = next((c for c in _sides(door) if c in set(room)), None)
+    if inner is None:
+        return {"lintel": None, "logs": [], "caps": list(walls), "unsupported": list(room)}
     out_x = door[0] != inner[0]  # the doorway leads out along x: its wall runs along z
     lintel_axis = "z" if out_x else "x"
     flanks = tuple(sorted([(door[0], door[1] - 1), (door[0], door[1] + 1)] if out_x
                           else [(door[0] - 1, door[1]), (door[0] + 1, door[1])]))
-    used = set(flanks)
-
     def free_at_roof(c):  # nothing yet on top of this cell, where the roof goes
         return not any(floor + top - GAP <= b < floor + top + LAYER - GAP for b, _, _ in grid.columns.get(c, ()))
-    logs = []
-    for c in sorted(room):
+
+    def options_for(c):
         options = []
         for dx, dz in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             w, outer = (c[0] + dx, c[1] + dz), (c[0] + 2 * dx, c[1] + 2 * dz)
-            if w in walls and w not in used:
+            if w in walls and w not in flanks:
                 options.append((not free_at_roof(w), not free_at_roof(outer), w, "x" if dx else "z"))
-        if options:
-            _, _, w, axis = min(options)
-            used.add(w)
-            logs.append((c, w, axis))
+        return [(w, axis) for _, _, w, axis in sorted(options)]
+
+    choices = {c: options_for(c) for c in room}
+    bearings, assigned = {}, {}
+
+    def assign(c, visited):
+        for w, axis in choices[c]:
+            if w in visited:
+                continue
+            visited.add(w)
+            if w not in bearings or assign(bearings[w], visited):
+                bearings[w] = c
+                assigned[c] = (w, axis)
+                return True
+        return False
+
+    for c in sorted(room):
+        # Keep earlier choices when a free bearing exists, then rearrange only if necessary.
+        free = next(((w, axis) for w, axis in choices[c] if w not in bearings), None)
+        if free:
+            w, axis = free
+            bearings[w], assigned[c] = c, (w, axis)
+        else:
+            assign(c, set())
+    logs = [(c, *assigned[c]) for c in sorted(room) if c in assigned]
+    used = set(flanks) | set(bearings)
     caps = [w for w in walls if w not in used]
-    return {"lintel": (lintel_axis, flanks), "logs": logs, "caps": caps}
+    covered = {c for c, _, _ in logs}
+    return {"lintel": (lintel_axis, flanks), "logs": logs, "caps": caps,
+            "unsupported": [c for c in room if c not in covered]}
+
+
+def guidance_issue(room, door):
+    """The guided roof method needs a supported beam for every interior cell and a lintel resting on wall cells."""
+    if outside_of(room, door) is None:
+        return f"the doorway at {at(door)} must have exactly one room cell beside it and lead straight outside"
+    walls = [c for c in ring(room) if c != door]
+    roof = roof_layout(Grid([], []), room, door, walls, 0, ROOF_AT)
+    if any(c not in walls for c in roof["lintel"][1]):
+        return f"the doorway at {at(door)} needs a wall cell on each side for its lintel"
+    if roof["unsupported"]:
+        return (f"the guided roof has no wall support reaching {_list(roof['unsupported'], 4)}: revise the room to "
+                "at most two cells wide, with a separate bearing wall beside each interior cell")
+    return ""
 
 
 def _turn(axis):
@@ -346,8 +403,20 @@ def plan(pieces, terrain, inside, door):
     the house does."""
     grid = Grid(pieces, terrain)
     room = sorted(inside)
+    issue = "" if room else "choose cells for the room and a doorway"
+    floors = {c: grid.floor(c) for c in room}
+    floorless = [c for c in room if floors[c] is None]
+    if floorless:
+        issue = f"choose a site with a real floor: there is no ground under {_list(floorless, 4)}"
+    elif room and max(floors.values()) - min(floors.values()) > FLAT:
+        issue = f"choose level ground: the room's floor changes height across {_list(room, 4)}"
+    if issue:
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": []}
     floor = grid.floor(room[0])
     v = judge(grid, room, floor)
+    issue = guidance_issue(room, door) if not (v["house"] and v["doors"] == [door]) else ""
+    if issue:
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": []}
     top = v["top"]
     walls = [c for c in v["ring"] if c != door]
     low = [c for c in walls if grid.standing(c, floor) < top - GAP]

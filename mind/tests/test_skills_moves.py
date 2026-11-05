@@ -756,6 +756,15 @@ def test_past_and_rest_on(make):
 
 
 # ---- steps for reaching high (ADR-019, the benchmark house's roof) ------------------------------------------------------
+def test_walk_around_a_gap_on_the_same_connected_platform(make):
+    ledges = [ent("Mesa_h", (5, 2, 0), (16, 4, 6), role="Mesa"),
+              ent("Mesa_v", (10, 2, 5), (6, 4, 16), role="Mesa")]
+    island, body = make(ledges, me=(0, 4 + BODY_CENTRE_Y, 0))
+    r = body.run("walk_to", {"x": 10, "z": 10})
+    assert r.ok and island.me == pytest.approx([10, 4 + BODY_CENTRE_Y, 10]), r.summary
+    assert "StepDown" not in island.actions() and "StepUp" not in island.actions()
+
+
 def test_walk_from_one_step_onto_another_as_high(make):
     # From up on one block to the top of another as high, with ground between: walking straight there walked off the
     # first and stayed on the ground beside the second. Down first, then up onto it.

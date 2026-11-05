@@ -1,6 +1,6 @@
 """The house check (house.py, ADR-019's first-house benchmark): the layouts the world's copy (main.lua houseAt) is held
 to as well (world/tests/test_life.luau)."""
-from godling.house import assess, houses, layout, plan
+from godling.house import Grid, assess, houses, judge, layout, plan
 
 C = 2.5
 GROUND = [{"name": "Ground", "pos": [0, -0.5, 0], "size": [400, 1, 400]}]
@@ -155,3 +155,81 @@ def test_a_house_layout_must_hold_together():
     assert layout("[[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]]", "[0, -2.5]") == (ROOM, DOOR)
     assert layout("the cells inside", [0, 0]) == layout(square, {"x": 0}) == (
         "the cells inside and the doorway must each be a point [x, z]")
+
+
+def test_a_house_requires_ground_and_reports_uneven_ground_without_crashing():
+    pieces = house()
+    assert houses(pieces, []) == []
+    missing = plan(pieces, [], ROOM, DOOR)
+    assert not missing["house"] and "choose a site with a real floor" in missing["next"]
+    uneven = GROUND + [{"name": "Raised", "pos": [2.5, 0.5, 2.5], "size": [2.5, 1, 2.5]}]
+    verdict = judge(Grid(pieces, uneven), ROOM, 0)
+    assert verdict["unlevel"] == [(1, 1)] and verdict["hanging"] == [] and not verdict["house"]
+    result = plan(pieces, uneven, ROOM, DOOR)
+    assert not result["house"] and result["next"].startswith("choose level ground")
+
+
+def test_equal_height_ground_seams_are_a_real_floor():
+    terrain = [{"name": "West", "pos": [-98.75, -0.5, 0], "size": [200, 1, 400]},
+               {"name": "East", "pos": [101.25, -0.5, 0], "size": [200, 1, 400]}]
+    assert len(houses(house(), terrain)) == 1
+
+
+def test_sparse_unsettled_and_narrow_material_cannot_complete_a_house():
+    for change in ("sparse", "unanchored", "unsettled", "tilted", "narrow"):
+        pieces = house()
+        for p in pieces:
+            if p["name"].startswith("W"):
+                if change == "sparse":
+                    p["size"][1] = 0.5
+                elif change == "unanchored":
+                    p["anchored"] = False
+                elif change == "unsettled":
+                    p["settled"] = False
+                elif change == "tilted":
+                    p["aligned"] = False
+                else:
+                    p["size"][0] = 0.5
+        assert houses(pieces, GROUND) == [], change
+        assert not plan(pieces, GROUND, ROOM, DOOR)["house"], change
+    pieces = house()
+    next(p for p in pieces if p["name"] == "Log_W0")["anchored"] = False
+    assert houses(pieces, GROUND) == []
+
+
+def test_fractional_roof_heights_use_continuous_wall_fill():
+    pieces = house()
+    for p in pieces:
+        if p["name"].startswith("W"):
+            p["pos"][1] *= 0.84
+            p["size"][1] *= 0.84
+        else:
+            p["pos"][1] -= 1.2
+    assert len(houses(pieces, GROUND)) == 1
+    assert plan(pieces, GROUND, ROOM, DOOR)["house"]
+
+
+def test_guided_layouts_require_supported_roof_and_a_straight_doorway():
+    large = [(x, z) for x in range(3) for z in range(3)]
+    rejected = layout([[x * C, z * C] for x, z in large], [0, -C])
+    assert isinstance(rejected, str) and "no wall support" in rejected
+    persisted = plan([], GROUND, large, DOOR)
+    assert not persisted["house"] and "revise the room" in persisted["next"]
+    for length in range(2, 9):
+        rectangle = [[x * C, z * C] for x in range(2) for z in range(length)]
+        assert not isinstance(layout(rectangle, [0, -C]), str)
+    concave = [[0, 0], [0, C], [C, 0], [C, C], [2 * C, 0], [2 * C, C], [2 * C, 2 * C], [C, 2 * C]]
+    invalid = layout(concave, [0, 2 * C])
+    assert isinstance(invalid, str) and "exactly one room cell" in invalid
+
+
+def test_a_complete_larger_house_uses_the_same_verdict_even_without_guided_roof_supports():
+    room = [(x, z) for x in range(3) for z in range(3)]
+    pieces = []
+    for x in range(-1, 4):
+        for z in range(-1, 4):
+            if (x, z) not in room and (x, z) != DOOR:
+                pieces.extend(column(f"W{x}{z}_", x, z, 3))
+            pieces.append(block(f"Roof{x}_{z}", x, z, 4))
+    assert len(houses(pieces, GROUND)) == 1
+    assert plan(pieces, GROUND, room, DOOR)["house"]

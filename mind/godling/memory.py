@@ -26,6 +26,7 @@ def _words(text):
 class NativeMemory:
     def __init__(self, root):
         self.root = Path(root)
+        self.house_project_enabled = True  # runtime policy, independent of the saved project
         self.root.mkdir(parents=True, exist_ok=True)
         self.episodes_path = self.root / "episodes.jsonl"
         self.state_path = self.root / "state.json"
@@ -120,7 +121,7 @@ class NativeMemory:
             self.state["placed"] = [p for p in self.state.get("placed", []) if p not in released["cubes"]]
 
     def protected_cubes(self):
-        house = self.state.get("house") or {}
+        house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         return (({c for s in self.state["structures"].values() if s.get("keep") for c in s["cubes"]}
                  | set(house.get("pieces", []))) - set(house.get("in_the_way", [])))
 
@@ -128,7 +129,7 @@ class NativeMemory:
         """The name of the build (Mind.keep_builds) or the house (Mind.house_project) a piece is built into, or None.
         Only these does the body refuse to pick up; a piece the mind kept by name it may still take (in run hut2 it
         named a log lying on the sand "camp roof beam", then could not lift it onto the roof)."""
-        house = self.state.get("house") or {}
+        house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         if piece in house.get("pieces", []):
             return house_title(house)
         if piece in house.get("in_the_way", []):  # in its room or doorway: the house says clear it (run hp-proj1)
@@ -140,7 +141,7 @@ class NativeMemory:
         """The cells the house the mind is building needs clear (Mind.house_project): its room, its doorway and the
         way out of it. The body sets nothing down there to free its hands (run hp-full2: three pieces it set down in
         the house stopped the house being finished)."""
-        house = self.state.get("house") or {}
+        house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         if not house.get("inside") or not house.get("door"):
             return set()
         from .house import outside_of
