@@ -191,6 +191,19 @@ def test_inside_a_trunk(make):
     assert "inside the trunk of Palm_1" in r.summary
 
 
+def test_walk_into_a_roofed_room_from_the_step_it_was_roofed_from(make):
+    # Run hp-proj8: Godling laid its roof standing on a step block, then walked for the room inside, and was told the
+    # room was "on top of" the roof, too high to climb: from up on the step, the floor under the roof was not its own.
+    hut = [block(f"Block_{side}{k}", x, (k - 0.5) * 2.5, 0) for side, x in ((1, -2.5), (2, 2.5)) for k in (1, 2, 3)]
+    hut += [block(f"Block_3{k}", 0, (k - 0.5) * 2.5, 2.5) for k in (1, 2)]
+    roof = ent("Log_1", (0, 8.75, 0), (7.5, 2.5, 2.5))  # across the posts, its underside 7.5 over the room
+    step = block("Block_40", 5, 1.25, -2.5)  # outside the walls, beside the doorway's corner
+    island, body = make(hut + [roof, step], me=(5, 2.5 + BODY_CENTRE_Y, -2.5))
+    r = body.run("walk_to", {"x": 0, "z": 0})
+    assert r.ok and "cannot climb" not in r.summary, r.summary
+    assert at(island) == pytest.approx((0, 0), abs=1.3) and island.me[1] == pytest.approx(BODY_CENTRE_Y)
+
+
 def test_hop_down_from_a_platform(make):
     island, body = make([ent("Mesa_1", (0, 1.0, 0), (8, 2, 8), role="Mesa")], me=(0, 2 + BODY_CENTRE_Y, 0))
     island.results["StepDown"] = "StepDownFailed:NoRoom"  # no room right beside: walk to the edge and hop

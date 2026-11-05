@@ -819,10 +819,12 @@ class Skills:
         else:  # something built there, higher than a step up from here (a loose stone is just in the way)
             top, part = snap.surface(x, z)
             floor = snap.surface(x, z, below=level + STEP)[0]
-            overhead = (part is not None and floor is not None and abs(floor - level) < 0.3
-                        and part.pos[1] - part.size[1] / 2 - level > STEP)
-            # A roof or a lintel over our own floor is something to walk under, not to climb (run n8's body never got
+            overhead = (part is not None and floor is not None and floor <= level + 0.3
+                        and part.pos[1] - part.size[1] / 2 - floor > STEP)
+            # A roof or a lintel over the floor there is something to walk under, not to climb (run n8's body never got
             # under one: it was told the spot was "on top of" the roof). Too low to stand under is said further on.
+            # Judged from the floor there, not the level we stand on: up on the step a roof was laid from, the room's
+            # floor lies below us (run hp-proj8), and the walk hops down to it first.
             if part is not None and part.movable and top > level + 1.0 and not overhead:
                 rise, height = part, top
         if rise is not None or ground > level + 0.5:
