@@ -1,4 +1,5 @@
 """The body's walks, reaches and builds on the fake island (functional tests of skills.py)."""
+import math
 import pytest
 
 from godling import skills as sk
@@ -805,3 +806,22 @@ def test_standing_on_a_step_clear_of_the_piece_being_placed(make):
     island.results["Place"] = place
     r = body.run("place_at", {"x": target[0], "y": target[1], "z": target[2], "turn": 0})
     assert r.ok and "you stood on Block_step" in r.summary, r.summary
+
+
+def test_stepping_up_from_the_side_with_clear_floor(make):
+    # hp-roofcheck: the step stood at the end of a row of blocks, and the way to it straight from where the body stood
+    # ran along the row: it stopped short at the row's far end and could not get near enough to step up. A step one
+    # cell across is come at from a side with clear floor at its foot.
+    row = [block(f"Block_r{i}", 7.5, 1.25, z) for i, z in enumerate((-5, -2.5, 0, 2.5))]
+    row.append(block("Block_cap", 7.5, 3.75, -5))  # the near end two blocks high (a stone set down on it)
+    island, body = make([*row, block("Block_step", 7.5, 1.25, 5)], me=(7.5, BODY_CENTRE_Y, -14))
+    island.solid_pieces = True
+
+    def step_up(data):  # as the world does: only from beside the step's edge
+        x, z = data["position"]
+        return "StepUpFailed:TooFar" if math.hypot(island.me[0] - x, island.me[2] - z) > 3.0 else "StepUpStarted"
+    island.results["StepUp"] = step_up
+    r = body.run("walk_to", {"x": 7.5, "z": 5})
+    assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
+    ups = [d["position"] for a, d in island.acts if a == "StepUp"]
+    assert ups and all(abs(z - -5) > 1.25 for _, z in ups), ups  # never onto the block with a stone standing on it

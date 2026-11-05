@@ -973,8 +973,11 @@ class Skills:
         me = snap.me
         steps = max(1, int(hdist(me, (x, 0, z)) / 0.25))
         line = [(x + (me[0] - x) * i / steps, z + (me[2] - z) * i / steps) for i in range(steps + 1)]
-        k = -1  # how far its top runs from (x, z) back towards us: other tops further on (a pile) are not its edge
-        while k + 1 < len(line) and abs((snap.surface(*line[k + 1], below=top + 0.3)[0] or -99) - top) < 0.3:
+        k = -1  # how far its top runs from (x, z) back towards us: other tops further on (a pile) are not its edge,
+        # nor is top with something standing on it, where there is no room for the body (hp-roofcheck: a stone set
+        # down on the near end of a row of blocks)
+        while k + 1 < len(line) and abs((snap.surface(*line[k + 1], below=top + 0.3)[0] or -99) - top) < 0.3 \
+                and (snap.surface(*line[k + 1])[0] or -99) < top + 0.3:
             k += 1
         if k < 0:
             return None
@@ -986,6 +989,19 @@ class Skills:
         if what is not None and what.movable:  # onto the middle of a piece: beside a taller one (a stair) it fits there
             onto = tuple(min(max(c, p - max(s / 2 - 1.0, 0)), p + max(s / 2 - 1.0, 0))
                          for c, p, s in ((onto[0], what.pos[0], what.size[0]), (onto[1], what.pos[2], what.size[2])))
+        if what is not None and what.movable and max(what.size[0], what.size[2]) <= CUBE + 0.1:
+            # A piece one cell across, its foot on the way from here buried (hp-roofcheck: the way to the step ran along
+            # a row of blocks beside it, and snagged on them twice over): come at it from a side with clear floor.
+            out = what.size[0] / 2 + BODY_RADIUS + STAND_MARGIN + 0.1
+            if foot is None or hdist((foot[0], 0, foot[1]), what.pos) > out + 0.5:
+                sides = sorted(((what.pos[0] + dx * out, what.pos[2] + dz * out)
+                                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))),
+                               key=lambda p: hdist(me, (p[0], 0, p[1])))
+                for p in sides:
+                    if not blocked(*p) and (hdist(me, (p[0], 0, p[1])) < 0.6
+                                            or self._route(snap, (me[0], me[2]), p) is not None):
+                        foot, onto = p, (what.pos[0], what.pos[2])
+                        break
         if foot is not None and hdist(me, (foot[0], 0, foot[1])) > 0.6:
             snap = self._move(*foot)
         if hdist(snap.me, (onto[0], 0, onto[1])) > 2.6:  # the foot the router keeps clear is a little far: closer
