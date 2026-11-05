@@ -238,8 +238,22 @@ left to the world's physics (`make_bench.py`, `bench_probe.py` in the session's 
   night the body is warm and mends twice as fast; with a corner a block short it is under a roof, cold at half pace;
   the one-cell shelter is "enclosed" and no house).
 
-**Found while checking it: the body cannot reach into a room two cells wide.** To stand, the body keeps 1.6 from walls
-and 1.2 from loose pieces. In a 5 by 5 room that leaves a patch 1.8 across in the middle, and a block left in any cell
-of the room leaves nowhere to stand within reach of it: `pick_up` says "no clear spot to reach". Walking in works
-(the doorway, the near and the far cells). Clearing a room is part of the benchmark, so this is a body fix to make,
-with a reproduction, before another paid run.
+**Found while checking it, and fixed: reaching into a room two cells wide.** `pick_up` tried four rings round the
+block for a spot to stand on. In a room 5 by 5 with a block in one cell, every ring crosses a wall or the block,
+though the free cells round it fit the body (two units wide) with a quarter unit to spare each side; so it said "no
+clear spot to reach". Now, when the rings find nothing, every spot within reach is tried on a quarter-unit grid from
+the block (the grid pieces settle on, so cell centres are on it), with the clearance kept anywhere: the body's
+radius and `STAND_MARGIN` (0.2) from loose pieces, `WALL_CLEARANCE` (1.6) from rock; the roomiest spot is taken.
+Both searches also require a straight reach to the target through nothing two blocks high, so the hands never take
+a piece through a wall (they still reach over a block lying on the floor). A block in the cell just inside the
+doorway closes the way in (the walls either side of the doorway meet it corner to corner): it is taken from the
+doorway.
+
+Reproduced first (`mind/tests/test_house_recovery.py`, for each of the four cells inside): walk in by the doorway,
+pick the block up, carry it out and set it down, walk back in, and the house is whole again, with the body's whole
+width clear of every wall and of the block where it lay. Three of the four failed before the fix. Then the same in
+the real example world, one world per cell (`make_fallen.py`, `bench_recover.py`): each block settled in its cell
+and the check said "clear the room"; each was picked up (from the doorway for the cell just inside it, from inside
+for the rest), carried out and set down; Godling walked back in, the world said `InHouse` and logged `HOUSE`, and the
+check counted the house. The body stood 1.19 to 1.25 from the nearest piece as it took the block: where it came to
+rest, a few hundredths off the spot it chose, still 0.19 or more beyond its own radius.
