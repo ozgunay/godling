@@ -752,3 +752,30 @@ def test_past_and_rest_on(make):
     island.results["Place"] = "PlaceFailed:Occupied"
     from godling.world import Entity
     assert body._rest_on(island.snap(), Entity(block("Block_2", 0, 6, 0)), [Entity(block("Block_1", 3, 1.25, 0))]) is None
+
+
+# ---- steps for reaching high (ADR-019, the benchmark house's roof) ------------------------------------------------------
+def test_walk_from_one_step_onto_another_as_high(make):
+    # From up on one block to the top of another as high, with ground between: walking straight there walked off the
+    # first and stayed on the ground beside the second. Down first, then up onto it.
+    island, body = make([block("Block_A", 0, 1.25, 0), block("Block_B", 5, 1.25, 5)], me=(0, 2.5 + BODY_CENTRE_Y, 0))
+    r = body.run("walk_to", {"x": 5, "z": 5})
+    assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
+    assert "stepped up onto Block_B" in r.summary
+
+
+def test_stepping_up_to_reach_a_roof_after_snags(make):
+    # The roof's last log, over the room's far cell, from the east, beside a column of clutter (hp-roofcheck): the
+    # body snagged stepping up onto the nearest block, and then tried one whose edge, but not its middle, was in reach
+    # of the roof, and gave up. A step must reach from where the body stands on it, and a failed step-up is tried
+    # again, and the next steps after it.
+    from test_house_recovery import benchmark
+    house = [p for p in benchmark() if p["name"] != "Log_E1"]
+    clutter = [block(f"Block_c{i}", 7.5, 1.25, z) for i, z in enumerate((-2.5, 0, 2.5, 5, 7.5))]
+    clutter += [block(f"Block_n{i}", x, 1.25, 7.5) for i, x in enumerate((-5, -2.5, 0, 2.5, 5))]
+    island, body = make([*house, *clutter, ent("Log_room", (15, 1.25, 12), (7.5, 2.5, 2.5))], me=(12, BODY_CENTRE_Y, 14))
+    island.held = "Log_room"
+    island.results["StepUp"] = ["StepUpFailed:NoRoom", "StepUpFailed:NoRoom", "StepUpStarted"]  # two snags, then up
+    r = body.run("place_at", {"x": 5, "y": 8.75, "z": 2.5, "turn": 0})
+    assert r.ok and "came to rest at (5.00, 8.75, 2.50)" in r.summary, r.summary
+    assert "Block_c4" not in r.summary  # its middle is 6.7 from the roof's middle: too far to set it from

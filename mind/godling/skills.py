@@ -924,6 +924,15 @@ class Skills:
         floor = snap.surface(x, z, below=level + STEP)[0]
         if level > 0.3 and floor is not None and floor < level - 0.3:
             return self._hop_down(snap, x, z, level, floor)
+        # Up on something, to a spot as high across lower floor (from one step to another): walking straight there
+        # walks off this one and stays on the ground beside that one. Down first, then up onto it.
+        gap = self._gap_between(snap, (x, z), level) if level > 0.3 and floor is not None else None
+        if gap is not None:
+            down = self._hop_down(snap, x, z, level, gap, walk_on=False)
+            if not down.ok:
+                return down
+            on = self.skill_walk_to(x, z)
+            return Result(on.ok, "walk_to", f"{down.summary}, then {on.summary}")
         # The body never steps onto or against things: stop short of anything loose at the destination.
         note = ""
         near = [e for e in self._in_the_way(snap) if e.footprint_contains(x, z, margin=1.3)]
@@ -944,6 +953,18 @@ class Skills:
                 note = f"; stopped beside {e.name} instead of walking into it"
         snap = self._move(x, z)
         return Result(True, "walk_to", f"walked to ({snap.me[0]:.1f}, {snap.me[2]:.1f}){note}" + _weather_here(snap))
+
+    def _gap_between(self, snap, goal, level):
+        """The floor lower than ours that the straight way from here to `goal` crosses, or None when the way stays on
+        the floor we stand on (one platform, or pieces side by side)."""
+        steps = max(1, int(hdist(snap.me, (goal[0], 0, goal[1])) / 0.5))
+        for i in range(1, steps):
+            px = snap.me[0] + (goal[0] - snap.me[0]) * i / steps
+            pz = snap.me[2] + (goal[1] - snap.me[2]) * i / steps
+            under = snap.surface(px, pz, below=level + STEP)[0]
+            if under is None or under < level - 0.3:
+                return under if under is not None else (snap.ground_top(px, pz) or 0.0)
+        return None
 
     def _step_up(self, snap, x, z, top):
         """Walk to the foot of what stands one block higher at (x, z) and step up onto it, at the edge nearest us.
@@ -1022,6 +1043,10 @@ class Skills:
                 x, z = e.pos[0], e.pos[2]
             if spot.footprint_contains(x, z, margin=1.15) or hands(x, z, e.top) > PLACE_RANGE - 0.5:
                 continue
+            # On a top one cell across, the body (two wide) stands about its middle, wherever it aimed: the hands
+            # must reach from there (hp-roofcheck: a block whose edge but not its middle reached the roof).
+            if max(e.size[0], e.size[2]) <= CUBE + 0.1 and hands(e.pos[0], e.pos[2], e.top) > PLACE_RANGE - 0.6:
+                continue
             if abs((snap.surface(x, z)[0] or -99) - e.top) > 0.3:  # something else stands on it there
                 continue
             steps.append((hdist(snap.me, (x, 0, z)), x, z, e))
@@ -1029,16 +1054,19 @@ class Skills:
             return None, snap, ("; it is above your reach from there, and nothing one block high stands near it to "
                                 "step up onto")
         why = ""
-        for _, x, z, e in sorted(steps, key=lambda s: s[0])[:2]:
-            self.log(kind="reflex", text=f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f}) is above reach: "
-                                         f"stepping up onto {e.name}")
-            walked = self.skill_walk_to(x, z)
-            snap = self._observe()
-            floor = self._level(snap)
-            if abs(floor - e.top) < 0.4 and hands(snap.me[0], snap.me[2], floor) <= PLACE_RANGE - 0.1:
-                return (snap.me[0], snap.me[2]), snap, f"; you stood on {e.name} to reach that high"
-            why = (f"; it is above your reach from the ground, and stepping up onto {e.name} did not bring it in "
-                   f"reach: {walked.summary}")
+        for _, x, z, e in sorted(steps, key=lambda s: s[0])[:4]:
+            for attempt in range(2):  # a step-up that snags is tried once more (hp-roofcheck: the next try went up)
+                self.log(kind="reflex", text=f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f}) is above reach: "
+                                             f"stepping up onto {e.name}" + (", again" if attempt else ""))
+                walked = self.skill_walk_to(x, z)
+                snap = self._observe()
+                floor = self._level(snap)
+                if abs(floor - e.top) < 0.4 and hands(snap.me[0], snap.me[2], floor) <= PLACE_RANGE - 0.1:
+                    return (snap.me[0], snap.me[2]), snap, f"; you stood on {e.name} to reach that high"
+                why = (f"; it is above your reach from the ground, and stepping up onto {e.name} did not bring it in "
+                       f"reach: {walked.summary}")
+                if abs(floor - e.top) < 0.4:
+                    break  # up on it, and still out of reach: no use trying again
         return None, snap, why
 
     def _here(self, snap):
