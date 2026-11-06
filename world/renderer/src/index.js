@@ -567,7 +567,7 @@ export function createRenderer(ctx) {
   const freeCam = createFreeCamera(THREE, camera, ctx.canvas)
   const embedded = params.get('embed') === '1' && globalThis.parent !== globalThis
   let cameraWish = embedded ? 'follow' : null
-  // The roof off (cutaway.js), unless the viewer turns it off (the screen's "See inside", or ?cutaway=off).
+  // The roof off (cutaway.js), unless the viewer turns it off (the screen's walls button, or ?cutaway=off).
   let cutawayWish = params.get('cutaway') !== 'off'
   // Aiming a sky power (aim.js): the screen says which power; the ring follows the pointer; the spot goes back.
   const godlingAt = new THREE.Vector3()
@@ -1018,7 +1018,8 @@ export function createRenderer(ctx) {
         if (holder !== undefined || hands.has(entity.id)) {
           toHand.push({ record, entity, holder })
         } else {
-          if (shown && CUTAWAY_ROLES.has(role) && entity.size) {
+          // Carried building materials keep their role; they are not the roof, even while above a sheltered body.
+          if (shown && CUTAWAY_ROLES.has(role) && entity.size && entity.attributes?.HeldBy == null) {
             building.push({ id: entity.id, position, size: entity.size, rotation })
           }
           if (moved || record.fresh !== false || record.swims) {
@@ -1154,11 +1155,11 @@ export function createRenderer(ctx) {
     // free camera, what hides Godling, the one viewers look for. Not from inside a body's head (Godling's own eyes, the
     // capture), and not when the viewer turns it off.
     const inHead = cameraModes?.spectator?.state?.poseOverride || cameraModes?.spectator?.state?.attach
-    const watched = cameraMode === 'follow' ? (inHead ? null : followTarget) : godling
-    const followed = cutawayWish && watched?.root_part_id !== hiddenBodyId ? watched : null
-    const cut = cutaway.update({
-      body: followed && Array.isArray(followed.position)
-        ? { position: followed.position, sheltered: Boolean(followed.attributes?.Sheltered) }
+    const watched = cameraMode === 'follow' ? followTarget : godling
+    // A capture may draw just one frame with dt=0: restore every piece before that frame, without the camera hold.
+    const cut = !cutawayWish || inHead ? { hidden: new Set(), restored: cutaway.clear() } : cutaway.update({
+      body: Array.isArray(watched?.position)
+        ? { position: watched.position, sheltered: Boolean(watched.attributes?.Sheltered) }
         : null,
       camera: camera.position.toArray(),
       pieces: building,
@@ -1169,7 +1170,9 @@ export function createRenderer(ctx) {
     }
     for (const id of cut.restored) {
       const record = records.get(id)
-      if (record?.position) placeSlots(record, servedMatrix(record.position, record.rotation, record.position[1], entityMatrix))
+      if (record?.kind === 'parts' && record.position && !hands.has(id)) {
+        placeSlots(record, servedMatrix(record.position, record.rotation, record.position[1], entityMatrix))
+      }
     }
 
     return { seaLevel, land, landKey: landKey.join(';'), cameraTarget, swimming }
