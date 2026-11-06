@@ -39,7 +39,8 @@ PRIMITIVES = {
             "something comes of it."),
     "fasten": ({"object": "a piece you have set down"},
                "Walk within reach and fasten that piece where it is, like mortar, so it stays even if what it rests on "
-               "is taken away. Takes a few seconds; fastened pieces cannot be picked up."),
+               "is taken away. Takes a few seconds; fastened pieces cannot be picked up. With something small in your "
+               "hands, fasten binds it onto that object instead, if the two can be bound together."),
     "climb": ({"object": "a ladder that stands upright, such as Ladder_1"},
               "Walk to the ladder and climb it: up to whatever its top reaches, or back down when you are at the top."),
     "shake": ({"object": "a palm, such as Palm_3"}, "Walk to the palm and shake it. A ripe coconut may fall."),
@@ -294,7 +295,7 @@ class Skills:
         below_top = {n for _, names in snap.stacks() for n in names[:-1]}
         return [p for p in snap.movables() if (p.is_cube or p.name.startswith(BUILDING_KINDS))
                 and p.name not in blocked | below_top and not p.attrs.get("Fastened") and not p.attrs.get("Burning")
-                and snap.ground_top(p.pos[0], p.pos[2]) is not None]
+                and not p.glowing and snap.ground_top(p.pos[0], p.pos[2]) is not None]
 
     def _obstacles(self, snap, ignore=()):
         held = snap.held()
@@ -520,7 +521,7 @@ class Skills:
                            and abs(o.pos[0] - e.pos[0]) < (o.size[0] + e.size[0]) / 2 - 0.1
                            and abs(o.pos[2] - e.pos[2]) < (o.size[2] + e.size[2]) / 2 - 0.1 for o in movables)
         sides = [e for e in self._pen_sides(snap, pen, ignore) if e.movable and e.name.startswith(LIFTABLE)
-                 and not e.attrs.get("Fastened") and not e.attrs.get("Burning")
+                 and not e.attrs.get("Fastened") and not e.attrs.get("Burning") and not e.glowing
                  and abs(e.pos[1] - e.size[1] / 2 - level) < 0.3 and bare(e)]
         sides.sort(key=lambda e: (e.name in protected, hdist(e.pos, snap.me)))  # what it decided to keep, last
         for piece in sides[:6]:
@@ -1281,6 +1282,8 @@ class Skills:
             return Result(False, "pick_up", f"{object} is fastened in place; a hammer strike knocks it loose")
         if obj.attrs.get("Burning"):  # a log on fire is the fire's now (run n7 kept reaching for them)
             return Result(False, "pick_up", f"{object} is burning; it cannot be picked up until the fire is out")
+        if obj.glowing:  # a meteor's stone, still glowing from its fall (main.lua sky.iron)
+            return Result(False, "pick_up", f"{object} is still glowing hot from its fall: too hot to hold")
         build = None if self._lifting else self.kept_in(object)
         if build:
             # What it built is its own: its plans took its own builds apart for material (runs rp3 and hut1).
@@ -1331,6 +1334,8 @@ class Skills:
             closer = self._stand_point(snap, obj.pos, PICKUP_RANGE, 1.2, ignore={object})
             if closer:
                 self._move(*closer, ignore={object})
+        if snap.last_result == "PickupFailed:TooHot":
+            return Result(False, "pick_up", f"{object} is still glowing hot from its fall: too hot to hold{note}")
         return Result(False, "pick_up", f"pickup of {object} failed: {snap.last_result}{note}")
 
     def _set_down_nearby(self, snap, held, away_from):
@@ -1687,6 +1692,19 @@ class Skills:
         if kind == "StrikeRubDamp":
             return Result(False, "strike", f"rubbed at {object}, but the wood is still damp from the rain and will not "
                                            f"warm")
+        if kind == "StrikeTooHot":
+            return Result(False, "strike", f"struck {object}, but it is still glowing hot from its fall; the blow does "
+                                           f"nothing to it yet")
+        if kind == "StrikeChipping":
+            done, needed = (int(n) for n in detail.split("/"))
+            return Result(True, "strike", f"struck {object} with {held.name}; it rings like metal, and a sliver is "
+                                          f"loosening ({done} of {needed} blows so far)", {"strikes": done})
+        if kind == "StrikeChipped":
+            return Result(True, "strike", f"struck {object}; a sliver of dark metal came off: {detail}, hard, with a "
+                                          f"sharp edge, lies at {where(detail)}", {"made": detail})
+        if kind == "StrikeSpent":
+            return Result(False, "strike", f"struck {object}; nothing more comes off it: what is left is too thick "
+                                           f"and round to loosen")
         if kind == "StrikeYardFull":
             return Result(False, "strike", f"struck {object}, but no stone can come off: every spot round its foot "
                                            f"already holds a loose stone; carry some away first")
@@ -1800,6 +1818,13 @@ class Skills:
         snap = self.world.act("Fasten", {"name": object})
         outcome = snap.last_result or ""
         self._settle(FASTEN_SECONDS)
+        if outcome.startswith("FastenEdge:"):  # a flake of iron and a tool (main.lua sky.iron.fit)
+            _, tool, flake = outcome.split(":")
+            return Result(True, "fasten", f"bound {flake} onto {tool}: the sliver of metal is {tool}'s edge now",
+                          {"object": tool, "bound": flake})
+        if outcome.startswith("FastenFailed:HasEdge:"):
+            tool = outcome.split(":")[2]
+            return Result(False, "fasten", f"{tool} already has an edge of metal bound on; there is no room for another")
         if outcome.startswith("FastenSuccess:"):
             how = outcome.split(":")[1]
             if how == "fixed":

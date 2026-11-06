@@ -53,6 +53,71 @@ describe('meteor blasts', () => {
     expect(scene.children).toHaveLength(0)
   })
 
+  it('fills the trail of a meteor coming in fast all along the way it fell, on every tier', () => {
+    const puffsFor = (tier, step) => {
+      const blasts = createBlasts(new THREE.Scene(), tier)
+      let y = 80
+      blasts.watch(meteor(1, y), 1 / 30)
+      for (let t = 0; t < 0.5; t += step, y -= 80 * step) { // 80 a second (main.lua SKY_FALL_SPEED)
+        blasts.watch(meteor(1, y), step)
+        blasts.update({ time: t, dt: step, daylight: 1, camera: new THREE.PerspectiveCamera() })
+      }
+      const glow = blasts.info().glow
+      blasts.dispose()
+      return glow
+    }
+    // smooth frames, or slow ones: about the same trail over the 40 it fell, one puff every TRAIL_STEP / detail
+    const smooth = puffsFor(HIGH, 1 / 60)
+    const slow = puffsFor(HIGH, 1 / 10)
+    expect(smooth).toBeGreaterThan(25)
+    expect(slow).toBeGreaterThan(smooth * 0.6)
+    expect(puffsFor(LOW, 1 / 10)).toBeGreaterThan(8) // fewer on the low tier, but no gaps
+  })
+
+  it('a landed stone smokes while it is hot, less as it cools, and not once it is cold', () => {
+    const resting = (heat) => ({ ...meteor(1, 1.25), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: heat, LandedAt: 0 } })
+    const puffs = (heat, seconds) => {
+      const blasts = createBlasts(new THREE.Scene(), HIGH)
+      let most = 0
+      for (let t = 0; t < seconds; t += 1 / 30) {
+        blasts.watch(resting(heat), 1 / 30)
+        blasts.update({ time: t, dt: 1 / 30, daylight: 1, camera: new THREE.PerspectiveCamera() })
+        most = Math.max(most, blasts.info().smoke)
+      }
+      blasts.dispose()
+      return most
+    }
+    const white = puffs(1, 6)
+    const dull = puffs(0.3, 6)
+    expect(white).toBeGreaterThan(2) // a puff each WISP_EVERY, each lasting a few seconds
+    expect(dull).toBeGreaterThan(0)
+    expect(dull).toBeLessThan(white)
+    expect(puffs(0.15, 6)).toBe(0) // warm, no longer smoking
+    expect(puffs(0, 6)).toBe(0)
+    const old = createBlasts(new THREE.Scene(), HIGH) // a replay from before stones cooled: no Heat, no smoke
+    for (let t = 0; t < 3; t += 1 / 30) {
+      old.watch(meteor(1, 1.25), 1 / 30)
+      old.update({ time: t, dt: 1 / 30, daylight: 1, camera: new THREE.PerspectiveCamera() })
+    }
+    expect(old.info().smoke).toBe(0)
+  })
+
+  it('keeps a stationary falling snapshot from starting landed smoke and delaying the fire trail', () => {
+    const blasts = createBlasts(new THREE.Scene(), HIGH)
+    const falling = (y) => ({ ...meteor(1, y), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: 1 } })
+    const frame = (y, time) => {
+      blasts.watch(falling(y), 0.05)
+      blasts.update({ time, dt: 0.05, daylight: 1, camera: new THREE.PerspectiveCamera() })
+    }
+    frame(40, 0)
+    frame(40, 0.05) // a newly joined stream's buffer, or a replay paused before landing
+    expect(blasts.info().smoke).toBe(0)
+    frame(38, 0.1) // motion resumes: the landed-smoke timer must not hold the falling trail back
+    expect(blasts.info().glow).toBeGreaterThan(0)
+    expect(blasts.info().smoke).toBeGreaterThan(0)
+    blasts.dispose()
+  })
+
   it('flares the ambient light on a tier without the flash\'s own light', () => {
     const scene = new THREE.Scene()
     const blasts = createBlasts(scene, LOW)

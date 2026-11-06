@@ -860,3 +860,46 @@ def test_stepping_up_from_the_side_with_clear_floor(make):
     assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
     ups = [d["position"] for a, d in island.acts if a == "StepUp"]
     assert ups and all(abs(z - -5) > 1.25 for _, z in ups), ups  # never onto the block with a stone standing on it
+
+
+# ---- meteoric iron (main.lua sky.iron) ------------------------------------------------------------------------------
+@pytest.mark.parametrize("outcome,ok,words", [
+    ("StrikeTooHot:Meteor_2", False, "still glowing hot from its fall; the blow does nothing to it yet"),
+    ("StrikeChipping:4/15", True, "it rings like metal, and a sliver is loosening (4 of 15 blows so far)"),
+    ("StrikeChipped:Iron_1", True, "a sliver of dark metal came off: Iron_1, hard, with a sharp edge, lies at"),
+    ("StrikeSpent:Meteor_2", False, "nothing more comes off it"),
+])
+def test_strike_a_meteors_stone(make, outcome, ok, words):
+    island, body = tools(make, held="Hammer_1", target=ent("Meteor_2", (6, 1.25, 0), role="Stone"))
+    island.results["Strike"] = outcome
+    r = body.run("strike", {"object": "Meteor_2"})
+    assert r.ok is ok and words in r.summary
+
+
+def test_fasten_a_sliver_of_iron_onto_a_tool(make):
+    island, body = make([ent("Spear_1", (3, 0.2, 0), (0.3, 0.3, 4.5), role="Tool"),
+                         ent("Iron_1", (-3, 0.1, 0), (0.5, 0.2, 1.0), role="Iron")])
+    island.held = "Iron_1"
+    island.results["Fasten"] = "FastenEdge:Spear_1:Iron_1"
+    r = body.run("fasten", {"object": "Spear_1"})
+    assert r.ok and r.summary == "bound Iron_1 onto Spear_1: the sliver of metal is Spear_1's edge now"
+    assert r.facts == {"object": "Spear_1", "bound": "Iron_1"}
+    island.results["Fasten"] = "FastenFailed:HasEdge:Spear_1"
+    r = body.run("fasten", {"object": "Spear_1"})
+    assert not r.ok and r.summary == "Spear_1 already has an edge of metal bound on; there is no room for another"
+    assert "With something small in your hands, fasten binds it onto that object" in sk.PRIMITIVES["fasten"][1]
+
+
+def test_a_glowing_stone_is_not_picked_up_or_taken_for_building(make):
+    island, body = make([ent("Meteor_2", (10, 1.25, 0), role="Stone", attrs={"Heat": 0.6}),
+                         block("Block_1", -10, 1.25, 0)])
+    r = body.run("pick_up", {"object": "Meteor_2"})
+    assert not r.ok and r.summary == "Meteor_2 is still glowing hot from its fall: too hot to hold"
+    assert not island.actions("Pickup"), "the body knows better than to try"
+    snap = island.snap()
+    assert [p.name for p in body._free_pieces(snap)] == ["Block_1"]
+    island.ents["Meteor_2"]["attributes"]["Heat"] = 0.05  # dark now: a stone like any other
+    assert {p.name for p in body._free_pieces(island.snap())} == {"Block_1", "Meteor_2"}
+    island.results["Pickup"] = "PickupFailed:TooHot"  # the world's word, when the mind saw it cooler than it was
+    r = body.run("pick_up", {"object": "Meteor_2"})
+    assert not r.ok and r.summary == "Meteor_2 is still glowing hot from its fall: too hot to hold"

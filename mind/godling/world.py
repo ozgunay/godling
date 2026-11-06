@@ -35,7 +35,8 @@ SKY_PLAYER = "Sky"  # main.lua SKY_PLAYER: the guest panel's bodiless player, wh
 SKY_MARKERS = ("SkyShadow", "SkyFlash", "SkyNote", "Blast", "Crater")  # seen, never touched; a crater is walked over
 STEP = 0.45  # the highest step the legs take without a ladder
 MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Brick_", "Log_", "Boulder_", "Ring_",
-                 "Rock_", "Hammer_", "Axe_", "Ladder_", "Spear_", "Coconut_", "Catch_", "Volleyball")
+                 "Rock_", "Hammer_", "Axe_", "Ladder_", "Spear_", "Coconut_", "Catch_", "Volleyball", "Iron_")
+GLOWS_ABOVE = 0.1  # main.lua sky.iron.GLOWS_ABOVE: a meteor's stone this hot (its Heat) glows, too hot to hold or work
 TOOL_KINDS = ("Hammer_", "Axe_", "Spear_")
 FOOD_KINDS = ("Coconut_", "Catch_")  # what can be eaten (main.lua FOOD)
 BUILDING_KINDS = ("Log_", "Boulder_")  # building pieces besides blocks
@@ -103,6 +104,24 @@ class Entity:
     @property
     def is_cube(self):
         return all(abs(s - CUBE) < 0.05 for s in self.size)
+
+    @property
+    def glowing(self):
+        """A meteor's stone still glowing from its fall (main.lua sky.meteor.cool, sky.iron): too hot to hold or work."""
+        heat = self.attrs.get("Heat")
+        return isinstance(heat, (int, float)) and heat > GLOWS_ABOVE
+
+    @property
+    def look(self):
+        """What the eye tells of it beyond its name, in a few words, or "" (METEORIC IRON: what it is like, never what
+        it is for)."""
+        if self.name.startswith("Meteor_"):
+            return "glowing hot" if self.glowing else "dark, heavy, metallic"
+        if self.name.startswith("Iron_"):
+            return "a sliver of dark metal, hard, sharp-edged"
+        if self.attrs.get("Edge") == "Iron":
+            return "with an edge of dark metal bound on"
+        return ""
 
     @property
     def top(self):
