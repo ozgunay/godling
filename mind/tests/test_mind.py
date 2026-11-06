@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from godling import mind as mind_module
@@ -77,6 +79,9 @@ def test_island_map_and_feelings():
         "You are inside a house: warm and dry, mending twice as fast while fed. A fire close by warms you.")
     assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
         "A fire close by halves the cold. You are cold, and it is wearing your health down.")
+    assert _how_it_feels(snap([ground()], attrs={"Drowning": True})) == (
+        "You are in the sea and cannot climb out: the water is drowning you, and you will wake at the start spot in "
+        "the middle of the island.")
 
 
 def test_prompts(world, tmp_path):
@@ -97,6 +102,10 @@ def test_prompts(world, tmp_path):
     assert "a coconut's dry husk" in system
     assert "a log laid against a burning one takes the fire as it burns out" in system
     assert "Rain puts out a fire in the open, but not one under a roof." in system
+    # a meteor's stone: what it is like, never what it is for (METEORIC IRON)
+    assert ("It lands glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like "
+            "metal") in " ".join(system.split())
+    assert not re.search(r"\b(iron|harpoon|blade|edge)\b", system, re.IGNORECASE), "never what it is for"
     assert '"agenda"' in system
     one = make_mind(world, tmp_path, FakeLLM(), agenda=False)
     flat = one.system_prompt(s)
@@ -121,7 +130,7 @@ def test_situation_lists_what_matters(world, tmp_path):
     text = mind.situation(island.snap(), [{"text": "A thing happened", "entities": ["Block_3"]}],
                           [{"agent_name": "Ann", "content": "hello"}], doing=[{"goal": "a wall"}])
     assert "It is 06:30, dawn." in text and "holding Log_4" in text
-    assert "You are 50% fed, with health 90 of 100; you have fainted from hunger 1 time." in text
+    assert "You are 50% fed, with health 90 of 100; you have fainted 1 time." in text
     assert "You are wet (20%)." in text and "Fires burning: Fire_1 (2.0, -2.0)." in text
     assert "Fish swimming in the shallows nearest you: Fish_1 (0.0, 20.0)." in text
     assert "Lines you drew in the sand (2, oldest first): (2, 2)-(3, 3); (0, 0)-(1, 1)." in text
@@ -137,6 +146,15 @@ def test_situation_lists_what_matters(world, tmp_path):
     for hour, part in ((2, "night"), (9, "morning"), (12, "midday"), (15, "afternoon"), (19, "evening")):
         island.clock = {"TimeOfDay": hour}
         assert f", {part}." in mind.situation(island.snap(), [], [])
+
+
+def test_situation_does_not_describe_drowning_as_hunger(world, tmp_path):
+    island, _, _ = world
+    island.attrs.update(Hunger=50, Health=30, Faints=1, Drowned=1)
+    mind = make_mind(world, tmp_path, FakeLLM())
+    text = mind.situation(island.snap(), [], [])
+    assert "you have fainted 1 time" in text
+    assert "fainted from hunger" not in text
 
 
 def test_situation_with_discovery_and_many_loose_things(world, tmp_path):
@@ -635,3 +653,25 @@ def test_knows_and_sees(world, tmp_path):
     mind.log(kind="x")
     assert Mind(FakeLLM(), NativeMemory(tmp_path / "z"), "", body, library).log(kind="y") is None
     assert mind_module.MAX_STEPS == 12 and BODY_CENTRE_Y
+
+
+def test_situation_tells_what_a_meteors_stone_and_its_iron_look_like(world, tmp_path):
+    """METEORIC IRON: the loose things and what is held carry what the eye tells of them (Entity.look)."""
+    island, body, library = world
+    island.ents["Meteor_2"] = ent("Meteor_2", (-6, 1.25, -6), role="Stone", attrs={"Heat": 0.5})
+    island.ents["Meteor_1"] = ent("Meteor_1", (-9, 1.25, -6), role="Stone", attrs={"Heat": 0})
+    island.ents["Iron_1"] = ent("Iron_1", (-6, 0.1, -3), (0.5, 0.2, 1.0), role="Iron")
+    island.ents["Spear_1"] = ent("Spear_1", (-3, 2.5, 0), (0.3, 0.3, 4.5), role="Tool", attrs={"Edge": "Iron"})
+    island.held = "Spear_1"
+    mind = make_mind(world, tmp_path, FakeLLM())
+    text = mind.situation(island.snap(), [], [])
+    assert "holding Spear_1 (with an edge of dark metal bound on)." in text
+    assert "Meteor_2 (glowing hot) (-6.0, 1.25, -6.0)" in text
+    assert "Meteor_1 (dark, heavy, metallic) (-9.0, 1.25, -6.0)" in text
+    assert "Iron_1 (a sliver of dark metal, hard, sharp-edged) (-6.0, 0.10, -3.0)" in text
+    d = Discovery()
+    d.see(island.snap())
+    d.seen["Meteor_9"] = (40, 1.25, 40)  # seen once, gone from sight since: no look, it is not in sight
+    seeing = make_mind(world, tmp_path, FakeLLM(), discovery=d)
+    text = seeing.situation(island.snap(), [], [])
+    assert "Meteor_2 (glowing hot)" in text and "Meteor_9 (40.0, 1.25, 40.0) (last seen there)" in text

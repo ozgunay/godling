@@ -240,7 +240,8 @@ def test_status_with_godling():
     s = island.status("")
     assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble",
                           "at": 1_793_700_000.5}
-    assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False}
+    assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False,
+                            "drowning": False}
     assert s["notes"]["wait"] == 0
 
 

@@ -693,7 +693,7 @@ local ISLAND = {
         {90, -25, 270, false},
     },
     raft = {-120, -35},
-    spawn = {-115, -40},
+    spawn = {15, -27.5},
     pile = {-95, -35},
     ladder = {-80, -22.5},
     axe = {-80, -37.5},
@@ -791,8 +791,10 @@ local TURN_RATE = 6 -- radians per second
 -- one near the player on a timer (seconds, 0 = off; run_godling.py --sky-test-minutes sets it).
 local SKY_TEST_EVERY = 0
 local SKY_WARN_SECONDS = 40
-local SKY_DROP_HEIGHT = 40
-local SKY_FALL_SPEED = 25 -- already falling fast when it appears: about 1.3 s to the ground
+-- A meteor comes in fast (the user's wish, 2026-11-06: at 25/s from 40 it looked slow): about a second from where it
+-- appears to the ground. The renderer draws its fire trail all the way along (blast.js).
+local SKY_DROP_HEIGHT = 80
+local SKY_FALL_SPEED = 80
 local SKY_SPOT_NEAR, SKY_SPOT_FAR = 8, 16 -- from the player: close enough to see, clear of its feet
 local SKY_SPOT_CLEARANCE = 4 -- no building piece this close, so a test drop never hits what was built
 local SKY_SHADOW_CLEARANCE = 3 -- a stone lands only while nobody stands this close to its shadow's centre
@@ -1528,6 +1530,44 @@ local think = (function() -- a function of its own: its lists stay out of the ma
     end
 end)()
 
+-- One table for the sky's parts, to spare the main chunk's locals (Luau allows 200, and the script is at the limit:
+-- an unused constant takes no register, so adding one proves nothing). turners (player -> the yaw Face is turning the
+-- body to), iron (what a meteor's stone gives, METEORIC IRON, just below), power (the guest panel's powers, with the
+-- sky events further down) and quake (the earthquake, after the sky events: start, tick, and Brace for a body).
+-- Declared here, ahead of the sky events, because the hands (pick up, strike, fasten) need sky.iron.
+local sky = { turners = {} }
+
+--------------------------------------------------------------------------------
+-- METEORIC IRON (the user's choice, 2026-11-06; the research and the choices are in PR #65)
+--------------------------------------------------------------------------------
+-- A meteor's stone lands glowing (sky.meteor.cool) and, while it glows, is too hot to hold or work. Cooled, it is
+-- metal: as the Inughuit worked the Cape York iron with hammerstones, many hammer blows knock a flake off it, three
+-- flakes from each stone (sky.iron.chip). Bound onto a spear, an axe or the hammer (Fasten, with the flake in the hands
+-- and the tool set down, or the other way round: sky.iron.fit), the flake is that tool's iron edge (Edge "Iron"): a spear
+-- with an iron point catches more and reaches further, an iron axe fells and carves in fewer blows, an iron hammer
+-- breaks quarry stone in fewer. The mind is told only what the stone and a flake are like, never what they are for:
+-- Godling finds that out by trying. The rest of iron's functions come further down, beside what they use.
+sky.iron = {
+    GLOWS_ABOVE = 0.1, -- a stone this hot (its Heat) still glows: too hot to hold or work (cooling.js: no glow below)
+    BLOWS_PER_FLAKE = 15, FLAKES_PER_STONE = 3, -- the quarry gives a stone for 3 blows: this metal is far harder
+    FLAKE_SIZE = Vector3.new(0.5, 0.2, 1.0), -- a sliver as long as a hand, lying flat
+    CATCH_CHANCE = 0.9, REACH = 1.5, -- an iron-pointed spear catches more often (CATCH_CHANCE is 0.6), and further out
+    CHOPS = 2, CARVES = 1, BREAKS = 2, -- an iron axe and hammer: blows to fell a palm, carve a spear, break a stone
+    made = 0, -- flakes made: Iron_1, Iron_2, ...
+}
+
+function sky.iron.glowing(part)
+    return (part:GetAttribute("Heat") or 0) > sky.iron.GLOWS_ABOVE
+end
+
+function sky.iron.edged(tool)
+    return tool ~= nil and tool:GetAttribute("Edge") == "Iron"
+end
+
+function sky.iron.isMeteorite(part)
+    return part.Name:sub(1, 7) == "Meteor_" and part:GetAttribute("RenderRole") == "Stone"
+end
+
 local function pickupBlock(player, inputData)
     if heldBlocksByPlayer[player] then
         player:SetAttribute("LastActionResult", "PickupFailed:AlreadyHolding")
@@ -1560,6 +1600,10 @@ local function pickupBlock(player, inputData)
     end
     if block:GetAttribute("Burning") then
         player:SetAttribute("LastActionResult", "PickupFailed:Burning")
+        return
+    end
+    if sky.iron.glowing(block) then -- a meteor's stone, still glowing from its fall
+        player:SetAttribute("LastActionResult", "PickupFailed:TooHot")
         return
     end
 
@@ -1917,14 +1961,15 @@ local function yardCell(quarry, nearest, body)
     return best
 end
 
-local function breakStone(quarry, body, nearest)
+local function breakStone(quarry, body, nearest, edged)
     local cell = yardCell(quarry, nearest, body)
     if not cell then
         return "StrikeYardFull" -- the blow is not counted: there is nowhere for a stone to fall
     end
+    local needed = edged and sky.iron.BREAKS or STRIKES_PER_STONE
     quarryWork.count = quarryWork.count + 1
-    if quarryWork.count < STRIKES_PER_STONE then
-        return "StrikeHit:" .. quarryWork.count .. "/" .. STRIKES_PER_STONE
+    if quarryWork.count < needed then
+        return "StrikeHit:" .. quarryWork.count .. "/" .. needed
     end
     quarryWork.count = 0
     quarryWork.made = quarryWork.made + 1
@@ -1938,11 +1983,12 @@ local logCounter = 0
 
 local fellTree -- below: chopping and lightning both fell trees
 
-local function chopTree(tree, body)
+local function chopTree(tree, body, edged)
+    local needed = edged and sky.iron.CHOPS or CHOPS_PER_TREE
     local chops = (tree:GetAttribute("Chops") or 0) + 1
-    if chops < CHOPS_PER_TREE then
+    if chops < needed then
         tree:SetAttribute("Chops", chops)
-        return "StrikeHit:" .. chops .. "/" .. CHOPS_PER_TREE
+        return "StrikeHit:" .. chops .. "/" .. needed
     end
     tree:SetAttribute("Chops", 0)
     return "StrikeFelled:" .. table.concat(fellTree(tree, body), ",")
@@ -2014,7 +2060,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling faints, drops what it
--- holds, and wakes by the raft half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
+-- holds, and wakes at the start spot half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
 local HUNGER_EMPTY_SECONDS, STARVE_SECONDS = 3600, 1800
 local FOOD = { Coconut = 15, Catch = 20, CookedCatch = 50 }
 local FAINT_HUNGER, FAINT_HEALTH = 50, 30
@@ -2054,7 +2100,7 @@ local function faint(player, s)
     s.hunger, s.health = FAINT_HUNGER, FAINT_HEALTH
     player:SetAttribute("Faints", (player:GetAttribute("Faints") or 0) + 1)
     setVitals(player, s)
-    gesture(player, "WakeUp") -- getting up off its back by the raft
+    gesture(player, "WakeUp") -- getting up off its back at the start spot
 end
 
 local function hurt(player, amount, cause)
@@ -2173,11 +2219,12 @@ local function shakePalm(player, inputData)
 end
 
 -- Carving: strikes with the axe turn a log into a spear.
-local function carveLog(log)
+local function carveLog(log, edged)
+    local needed = edged and sky.iron.CARVES or CARVES_PER_SPEAR
     local carves = (log:GetAttribute("Carves") or 0) + 1
-    if carves < CARVES_PER_SPEAR then
+    if carves < needed then
         log:SetAttribute("Carves", carves)
-        return "StrikeCarving:" .. carves .. "/" .. CARVES_PER_SPEAR
+        return "StrikeCarving:" .. carves .. "/" .. needed
     end
     wakeRestingOn(log)
     local at = log.Position
@@ -2285,9 +2332,9 @@ local function moveFish(dt)
     end
 end
 
-local function catchFish(fish, body)
+local function catchFish(fish, body, edged)
     local f = swimming[fish]
-    if math.random() > CATCH_CHANCE then
+    if math.random() > (edged and sky.iron.CATCH_CHANCE or CATCH_CHANCE) then
         if f then -- it darts away
             f.goal = shallowNear(fish.Position, 20)
             f.dartUntil = os.clock() + 2
@@ -2923,6 +2970,56 @@ if not findWorkspaceChild("Volleyball") then
         Enum.PartType.Ball)
 end
 
+-- A hammer blow on a meteor's stone (METEORIC IRON): once it no longer glows, every BLOWS_PER_FLAKE blows knock a
+-- flake of iron off it, which falls at its foot on the striker's side. After FLAKES_PER_STONE it gives no more, and
+-- is a heavy building stone like any other.
+function sky.iron.chip(stone, body)
+    if sky.iron.glowing(stone) then
+        return "StrikeTooHot:" .. stone.Name -- the blow is not counted
+    end
+    local flakes = stone:GetAttribute("Flakes") or 0
+    if flakes >= sky.iron.FLAKES_PER_STONE then
+        return "StrikeSpent:" .. stone.Name
+    end
+    local blows = (stone:GetAttribute("Blows") or 0) + 1
+    if blows < sky.iron.BLOWS_PER_FLAKE then
+        stone:SetAttribute("Blows", blows)
+        return "StrikeChipping:" .. blows .. "/" .. sky.iron.BLOWS_PER_FLAKE
+    end
+    stone:SetAttribute("Blows", 0)
+    stone:SetAttribute("Flakes", flakes + 1)
+    sky.iron.made = sky.iron.made + 1
+    local name = "Iron_" .. sky.iron.made
+    local toward = Vector3.new(body.X - stone.Position.X, 0, body.Z - stone.Position.Z)
+    toward = toward.Magnitude > 0.05 and toward.Unit or Vector3.new(1, 0, 0)
+    local foot = stone.Position.Y - halfExtents(stone).Y
+    local spot = Vector3.new(stone.Position.X, foot + sky.iron.FLAKE_SIZE.Y / 2 + 0.02, stone.Position.Z)
+        + toward * (BLOCK_SIZE / 2 + 0.7)
+    createPiece(name, freeSpawn(CFrame.new(spot) * CFrame.fromOrientation(0, math.atan2(toward.X, toward.Z), 0),
+        sky.iron.FLAKE_SIZE, Vector3.new(-toward.Z, 0, toward.X)), sky.iron.FLAKE_SIZE, Color3.fromRGB(66, 64, 62), "Iron",
+        stonePhysics)
+    return "StrikeChipped:" .. name
+end
+
+-- Fasten with a flake and a tool, one in the hands and the other set down (METEORIC IRON). sky.iron.pair: the flake and
+-- the tool, or nil when it is not that (an ordinary fastening). sky.iron.fit: the flake is bound on as the tool's edge.
+function sky.iron.pair(held, target)
+    if held and held:GetAttribute("RenderRole") == "Iron" and target:GetAttribute("ToolKind") then
+        return held, target
+    elseif held and held:GetAttribute("ToolKind") and target:GetAttribute("RenderRole") == "Iron" then
+        return target, held
+    end
+    return nil
+end
+
+function sky.iron.fit(flake, tool)
+    if sky.iron.edged(tool) then
+        return "FastenFailed:HasEdge:" .. tool.Name
+    end
+    tool:SetAttribute("Edge", "Iron")
+    return "FastenEdge:" .. tool.Name .. ":" .. flake.Name
+end
+
 local function strike(player, inputData)
     local hrp = getHumanoidRootPart(player)
     local held = heldBlocksByPlayer[player]
@@ -2940,7 +3037,9 @@ local function strike(player, inputData)
     local nearest = nearestPoint(target, body)
     -- A spear's thrust reaches past the hand, about half its length: fish swim 6-8 off the sand, out of an arm's reach
     -- from the beach (in run n8 the mind never fished).
-    local thrust = (tool == "Spear" and target:GetAttribute("RenderRole") == "Fish") and 2.5 or 0
+    local edged = sky.iron.edged(held) -- an iron edge: an iron point reaches further, and every tool needs fewer blows
+    local thrust = (tool == "Spear" and target:GetAttribute("RenderRole") == "Fish") and (2.5 + (edged and sky.iron.REACH or 0))
+        or 0
     if (nearest - body).Magnitude > STRIKE_RANGE + thrust then
         player:SetAttribute("LastActionResult", "StrikeFailed:OutOfRange")
         return
@@ -2954,15 +3053,17 @@ local function strike(player, inputData)
     local role = target:GetAttribute("RenderRole")
     local result
     if target.Name == QUARRY.name and tool == "Hammer" then
-        result = breakStone(target, body, nearest)
+        result = breakStone(target, body, nearest, edged)
     elseif role == "Tree" and tool == "Axe" then
-        result = chopTree(target, body)
+        result = chopTree(target, body, edged)
     elseif target:GetAttribute("Fastened") and tool == "Hammer" then
         result = unfasten(target)
+    elseif tool == "Hammer" and sky.iron.isMeteorite(target) and not isCarried(target) then
+        result = sky.iron.chip(target, body)
     elseif role == "Log" and tool == "Axe" and not target:GetAttribute("Fastened") and not isCarried(target) then
-        result = carveLog(target)
+        result = carveLog(target, edged)
     elseif role == "Fish" and tool == "Spear" then
-        result = catchFish(target, body)
+        result = catchFish(target, body, edged)
     elseif role == "Log" and tool == "Spear" and not isCarried(target) then
         result = rubLog(target) -- a stick worked against the wood: the way to fire
     else
@@ -3137,6 +3238,34 @@ end
 local function fasten(player, inputData)
     local hrp = getHumanoidRootPart(player)
     local piece = inputData and inputData.name and findWorkspaceChild(tostring(inputData.name))
+    local held = heldBlocksByPlayer[player]
+    local flake, tool = nil, nil
+    if hrp and piece and piece:IsA("BasePart") and piece ~= held then
+        flake, tool = sky.iron.pair(held, piece)
+    end
+    if flake then
+        -- a flake of iron and a tool, one in the hands, the other set down within reach (METEORIC IRON)
+        if isCarried(piece) or isPlacing(piece) then
+            player:SetAttribute("LastActionResult", "FastenFailed:NotSetDown")
+        elseif (nearestPoint(piece, hrp.Position) - hrp.Position).Magnitude > PLACE_RANGE then
+            player:SetAttribute("LastActionResult", "FastenFailed:OutOfRange")
+        elseif os.clock() - (lastFastenAt[player] or -math.huge) < FASTEN_COOLDOWN then
+            player:SetAttribute("LastActionResult", "FastenFailed:TooSoon")
+        else
+            lastFastenAt[player] = os.clock()
+            local result = sky.iron.fit(flake, tool)
+            if result:sub(1, 11) == "FastenEdge:" then -- bound on: the flake is part of the tool now
+                if flake == held then
+                    releaseHeldBlock(player)
+                end
+                trackedBlocks[flake] = nil
+                flake:Destroy()
+                gesture(player, "Fasten")
+            end
+            player:SetAttribute("LastActionResult", result)
+        end
+        return
+    end
     if not hrp or not piece or not piece:IsA("BasePart") or not piece:GetAttribute("IsPickupObject")
         or piece:GetAttribute("ToolKind") then
         player:SetAttribute("LastActionResult", "FastenFailed:NotAPiece")
@@ -3376,10 +3505,6 @@ local function advanceClimbers(dt)
     end
 end
 
--- One table for the sky's parts, to spare the main chunk's locals (Luau allows 200, and the script is at the limit):
--- turners (player -> the yaw Face is turning the body to), power (the guest panel's powers, with the sky events
--- below) and quake (the earthquake, after the sky events: start, tick, and Brace for a body).
-local sky = { turners = {} }
 local stepBody -- by freeTrappedBodies below: stepping up onto, or down off, something a block high
 
 local function yawOf(cframe) -- the way a part faces, as the yaw the engine gives a walking body (forward is -Z)
@@ -3689,9 +3814,12 @@ local function advanceSkyFalls(dt)
     while i <= #skyFalls do
         local fall = skyFalls[i]
         if fall.stone then
+            -- What it first touches anywhere along this beat's drop, not only where the drop ends: at this speed a
+            -- slow beat moves it further than a block, past a wall's top.
+            local from = fall.y - BLOCK_SIZE / 2
             fall.y = fall.y - SKY_FALL_SPEED * dt
             local bottom = fall.y - BLOCK_SIZE / 2
-            local contact = sky.meteor.contact(fall.x, fall.z, bottom + 3)
+            local contact = sky.meteor.contact(fall.x, fall.z, from + 3)
             if contact and bottom <= contact then
                 sky.meteor.blast(fall, contact)
                 table.remove(skyFalls, i)
@@ -3704,6 +3832,7 @@ local function advanceSkyFalls(dt)
             local stone = createPiece("Meteor_" .. fall.n, CFrame.new(fall.x, SKY_DROP_HEIGHT, fall.z), size,
                 Color3.fromRGB(64, 56, 52), "Stone", stonePhysics, sky.meteor.MODEL) -- dark and bare: not quarried
             stone.Anchored, stone.CanCollide = true, false -- carried down by the world until it touches something
+            stone:SetAttribute("Heat", 1) -- white-hot as it falls; it cools once it has landed (sky.meteor.cool)
             skyMark("Meteor", fall.n)(stone)
             fall.stone, fall.y = stone, SKY_DROP_HEIGHT
             i = i + 1
@@ -4551,6 +4680,7 @@ function sky.meteor.blast(fall, top)
         Color3.fromRGB(40, 34, 30), "Crater")
     crater:SetAttribute("ModelUrl", m.CRATER_MODEL)
     mark(crater)
+    m.landed(crater)
     table.insert(m.craters, crater)
     while #m.craters > m.CRATERS_KEPT do
         table.remove(m.craters, 1):Destroy()
@@ -4570,6 +4700,7 @@ function sky.meteor.blast(fall, top)
     stone.CFrame = CFrame.new(rest.X, ground + BLOCK_SIZE / 2 + 0.05, rest.Z)
     stone.CanCollide, stone.Anchored = true, false
     stone.AssemblyLinearVelocity = Vector3.new(0, -2, 0)
+    m.landed(stone)
     clockPart:SetAttribute("MeteorX", math.floor(c.X * 10 + 0.5) / 10)
     clockPart:SetAttribute("MeteorZ", math.floor(c.Z * 10 + 0.5) / 10)
     clockPart:SetAttribute("MeteorSmashed", smashed)
@@ -4580,6 +4711,61 @@ function sky.meteor.blast(fall, top)
     clockPart:SetAttribute("MeteorId", n)
     print(string.format("SKY Meteor #%d blasted at (%.1f, %.1f, %.1f): smashed %d, unfastened %d, threw %d, "
         .. "felled %d palms, hurt %d", n, c.X, c.Y, c.Z, smashed, unfastened, thrown, felled, hurtCount))
+end
+
+-- THE STONE COOLS (the user's wish, 2026-11-05): a meteor's stone lands glowing hot and, over about a day of the
+-- island's own clock, fades to a plain dark stone, and its crater's scorch fades with it. So the island shows when
+-- each one fell, and the newest landing stands out. LandedAt is when it landed, on the Clock's seconds, which the
+-- island save keeps (with LandedAt, an attribute), so a restart goes on cooling it where it was. Heat is what the
+-- renderer and the replays draw: 1 white-hot, falling to 0 (cold) in HEAT_STEPs, fast at first, as a hot stone
+-- cools. Nothing else changes with it: a hot stone is picked up, built with and blasted as a cold one is.
+sky.meteor.COOL_SECONDS, sky.meteor.HEAT_STEP, sky.meteor.COOL_EVERY = DAY_SECONDS, 0.05, 2
+sky.meteor.hot, sky.meteor.coolBeat = {}, 0 -- what is still cooling; seconds since the last look
+
+function sky.meteor.heat(landedAt) -- how hot it is now: the time left to cool, squared; never 0 until it is cold
+    local m = sky.meteor
+    local left = 1 - (clockSeconds - landedAt) / m.COOL_SECONDS
+    if left <= 0 then
+        return 0
+    end
+    local steps = math.ceil(math.min(1, left * left) / m.HEAT_STEP - 1e-9)
+    return math.floor(steps * m.HEAT_STEP * 1000 + 0.5) / 1000
+end
+
+function sky.meteor.landed(part) -- a stone, or its crater: it starts to cool now
+    part:SetAttribute("LandedAt", math.floor(clockSeconds * 10 + 0.5) / 10)
+    part:SetAttribute("Heat", 1)
+    table.insert(sky.meteor.hot, part)
+end
+
+function sky.meteor.restored(part) -- put back by a restart: cooling on; one from before stones cooled is long cold
+    if part:GetAttribute("LandedAt") then
+        table.insert(sky.meteor.hot, part)
+    else
+        part:SetAttribute("Heat", 0)
+    end
+end
+
+function sky.meteor.cool(dt)
+    local m = sky.meteor
+    m.coolBeat = m.coolBeat + dt
+    if m.coolBeat < m.COOL_EVERY then
+        return
+    end
+    m.coolBeat = 0
+    local i = 1
+    while i <= #m.hot do
+        local part = m.hot[i]
+        local heat = part.Parent and m.heat(part:GetAttribute("LandedAt")) or 0
+        if part.Parent and part:GetAttribute("Heat") ~= heat then
+            part:SetAttribute("Heat", heat)
+        end
+        if heat > 0 then
+            i = i + 1
+        else
+            table.remove(m.hot, i) -- cold, or gone (smashed by another, or its crater no longer kept)
+        end
+    end
 end
 
 -- The guest panel's player has no body on the island, but the engine gives it one anyway. Parked once on joining, it
@@ -4604,7 +4790,7 @@ function sky.mirrorGodling()
     if not godling then
         return
     end
-    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown" }) do
+    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Drowning" }) do
         local value = godling:GetAttribute(name)
         if clockPart:GetAttribute("Godling" .. name) ~= value then
             clockPart:SetAttribute("Godling" .. name, value)
@@ -4880,7 +5066,132 @@ local freeTrappedBodies = (function()
         player:SetAttribute("LastActionResult", kind .. "Started:0.6")
     end
 
+    sky.bodyFits = function(player, centre) -- the body would stand at `centre` inside no piece (the sea's rescue asks)
+        return #piecesInBody(player, centre) == 0
+    end
+
     return freeTrappedBodies
+end)()
+
+-- THE SEA (the user's wish, 2026-11-05). The island's edge is a sheer drop and the sea has no floor: a "stepping
+-- away" reflex walked Godling off the end of the west beach, where its body caught on the sand's lip, hung there over
+-- the water for five minutes, slipped in and stood in the sea for a quarter of an hour, every step failing, until
+-- the run was restarted. Now:
+-- - a body hanging on the beach's edge (no ground under its middle, the sand's top a little above its feet) for
+--   EDGE_SECONDS is put back on the nearest sand where it fits, as a body caught inside a piece is (FREED above);
+--   if no safe landing exists, it drowns while the world keeps looking every EDGE_SECONDS;
+-- - a body in the sea (below the water's top, no ground under it or just beside its feet) drowns slowly: the sea takes
+--   a whole body's health in DROWN_SECONDS. At none it faints as a starving body does: what it holds drops, and it
+--   wakes at the start spot. `Drowning` says so meanwhile, to the mind and to viewers.
+-- (A function of its own, as freeTrappedBodies is, so its locals stay out of the main chunk's 200.)
+sky.tickSea = (function()
+    local DROWN_SECONDS = 90 -- the sea takes a whole body's health in a minute and a half
+    local EDGE_SECONDS = 3 -- hanging on the beach's edge this long, the world puts the body back on the sand
+    local EDGE_REACH, EDGE_RISE = 1.2, 1.6 -- the lip it hangs on: this near its middle, at most this far above its feet
+    local ASHORE_SEARCH, RIM = 8, 1.1 -- how far to look for sand to put it back on; the body's rim, with a margin
+    local edgeSince = {}
+    local edgeFailed = {} -- no safe landing: the water keeps taking health between rescue attempts
+
+    -- Where the body is: nil (on something), "edge" (hanging on a lip, and the lip's top), or "sea".
+    local function whereIs(hrp)
+        local p = hrp.Position
+        local feet = p.Y - BODY_ABOVE_FEET
+        if feet >= OCEAN_TOP_Y or surfaceTopAt(p.X, p.Z, feet - 0.6, feet + 0.6) then
+            return nil -- dry, or standing on something (a piece, the ground)
+        end
+        local lip = nil
+        for k = 0, 15 do
+            local a = k * math.pi / 8
+            local top = surfaceTopAt(p.X + EDGE_REACH * math.cos(a), p.Z + EDGE_REACH * math.sin(a), feet - 0.6,
+                feet + EDGE_RISE)
+            if top and (lip == nil or top > lip) then
+                lip = top
+            end
+        end
+        if lip then
+            return "edge", lip
+        end
+        return "sea"
+    end
+
+    -- The nearest spot on the floor at `level` where the whole body stands on ground, clear of every piece.
+    local function ashoreSpot(player, from, level)
+        for r = 1, ASHORE_SEARCH, 0.5 do
+            for k = 0, 15 do
+                local x, z = from.X + r * math.cos(k * math.pi / 8), from.Z + r * math.sin(k * math.pi / 8)
+                local floor = surfaceTopAt(x, z, level - 0.6, level + 0.6)
+                local whole = floor ~= nil
+                for c = 0, 7 do -- under the body's rim too, or it would hang on the lip again
+                    local a = c * math.pi / 4
+                    whole = whole and surfaceTopAt(x + RIM * math.cos(a), z + RIM * math.sin(a), floor - 0.3,
+                        floor + 0.3) ~= nil
+                end
+                local spot = whole and Vector3.new(x, floor + BODY_ABOVE_FEET, z)
+                if spot and sky.bodyFits(player, spot) then
+                    return spot
+                end
+            end
+        end
+        return nil
+    end
+
+    local function setDrowning(player, on)
+        if (player:GetAttribute("Drowning") == true) ~= on then
+            player:SetAttribute("Drowning", on)
+        end
+    end
+
+    return function(dt)
+        for _, player in ipairs(Players:GetPlayers()) do
+            local hrp = player.Name ~= SKY_PLAYER and not player:GetAttribute("Climbing") and getHumanoidRootPart(player)
+            local where, lip = nil, nil
+            if hrp then
+                where, lip = whereIs(hrp)
+            end
+            if where == "edge" then
+                edgeSince[player] = (edgeSince[player] or 0) + dt
+                if edgeSince[player] >= EDGE_SECONDS then
+                    edgeSince[player] = nil
+                    local from = hrp.Position
+                    local spot = ashoreSpot(player, from, lip)
+                    if spot then
+                        edgeFailed[player] = nil
+                        hrp.Position = spot
+                        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        local humanoid = getHumanoid(player)
+                        if humanoid then
+                            humanoid:CancelMoveTo()
+                        end
+                        player:SetAttribute("Ashore", (player:GetAttribute("Ashore") or 0) + 1)
+                        print(string.format("ASHORE %s hung on the edge of the sand: (%.1f, %.1f) to (%.1f, %.1f)",
+                            player.Name, from.X, from.Z, spot.X, spot.Z))
+                    else
+                        edgeFailed[player] = true
+                    end
+                end
+                if edgeFailed[player] then
+                    where = "sea" -- an unusable lip must not leave the body stranded forever
+                end
+            else
+                edgeSince[player] = nil
+                edgeFailed[player] = nil
+            end
+            local s = surviving[player]
+            if where == "sea" and s then
+                setDrowning(player, true)
+                s.health = math.max(0, s.health - dt * 100 / DROWN_SECONDS)
+                if s.health <= 0 then
+                    player:SetAttribute("Drowned", (player:GetAttribute("Drowned") or 0) + 1)
+                    print(string.format("DROWNED %s at (%.1f, %.1f): wakes at the start spot", player.Name,
+                        hrp.Position.X, hrp.Position.Z))
+                    setDrowning(player, false)
+                    faint(player, s)
+                end
+            elseif player.Name ~= SKY_PLAYER then
+                setDrowning(player, false)
+            end
+        end
+    end
 end)()
 
 --------------------------------------------------------------------------------
@@ -4937,9 +5248,11 @@ RunService.Heartbeat:Connect(function(dt)
     advanceClimbers(dt)
     settleTimer = settleTimer + dt
     if settleTimer >= 0.5 then
+        local waited = settleTimer
         settleTimer = 0
         settleResting() -- pieces that came to rest square into their cells and hold there
         freeTrappedBodies() -- and a body never stays shut inside one
+        sky.tickSea(waited) -- nor hangs on the beach's edge; in the sea it drowns, and wakes at the start spot
         sky.parkGuest() -- the guest panel's body stays out of sight
         sky.mirrorGodling() -- and viewers see how Godling is
     end
@@ -4958,6 +5271,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
     advanceSkyFalls(dt)
+    sky.meteor.cool(dt) -- a meteor's stone, and its crater, cool over a day
     sky.quake.tick(dt) -- an earthquake shakes what is loose
     sky.tickNotes(dt) -- notes from viewers drift down
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
@@ -5034,6 +5348,7 @@ sky.saved = nil -- ISLAND SAVE
 
 function sky.restore(saved)
     local physics = { Stone = stonePhysics, PickupObject = stonePhysics, Boulder = stonePhysics, Tool = blockPhysics,
+        Iron = stonePhysics,
         Rock = PhysicalProperties.new(8.0, 0.9, 0.0, 1.0, 1.0) } -- as createRock; the rest are wood
     local balls, decor = { Boulder = true, Coconut = true, Volleyball = true }, { Crater = true, SandMark = true }
     local function put(part, s)
@@ -5065,6 +5380,9 @@ function sky.restore(saved)
         if role == "Crater" then
             table.insert(sky.meteor.craters, part) -- the oldest go first, as before (saved in number order)
         end
+        if role == "Crater" or s.name:sub(1, 7) == "Meteor_" then
+            sky.meteor.restored(part)
+        end
     end
     -- What the start made that was gone when the run stopped (smashed, burnt, eaten) stays gone.
     for _, part in ipairs(Workspace:GetChildren()) do
@@ -5092,6 +5410,7 @@ function sky.restore(saved)
     survivalCounters.coconuts = math.max(survivalCounters.coconuts, n.Coconut or 0)
     survivalCounters.spears = math.max(survivalCounters.spears, n.Spear or 0)
     survivalCounters.catches = math.max(survivalCounters.catches, n.Catch or 0)
+    sky.iron.made = math.max(sky.iron.made, n.Iron or 0)
     clockSeconds = saved.clock
     sky.body = saved.body
     print(string.format("ISLAND restored: %d pieces, %d felled trees, day %d", #saved.pieces, #saved.felled,

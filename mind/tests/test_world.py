@@ -82,7 +82,8 @@ def test_snapshot_reads_the_body_and_the_clock():
              "MeteorThrown": 1.0}
     attrs = {"LastActionResult": "ok", "Hunger": 80, "Health": 90, "Faints": 1, "Hurts": 2, "Hurt": "Meteor",
              "Freed": 1, "Wet": 60, "Cold": True, "InRain": 1, "Sheltered": "roof", "WalkSpeed": 12,
-             "ViewForwardX": 0.0, "ViewForwardZ": 1.0, "Bracing": True, "KnockedDown": 0}
+             "ViewForwardX": 0.0, "ViewForwardZ": 1.0, "Bracing": True, "KnockedDown": 0, "Drowning": True,
+             "Drowned": 2, "Ashore": 1}
     s = snap([ground()], attrs=attrs, clock=clock, others=[("Sky", (0, 0, 0)), ("Ann", (1, 2, 3))], tick=9)
     assert s.tick == 9 and s.has_world
     assert s.last_result == "ok" and s.hunger == 80 and s.health == 90 and s.faints == 1
@@ -96,6 +97,8 @@ def test_snapshot_reads_the_body_and_the_clock():
     assert s.meteor_id == 2 and s.meteor_at == (1, 0, -1)
     assert s.meteor_did == {"Smashed": 3, "Thrown": 1, "Unfastened": 0, "Felled": 0, "Hurt": 0}
     assert s.bracing and not s.knocked_down
+    assert (s.drowning, s.drowned, s.ashore) == (True, 2, 1)
+    assert snap([ground()]).drowning is False and (snap([ground()]).drowned, snap([ground()]).ashore) == (0, 0)
 
 
 def test_snapshot_without_a_clock_or_world():
@@ -213,3 +216,17 @@ def test_snapshot_raw_is_kept():
     raw = raw_obs([ground()])
     assert Snapshot(raw).raw is raw
     assert json.loads(json.dumps(raw))  # what the server sends is plain JSON
+
+
+def test_a_meteors_stone_and_its_iron_as_the_eye_tells_them():
+    """METEORIC IRON (main.lua sky.iron): what a thing is like, never what it is for."""
+    hot = Entity(ent("Meteor_3", attrs={"Heat": 0.35, "RenderRole": "Stone"}))
+    dark = Entity(ent("Meteor_4", attrs={"Heat": w.GLOWS_ABOVE, "RenderRole": "Stone"}))
+    old = Entity(ent("Meteor_1", attrs={"RenderRole": "Stone"}))  # from before stones cooled: no Heat
+    assert hot.glowing and not dark.glowing and not old.glowing
+    assert hot.look == "glowing hot" and dark.look == old.look == "dark, heavy, metallic"
+    flake = Entity(ent("Iron_2", size=(0.5, 0.2, 1.0), role="Iron"))
+    assert flake.movable and "dark metal" in flake.look and not flake.glowing
+    assert Entity(ent("Spear_1", role="Tool", attrs={"Edge": "Iron"})).look == "with an edge of dark metal bound on"
+    assert Entity(ent("Spear_2", role="Tool")).look == "" and Entity(ent("Block_1")).look == ""
+    assert Entity(ent("Block_2", attrs={"Heat": "hot"})).glowing is False

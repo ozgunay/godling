@@ -11,7 +11,7 @@ function panelStatus(more = {}) {
   return {
     world: true, watching: 1284, now: NOW, testMode: true, view: 'http://island/?spectator_token=t',
     clock: { hour: 14.5, day: 3, rain: 0, fog: 0, wind: 0.2, quake: '' },
-    godling: { health: 75, hunger: 45, wet: 40, cold: true, bracing: true, knockedDown: true },
+    godling: { health: 75, hunger: 45, wet: 40, cold: true, bracing: true, knockedDown: true, drowning: true },
     notes: { limit: 140, every: 180, queue: 0, wait: 0 },
     mind: {
       thought: 'Two logs now.', needs: '3 logs for the gate lintel; a stone', intention: 'carry logs',
@@ -127,6 +127,7 @@ describe('the viewer screen', () => {
     expect($('.b-now .aside').textContent).toBe('2 of 4')
     expect($('.b-objective .what').textContent).toBe('3 logs for the gate lintel')
     expect($('.b-vitals .states').textContent).toContain('Knocked down')
+    expect($('.b-vitals .states').textContent).toContain('Drowning')
     expect($('.b-vitals .states').textContent).toContain('Wet')
     expect(stage.querySelectorAll('.b-pop')).toHaveLength(2) // the old one is not shown again
     expect($('.b-pop.harm .head').textContent).toBe('mara called a meteor')
@@ -173,6 +174,26 @@ describe('the viewer screen', () => {
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: false })
     walls.click()
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
+  })
+
+  it('updates drowning in replay even when the clock and other vitals stay the same', async () => {
+    const answers = {
+      'api/replay/index': { body: { segments: [{ start: NOW * 1000 - 3600e3, end: NOW * 1000, live: true }] } },
+    }
+    const { $, stage, fromIsland, tick } = await boot({ answers })
+    fromIsland({ type: 'godling-ready' })
+    $('.b-rewind').click()
+    await tick(0)
+    expect(stage.classList.contains('replaying')).toBe(true)
+    const frame = { type: 'godling-replay-time', t: NOW * 1000 - 600e3, paused: true,
+      clock: panelStatus().clock, godling: { ...panelStatus().godling, drowning: false } }
+    fromIsland(frame)
+    expect($('.b-vitals .states').textContent).not.toContain('Drowning')
+    fromIsland({ ...frame, t: frame.t + 250, godling: { ...frame.godling, drowning: true } })
+    expect($('.b-vitals .states').textContent).toContain('Drowning')
+    fromIsland(frame) // seeking back must remove the badge just as promptly
+    expect($('.b-vitals .states').textContent).not.toContain('Drowning')
+    history.replaceState(null, '', '/')
   })
 
   it('switches the camera, remembers it, and forwards the flying keys to the island', async () => {

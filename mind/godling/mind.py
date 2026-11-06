@@ -157,6 +157,9 @@ def _fmt_pos3(p):
 def _how_it_feels(snap):
     """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
     parts = []
+    if snap.drowning:  # main.lua THE SEA
+        parts.append("You are in the sea and cannot climb out: the water is drowning you, and you will wake at the "
+                     "start spot in the middle of the island")
     if snap.wind >= 0.75:
         parts.append("A storm wind is blowing")
     if snap.rain >= 0.3:
@@ -177,10 +180,12 @@ def _how_it_feels(snap):
 
 @dataclass
 class _Seen:
-    """A loose thing as the mind knows it: where it is, or where it was last seen (`old`)."""
+    """A loose thing as the mind knows it: where it is, or where it was last seen (`old`), and what the eye tells of it
+    beyond its name while it is in sight (Entity.look)."""
     name: str
     pos: tuple
     old: bool
+    look: str = ""
 
 
 class Mind:
@@ -351,7 +356,9 @@ doorway on a side, open up to the roof and onto open ground; and a roof over all
 with more room under it than your height (on walls three blocks high).
 Inside your house a fed body mends twice as fast.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
-loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before.
+loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before. It lands
+glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like metal, unlike the island's
+stone.
 Now and then the ground shakes. Loose pieces can fall; fastened pieces hold where they are, and a wide base stands
 better than a thin one. When the ground rumbles, your body braces by itself until it is still.
 Strangers watch you from somewhere beyond the sea. Now and then one of them sends a paper glider down with a short
@@ -461,16 +468,17 @@ thought and in that project's intention."""
         stacked = {n for _, names in known_stacks for n in names}
         spoken_for = protected | set(moves)
         if seen is None:
-            loose = [_Seen(e.name, e.pos, False) for e in snap.movables() if e.name not in stacked and e is not held]
+            loose = [_Seen(e.name, e.pos, False, e.look) for e in snap.movables() if e.name not in stacked and e is not held]
         else:  # what is in sight as it is now, the rest where it was last seen (ADR-008)
             live = snap.entities
             loose = [_Seen(n, live[n].pos if n in self.discovery.visible and n in live else p,
-                           n not in self.discovery.visible) for n, p in seen.items()
+                           n not in self.discovery.visible,
+                           live[n].look if n in self.discovery.visible and n in live else "") for n, p in seen.items()
                      if n not in stacked and not (held and n == held.name)]
         loose = [e for e in loose if e.name not in spoken_for]
         loose.sort(key=lambda e: hdist(e.pos, snap.me))
-        loose_txt = ", ".join(f"{e.name} {_fmt_pos3(e.pos)}" + (" (last seen there)" if e.old else "")
-                              for e in loose[:LOOSE_IN_VIEW])
+        loose_txt = ", ".join(f"{e.name}" + (f" ({e.look})" if e.look else "") + f" {_fmt_pos3(e.pos)}"
+                              + (" (last seen there)" if e.old else "") for e in loose[:LOOSE_IN_VIEW])
         if len(loose) > LOOSE_IN_VIEW:
             loose_txt += f", and {len(loose) - LOOSE_IN_VIEW} more further away"
         stacks = "; ".join(f"{len(names)}-high stack at {xz}: {', '.join(names)}" for xz, names in known_stacks) or "none"
@@ -507,10 +515,11 @@ thought and in that project's intention."""
         recalled = self.memory.recall_for(cue_entities, cue_text)
         lines = [
             f"Awake for {int((time.time() - self.started) / 60)} minutes. World tick {snap.tick}.",
-            f"You are at {_fmt_pos(snap.me)}, holding {held.name if held else 'nothing'}.",
+            f"You are at {_fmt_pos(snap.me)}, holding "
+            f"{(held.name + (f' ({held.look})' if held.look else '')) if held else 'nothing'}.",
             *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
-               + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
+               + (f"; you have fainted {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
             *([_how_it_feels(snap)] if _how_it_feels(snap) else []),
             f"Others: {others}.",

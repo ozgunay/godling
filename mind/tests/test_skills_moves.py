@@ -86,7 +86,8 @@ def test_move_renews_long_walks(make):
 
 def test_move_falls_into_the_sea(make):
     island, body = make(bare=True, entities=[ent("Sand", (0, -0.5, 0), (6, 1, 6), role="Ground")])
-    with pytest.raises(Stuck, match="fell off the edge"):
+    with pytest.raises(Stuck, match="fell off the edge into the sea: you cannot climb back out, and the water is "
+                                    "drowning you; you will wake at the start spot"):
         body._move_once(10, 0, 0.6)
 
 
@@ -112,6 +113,31 @@ def test_unstick_cases(make):
                                                                                   role="Mesa")])
     assert body4._unstick(island4.snap())
     assert abs(island4.acts[0][1]["position"][0]) < 0.01 and abs(island4.acts[0][1]["position"][2]) > 2
+
+
+def test_unstick_keeps_to_the_floor_at_the_beach_edge(make):
+    # Live run, 2026-11-05: snagged by a log, the body stepped straight away from it, off the end of the west beach,
+    # hung on the sand's lip over the sea and slipped in. Now it steps sideways along the beach instead.
+    island, body = make(bare=True, entities=[ent("Sand", (0, -0.5, 0), (20, 1, 20), role="Ground"),
+                                             block("Block_1", -6.0, 1.25, 0)])
+    island.me = [-8.5, BODY_CENTRE_Y, 0]  # 1.5 from the water's edge, the block to the east
+    assert body._unstick(island.snap())
+    ex, _, ez = island.acts[0][1]["position"]
+    assert ex == pytest.approx(-8.5) and abs(ez) == pytest.approx(2.5)  # along the edge, not out over the sea
+    assert reflexes(body) == [f"snagged by Block_1; stepping away to (-8.5, {ez:.1f})"]
+    # On a strip of sand too small to step anywhere on: it stays put and says why.
+    island2, body2 = make(bare=True, entities=[ent("Sand", (-8.5, -0.5, 0), (3, 1, 3), role="Ground"),
+                                               block("Block_1", -6.0, 1.25, 0)])
+    island2.me = [-8.5, BODY_CENTRE_Y, 0]
+    assert body2._unstick(island2.snap()) is False
+    assert not [a for a, _ in island2.acts if a == "MoveTo"]
+    assert reflexes(body2) == ["snagged by Block_1; no floor to step away onto (the sea or a drop)"]
+    # Squeezed in a gap that runs out to sea one way: it slips out the other way.
+    island3, body3 = make(bare=True, entities=[ent("Sand", (0, -0.5, 4), (20, 1, 12), role="Ground"),
+                                               ent("Mesa_1", (2, 5, 0), (2, 10, 6), role="Mesa"),
+                                               ent("Mesa_2", (-2, 5, 0), (2, 10, 6), role="Mesa")])
+    assert body3._unstick(island3.snap())
+    assert island3.acts[0][1]["position"][2] == pytest.approx(2.5)  # inland (+z), not out to sea at z < -2
 
 
 def test_route_steps_out_of_clearance_first(make):
@@ -834,3 +860,46 @@ def test_stepping_up_from_the_side_with_clear_floor(make):
     assert r.ok and island.me[1] == pytest.approx(2.5 + BODY_CENTRE_Y), r.summary
     ups = [d["position"] for a, d in island.acts if a == "StepUp"]
     assert ups and all(abs(z - -5) > 1.25 for _, z in ups), ups  # never onto the block with a stone standing on it
+
+
+# ---- meteoric iron (main.lua sky.iron) ------------------------------------------------------------------------------
+@pytest.mark.parametrize("outcome,ok,words", [
+    ("StrikeTooHot:Meteor_2", False, "still glowing hot from its fall; the blow does nothing to it yet"),
+    ("StrikeChipping:4/15", True, "it rings like metal, and a sliver is loosening (4 of 15 blows so far)"),
+    ("StrikeChipped:Iron_1", True, "a sliver of dark metal came off: Iron_1, hard, with a sharp edge, lies at"),
+    ("StrikeSpent:Meteor_2", False, "nothing more comes off it"),
+])
+def test_strike_a_meteors_stone(make, outcome, ok, words):
+    island, body = tools(make, held="Hammer_1", target=ent("Meteor_2", (6, 1.25, 0), role="Stone"))
+    island.results["Strike"] = outcome
+    r = body.run("strike", {"object": "Meteor_2"})
+    assert r.ok is ok and words in r.summary
+
+
+def test_fasten_a_sliver_of_iron_onto_a_tool(make):
+    island, body = make([ent("Spear_1", (3, 0.2, 0), (0.3, 0.3, 4.5), role="Tool"),
+                         ent("Iron_1", (-3, 0.1, 0), (0.5, 0.2, 1.0), role="Iron")])
+    island.held = "Iron_1"
+    island.results["Fasten"] = "FastenEdge:Spear_1:Iron_1"
+    r = body.run("fasten", {"object": "Spear_1"})
+    assert r.ok and r.summary == "bound Iron_1 onto Spear_1: the sliver of metal is Spear_1's edge now"
+    assert r.facts == {"object": "Spear_1", "bound": "Iron_1"}
+    island.results["Fasten"] = "FastenFailed:HasEdge:Spear_1"
+    r = body.run("fasten", {"object": "Spear_1"})
+    assert not r.ok and r.summary == "Spear_1 already has an edge of metal bound on; there is no room for another"
+    assert "With something small in your hands, fasten binds it onto that object" in sk.PRIMITIVES["fasten"][1]
+
+
+def test_a_glowing_stone_is_not_picked_up_or_taken_for_building(make):
+    island, body = make([ent("Meteor_2", (10, 1.25, 0), role="Stone", attrs={"Heat": 0.6}),
+                         block("Block_1", -10, 1.25, 0)])
+    r = body.run("pick_up", {"object": "Meteor_2"})
+    assert not r.ok and r.summary == "Meteor_2 is still glowing hot from its fall: too hot to hold"
+    assert not island.actions("Pickup"), "the body knows better than to try"
+    snap = island.snap()
+    assert [p.name for p in body._free_pieces(snap)] == ["Block_1"]
+    island.ents["Meteor_2"]["attributes"]["Heat"] = 0.05  # dark now: a stone like any other
+    assert {p.name for p in body._free_pieces(island.snap())} == {"Block_1", "Meteor_2"}
+    island.results["Pickup"] = "PickupFailed:TooHot"  # the world's word, when the mind saw it cooler than it was
+    r = body.run("pick_up", {"object": "Meteor_2"})
+    assert not r.ok and r.summary == "Meteor_2 is still glowing hot from its fall: too hot to hold"

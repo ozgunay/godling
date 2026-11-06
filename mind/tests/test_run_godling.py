@@ -68,6 +68,29 @@ def test_island_of_keeps_what_a_restart_needs():
     assert empty["body"] is None and empty["clock"] == 0.0
 
 
+def test_a_meteor_stone_keeps_cooling_across_a_restart_and_in_replays():
+    """main.lua sky.meteor.cool: a landed meteor's stone and its crater carry LandedAt (on the island's clock, which the
+    save keeps too) and Heat. The save keeps both, so the world cools them on from where they were; a replay frame
+    keeps Heat, so the past shows each stone as hot as it was."""
+    from godling.replay import slim_entity
+    snap = snapshot()
+    landed = {"RenderRole": {"type": "String", "value": "Stone"}, "SkyEvent": {"type": "String", "value": "Meteor"},
+              "LandedAt": {"type": "Number", "value": 3012.4}, "Heat": {"type": "Number", "value": 0.35}}
+    rest = {"cframe": {"position": [9, 1.25, 0], "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+            "size": [2.5, 2.5, 2.5], "color": [0.25, 0.22, 0.2], "anchored": True, "can_collide": True}
+    snap["instance"]["workspace_children"].append({"name": "Meteor_6", "class_name": "Part", "part": rest,
+                                                   "attributes": landed})
+    crater = next(c for c in snap["instance"]["workspace_children"] if c["name"] == "Crater_1")
+    crater["attributes"].update(LandedAt={"type": "Number", "value": 3012.4}, Heat={"type": "Number", "value": 0.35})
+    island = rg.island_of(snap)
+    by_name = {p["name"]: p for p in island["pieces"]}
+    assert by_name["Meteor_6"]["attrs"]["LandedAt"] == 3012.4 and by_name["Meteor_6"]["attrs"]["Heat"] == 0.35
+    assert by_name["Crater_1"]["attrs"]["LandedAt"] == 3012.4
+    assert "Meteor_2" not in by_name  # one still falling is never saved
+    frame = slim_entity({"id": 6, "position": [9.004, 1.25, 0], "attributes": {"Heat": 0.35000000001, "LandedAt": 3012.4}})
+    assert frame["attributes"] == {"Heat": 0.35, "LandedAt": 3012.4}
+
+
 def test_orientation():
     assert rg.orientation([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) == [0.0, 0.0, 0.0]
     c, s = math.cos(0.5), math.sin(0.5)
@@ -814,3 +837,22 @@ def test_main_with_the_bubble_and_a_broken_end(main_env, monkeypatch, tmp_path, 
     assert started and "structures at the end" in (run / "mind/log.jsonl").read_text()
     kinds = {kind for kind, _ in started[0].events}
     assert kinds >= {"thought", "happens", "does"}
+
+
+def test_the_save_keeps_flakes_of_iron_their_count_and_iron_edges():
+    """main.lua METEORIC IRON: a flake (Iron_n, RenderRole Iron) is kept, numbered on from the save, and a tool's
+    iron edge (its Edge attribute) stays bound on."""
+    snap = snapshot()
+    lying = {"cframe": {"position": [3, 0.1, 2], "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+             "size": [0.5, 0.2, 1.0], "color": [0.26, 0.25, 0.24], "anchored": False, "can_collide": True}
+    snap["instance"]["workspace_children"] += [
+        {"name": "Iron_3", "class_name": "Part", "part": lying,
+         "attributes": {"RenderRole": {"type": "String", "value": "Iron"}}},
+        {"name": "Spear_2", "class_name": "Part", "part": dict(lying, size=[0.3, 0.3, 4.5]),
+         "attributes": {"RenderRole": {"type": "String", "value": "Tool"}, "ToolKind": {"type": "String", "value": "Spear"},
+                        "Edge": {"type": "String", "value": "Iron"}}}]
+    island = rg.island_of(snap)
+    by_name = {p["name"]: p for p in island["pieces"]}
+    assert "Iron" in island["roles"] and by_name["Iron_3"]["attrs"]["RenderRole"] == "Iron"
+    assert island["counters"]["Iron"] == 3 and island["counters"]["Spear"] == 2
+    assert by_name["Spear_2"]["attrs"]["Edge"] == "Iron"

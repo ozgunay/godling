@@ -14,6 +14,8 @@ import { createRain } from './rain.js'
 import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
 import { createBlasts } from './blast.js'
+import { createCooling, heatStep } from './cooling.js'
+import { createIronLook } from './iron.js'
 import { createLightning } from './lightning.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
@@ -637,6 +639,8 @@ export function createRenderer(ctx) {
   const bubbles = createBubbles(scene, models, resolveAsset)
   const instancer = createInstancer(scene)
   const kit = createPartKit(onMaterial)
+  const cooling = createCooling({ onMaterial }) // a meteor's stone and its crater, as they cool (cooling.js)
+  const ironLook = createIronLook({ onMaterial }) // flakes of meteoric iron, and tools with an iron edge (iron.js)
   const records = new Map() // entity id -> how it is drawn
   const colliderDebugObjects = new Map()
   const stats = readDebugFlag('stats') ? createStatsReadout(ctx.canvas, renderer, tier, instancer) : null
@@ -689,10 +693,16 @@ export function createRenderer(ctx) {
       if (!template) return { kind: 'pending' }
       if (template.animated) return { kind: 'character', modelUrl }
       const fit = models.fit(template, size, entity.model_yaw_offset_deg, new THREE.Matrix4(), role === 'Crater')
+      const heat = heatStep(entity.attributes)
+      const point = ironLook.point(entity.attributes, size) // an iron blade over a spear's point
       return {
         kind: 'parts',
-        parts: template.parts.map((p, i) =>
-          part(`model:${modelUrl}#${i}`, p.geometry, p.material, fit.clone().multiply(p.matrix))),
+        parts: template.parts.map((p, i) => {
+          const hot = cooling.variant(p, role, heat) // as hot as the world says it is
+          const v = ironLook.variant(hot, entity.attributes) // an iron edge bound on
+          return part(`model:${modelUrl}#${i}${hot.suffix}${v.suffix}`, v.geometry, v.material,
+            fit.clone().multiply(p.matrix))
+        }).concat(point ? [part('ironPoint', point.geometry, point.material, point.local)] : []),
         swims: role === 'Fish', // a swimming fish's model rides the waves, half under (see updateScene)
       }
     }
@@ -777,6 +787,10 @@ export function createRenderer(ctx) {
           parts: [part('sandMark', kit.geometry('groove'), kit.material('sandMark'),
             scaled(size[0], size[1] / 2, size[2]).setPosition(0, -size[1] / 4, 0), { colored: true })],
         }
+      case 'Iron': { // a flake of meteoric iron (iron.js)
+        const { geometry, material } = ironLook.flake()
+        return { kind: 'parts', parts: [part('ironFlake', geometry, material, scaled(...size))] }
+      }
       case 'Coconut':
         return { kind: 'parts', parts: [part('coconut', kit.geometry('sphere'), kit.material('husk'), scaled(size[0], size[0] * 0.92, size[0]), { colored: true })] }
       case 'Volleyball': {
@@ -836,6 +850,8 @@ export function createRenderer(ctx) {
       entity.attributes?.Surface || '',
       entity.attributes?.ToolKind || '',
       entity.attributes?.Cooked ? 'cooked' : '',
+      heatStep(entity.attributes) ?? '',
+      entity.attributes?.Edge || '',
       entity.render?.primitive || '',
       modelUrl || '',
       modelUrl && models.get(modelUrl) ? 'loaded' : modelUrl && models.failed(modelUrl) ? 'failed' : '',
@@ -1354,6 +1370,8 @@ export function createRenderer(ctx) {
       bubbles.dispose()
       models.dispose()
       kit.dispose()
+      cooling.dispose()
+      ironLook.dispose()
       sky.dispose()
       sea.dispose()
       clouds.dispose()

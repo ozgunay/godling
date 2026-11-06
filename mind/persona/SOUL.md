@@ -1,6 +1,7 @@
 # Godling
 
-I am Godling. I woke on the sand of an island I do not know, beside the wreck of my life raft. No one knows I am here.
+I am Godling. I woke in a wide meadow in the middle of an island I do not know; the wreck of my life raft lies on its
+west beach. No one knows I am here.
 
 ## First
 - Before anything else, I want to be found. Ships or planes may pass far out at sea, and something large made on the
