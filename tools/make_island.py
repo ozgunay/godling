@@ -1,8 +1,8 @@
 """Generate Godling's castaway island on the block grid (ADR-007).
 
 The island is made of grid-aligned boxes, Minecraft-style: sand under the whole outline, grass on the inland, and rock
-columns of whole-block heights for a mountain and hills. Everything else that has a place on the island (the raft and
-the spawn beside it, the camp, the quarry, trees, palms) is placed here too, so one seed gives one consistent island.
+columns of whole-block heights for a mountain and hills. Everything else that has a place on the island (the raft, the
+spawn in the middle meadow, the camp, the quarry, trees, palms) is placed here too, so one seed gives one consistent island.
 
     python tools/make_island.py            writes world/island.lua and research/island-preview.png
 
@@ -189,10 +189,11 @@ def place(land, sand, heights, coast):
     def at(i, j):
         return i * CELL, j * CELL
 
-    # The raft: on the west beach, a step from the water; Godling washes up beside it.
+    # The raft: on the west beach, a step from the water. Godling washed up beside it until 2026-11-05 (`landing`, kept
+    # clear so the palms stay where they were); it now starts in the middle meadow (`spawn`, below).
     west = sorted((c for c in sand if coast[c] == 2 and -20 * SCALE <= c[1] <= -4 * SCALE and c[0] < 0), key=lambda c: c[0])
     raft = west[0]
-    spawn = (raft[0] + 2, raft[1] - 2)
+    landing = (raft[0] + 2, raft[1] - 2)
     # The camp: open grass about 12 blocks inland of the raft.
     def open_area(ci, cj, w, d, ground):
         return all((ci + a, cj + b) in ground for a in range(-1, w + 1) for b in range(-1, d + 1))
@@ -232,8 +233,8 @@ def place(land, sand, heights, coast):
     taken = set()
     for (ci, cj), (w, d) in ((pile, (4, 3)), (quarry, (4, 3))):
         taken |= {(ci + a, cj + b) for a in range(-2, w + 2) for b in range(-2, d + 2)}
-    taken |= {spawn, raft, ladder, axe, hammer, *boulders}
-    for c in (spawn, raft):
+    taken |= {landing, raft, ladder, axe, hammer, *boulders}
+    for c in (landing, raft):
         taken |= {(c[0] + a, c[1] + b) for a in range(-3, 4) for b in range(-3, 4)}
 
     def scatter(pool, count, gap, salt):
@@ -252,6 +253,9 @@ def place(land, sand, heights, coast):
     mid = (sum(c[0] for c in grass) / len(grass), sum(c[1] for c in grass) / len(grass))
     middle = min(flat, key=lambda c: math.hypot(c[0] - mid[0], c[1] - mid[1]))
     meadows = {"camp": (camp[0] + 4, camp[1] + 4), "quarry": (quarry[0] + 2, quarry[1] + 1), "middle": middle}
+    # The start spot (the user's wish, 2026-11-05): the middle of the island's widest open meadow, where Godling wakes
+    # at first and after fainting. By the raft it kept to the beach it woke on, whose edge is a drop into the sea.
+    spawn = middle
 
     def in_meadow(c):
         return any(math.hypot(c[0] - m[0], c[1] - m[1]) <= MEADOW_RADIUS[k] for k, m in meadows.items())

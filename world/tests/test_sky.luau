@@ -316,7 +316,7 @@ end)
 T.test("a meteor aimed at the sea, or with nowhere clear to land, and the craters that are kept", function()
     local w = sky()
     local e, x = w.e, w.x
-    local spawn = x.PLAYER_SPAWN_POSITION
+    local spawn = V.new(x.ISLAND.raft[1] + 5, 0, x.ISLAND.raft[2] - 5) -- on the west beach, by the raft
     e.hrp(w.g).Position = V.new(spawn.X, 2.45, spawn.Z)
     local seaward = nil
     for dx = -60, 60, 5 do

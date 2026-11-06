@@ -33,7 +33,8 @@ function hudOf(obs) {
   const out = { clock: { hour: c.TimeOfDay, day: c.Day, rain: c.Rain || 0, fog: c.Fog || 0, quake: c.QuakePhase || '' } }
   if (c.GodlingHealth !== undefined) {
     out.godling = { health: c.GodlingHealth, hunger: c.GodlingHunger, wet: c.GodlingWet || 0, cold: Boolean(c.GodlingCold),
-      bracing: Boolean(c.GodlingBracing), knockedDown: Boolean(c.GodlingKnockedDown) }
+      bracing: Boolean(c.GodlingBracing), knockedDown: Boolean(c.GodlingKnockedDown),
+      drowning: Boolean(c.GodlingDrowning) }
   }
   return out
 }

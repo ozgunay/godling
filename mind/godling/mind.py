@@ -157,6 +157,9 @@ def _fmt_pos3(p):
 def _how_it_feels(snap):
     """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
     parts = []
+    if snap.drowning:  # main.lua THE SEA
+        parts.append("You are in the sea and cannot climb out: the water is drowning you, and you will wake at the "
+                     "start spot in the middle of the island")
     if snap.wind >= 0.75:
         parts.append("A storm wind is blowing")
     if snap.rain >= 0.3:
@@ -516,7 +519,7 @@ thought and in that project's intention."""
             f"{(held.name + (f' ({held.look})' if held.look else '')) if held else 'nothing'}.",
             *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
-               + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
+               + (f"; you have fainted {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
             *([_how_it_feels(snap)] if _how_it_feels(snap) else []),
             f"Others: {others}.",

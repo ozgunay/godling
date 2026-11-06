@@ -716,7 +716,7 @@ function drawBody(g) {
   const scale = PHONE() ? 2 : 3
   const hearts = Array.from({ length: 10 }, (_, i) => icon(health >= i + 1 ? 'heart' : health > i ? 'heartHalf' : 'heartEmpty', scale)).join('')
   const food = Array.from({ length: 10 }, (_, i) => icon(hunger >= 10 - i ? 'food' : hunger > 9 - i ? 'foodHalf' : 'foodEmpty', scale)).join('')
-  const states = [g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'], g.cold && ['cold', 'Cold'],
+  const states = [g.drowning && ['wave', 'Drowning'], g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'], g.cold && ['cold', 'Cold'],
     g.wet >= 30 && ['drop', 'Wet']].filter(Boolean)
   vitals.innerHTML = `<span class="row hearts" role="img" aria-label="Health ${Math.round(health * 10)} of 100">${hearts}</span>
     <span class="states">${states.map(([i, w]) => `<span class="state">${icon(i, 2)}${w}</span>`).join('')}</span>

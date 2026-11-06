@@ -693,7 +693,7 @@ local ISLAND = {
         {90, -25, 270, false},
     },
     raft = {-120, -35},
-    spawn = {-115, -40},
+    spawn = {15, -27.5},
     pile = {-95, -35},
     ladder = {-80, -22.5},
     axe = {-80, -37.5},
@@ -2060,7 +2060,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling faints, drops what it
--- holds, and wakes by the raft half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
+-- holds, and wakes at the start spot half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
 local HUNGER_EMPTY_SECONDS, STARVE_SECONDS = 3600, 1800
 local FOOD = { Coconut = 15, Catch = 20, CookedCatch = 50 }
 local FAINT_HUNGER, FAINT_HEALTH = 50, 30
@@ -2100,7 +2100,7 @@ local function faint(player, s)
     s.hunger, s.health = FAINT_HUNGER, FAINT_HEALTH
     player:SetAttribute("Faints", (player:GetAttribute("Faints") or 0) + 1)
     setVitals(player, s)
-    gesture(player, "WakeUp") -- getting up off its back by the raft
+    gesture(player, "WakeUp") -- getting up off its back at the start spot
 end
 
 local function hurt(player, amount, cause)
@@ -4790,7 +4790,7 @@ function sky.mirrorGodling()
     if not godling then
         return
     end
-    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown" }) do
+    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Drowning" }) do
         local value = godling:GetAttribute(name)
         if clockPart:GetAttribute("Godling" .. name) ~= value then
             clockPart:SetAttribute("Godling" .. name, value)
@@ -5066,7 +5066,132 @@ local freeTrappedBodies = (function()
         player:SetAttribute("LastActionResult", kind .. "Started:0.6")
     end
 
+    sky.bodyFits = function(player, centre) -- the body would stand at `centre` inside no piece (the sea's rescue asks)
+        return #piecesInBody(player, centre) == 0
+    end
+
     return freeTrappedBodies
+end)()
+
+-- THE SEA (the user's wish, 2026-11-05). The island's edge is a sheer drop and the sea has no floor: a "stepping
+-- away" reflex walked Godling off the end of the west beach, where its body caught on the sand's lip, hung there over
+-- the water for five minutes, slipped in and stood in the sea for a quarter of an hour, every step failing, until
+-- the run was restarted. Now:
+-- - a body hanging on the beach's edge (no ground under its middle, the sand's top a little above its feet) for
+--   EDGE_SECONDS is put back on the nearest sand where it fits, as a body caught inside a piece is (FREED above);
+--   if no safe landing exists, it drowns while the world keeps looking every EDGE_SECONDS;
+-- - a body in the sea (below the water's top, no ground under it or just beside its feet) drowns slowly: the sea takes
+--   a whole body's health in DROWN_SECONDS. At none it faints as a starving body does: what it holds drops, and it
+--   wakes at the start spot. `Drowning` says so meanwhile, to the mind and to viewers.
+-- (A function of its own, as freeTrappedBodies is, so its locals stay out of the main chunk's 200.)
+sky.tickSea = (function()
+    local DROWN_SECONDS = 90 -- the sea takes a whole body's health in a minute and a half
+    local EDGE_SECONDS = 3 -- hanging on the beach's edge this long, the world puts the body back on the sand
+    local EDGE_REACH, EDGE_RISE = 1.2, 1.6 -- the lip it hangs on: this near its middle, at most this far above its feet
+    local ASHORE_SEARCH, RIM = 8, 1.1 -- how far to look for sand to put it back on; the body's rim, with a margin
+    local edgeSince = {}
+    local edgeFailed = {} -- no safe landing: the water keeps taking health between rescue attempts
+
+    -- Where the body is: nil (on something), "edge" (hanging on a lip, and the lip's top), or "sea".
+    local function whereIs(hrp)
+        local p = hrp.Position
+        local feet = p.Y - BODY_ABOVE_FEET
+        if feet >= OCEAN_TOP_Y or surfaceTopAt(p.X, p.Z, feet - 0.6, feet + 0.6) then
+            return nil -- dry, or standing on something (a piece, the ground)
+        end
+        local lip = nil
+        for k = 0, 15 do
+            local a = k * math.pi / 8
+            local top = surfaceTopAt(p.X + EDGE_REACH * math.cos(a), p.Z + EDGE_REACH * math.sin(a), feet - 0.6,
+                feet + EDGE_RISE)
+            if top and (lip == nil or top > lip) then
+                lip = top
+            end
+        end
+        if lip then
+            return "edge", lip
+        end
+        return "sea"
+    end
+
+    -- The nearest spot on the floor at `level` where the whole body stands on ground, clear of every piece.
+    local function ashoreSpot(player, from, level)
+        for r = 1, ASHORE_SEARCH, 0.5 do
+            for k = 0, 15 do
+                local x, z = from.X + r * math.cos(k * math.pi / 8), from.Z + r * math.sin(k * math.pi / 8)
+                local floor = surfaceTopAt(x, z, level - 0.6, level + 0.6)
+                local whole = floor ~= nil
+                for c = 0, 7 do -- under the body's rim too, or it would hang on the lip again
+                    local a = c * math.pi / 4
+                    whole = whole and surfaceTopAt(x + RIM * math.cos(a), z + RIM * math.sin(a), floor - 0.3,
+                        floor + 0.3) ~= nil
+                end
+                local spot = whole and Vector3.new(x, floor + BODY_ABOVE_FEET, z)
+                if spot and sky.bodyFits(player, spot) then
+                    return spot
+                end
+            end
+        end
+        return nil
+    end
+
+    local function setDrowning(player, on)
+        if (player:GetAttribute("Drowning") == true) ~= on then
+            player:SetAttribute("Drowning", on)
+        end
+    end
+
+    return function(dt)
+        for _, player in ipairs(Players:GetPlayers()) do
+            local hrp = player.Name ~= SKY_PLAYER and not player:GetAttribute("Climbing") and getHumanoidRootPart(player)
+            local where, lip = nil, nil
+            if hrp then
+                where, lip = whereIs(hrp)
+            end
+            if where == "edge" then
+                edgeSince[player] = (edgeSince[player] or 0) + dt
+                if edgeSince[player] >= EDGE_SECONDS then
+                    edgeSince[player] = nil
+                    local from = hrp.Position
+                    local spot = ashoreSpot(player, from, lip)
+                    if spot then
+                        edgeFailed[player] = nil
+                        hrp.Position = spot
+                        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        local humanoid = getHumanoid(player)
+                        if humanoid then
+                            humanoid:CancelMoveTo()
+                        end
+                        player:SetAttribute("Ashore", (player:GetAttribute("Ashore") or 0) + 1)
+                        print(string.format("ASHORE %s hung on the edge of the sand: (%.1f, %.1f) to (%.1f, %.1f)",
+                            player.Name, from.X, from.Z, spot.X, spot.Z))
+                    else
+                        edgeFailed[player] = true
+                    end
+                end
+                if edgeFailed[player] then
+                    where = "sea" -- an unusable lip must not leave the body stranded forever
+                end
+            else
+                edgeSince[player] = nil
+                edgeFailed[player] = nil
+            end
+            local s = surviving[player]
+            if where == "sea" and s then
+                setDrowning(player, true)
+                s.health = math.max(0, s.health - dt * 100 / DROWN_SECONDS)
+                if s.health <= 0 then
+                    player:SetAttribute("Drowned", (player:GetAttribute("Drowned") or 0) + 1)
+                    print(string.format("DROWNED %s at (%.1f, %.1f): wakes at the start spot", player.Name,
+                        hrp.Position.X, hrp.Position.Z))
+                    setDrowning(player, false)
+                    faint(player, s)
+                end
+            elseif player.Name ~= SKY_PLAYER then
+                setDrowning(player, false)
+            end
+        end
+    end
 end)()
 
 --------------------------------------------------------------------------------
@@ -5123,9 +5248,11 @@ RunService.Heartbeat:Connect(function(dt)
     advanceClimbers(dt)
     settleTimer = settleTimer + dt
     if settleTimer >= 0.5 then
+        local waited = settleTimer
         settleTimer = 0
         settleResting() -- pieces that came to rest square into their cells and hold there
         freeTrappedBodies() -- and a body never stays shut inside one
+        sky.tickSea(waited) -- nor hangs on the beach's edge; in the sea it drowns, and wakes at the start spot
         sky.parkGuest() -- the guest panel's body stays out of sight
         sky.mirrorGodling() -- and viewers see how Godling is
     end
