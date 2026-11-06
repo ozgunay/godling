@@ -213,3 +213,17 @@ def test_snapshot_raw_is_kept():
     raw = raw_obs([ground()])
     assert Snapshot(raw).raw is raw
     assert json.loads(json.dumps(raw))  # what the server sends is plain JSON
+
+
+def test_a_meteors_stone_and_its_iron_as_the_eye_tells_them():
+    """METEORIC IRON (main.lua sky.iron): what a thing is like, never what it is for."""
+    hot = Entity(ent("Meteor_3", attrs={"Heat": 0.35, "RenderRole": "Stone"}))
+    dark = Entity(ent("Meteor_4", attrs={"Heat": w.GLOWS_ABOVE, "RenderRole": "Stone"}))
+    old = Entity(ent("Meteor_1", attrs={"RenderRole": "Stone"}))  # from before stones cooled: no Heat
+    assert hot.glowing and not dark.glowing and not old.glowing
+    assert hot.look == "glowing hot" and dark.look == old.look == "dark, heavy, metallic"
+    flake = Entity(ent("Iron_2", size=(0.5, 0.2, 1.0), role="Iron"))
+    assert flake.movable and "dark metal" in flake.look and not flake.glowing
+    assert Entity(ent("Spear_1", role="Tool", attrs={"Edge": "Iron"})).look == "with an edge of dark metal bound on"
+    assert Entity(ent("Spear_2", role="Tool")).look == "" and Entity(ent("Block_1")).look == ""
+    assert Entity(ent("Block_2", attrs={"Heat": "hot"})).glowing is False
