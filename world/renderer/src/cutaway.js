@@ -1,13 +1,13 @@
 // The roof off, as The Sims takes it: the pieces of a building near the body the camera follows (with the free camera,
 // near Godling) that would hide it from the camera are left out of the picture. Without this, Godling sheltering in its
 // hut was a roof with nobody under it: building pieces are drawn solid, and the follow camera looks down from above
-// and behind. Viewers can turn it off (index.js: the screen's "See inside", or ?cutaway=off).
+// and behind. Viewers can turn it off (index.js: the screen's walls button, or ?cutaway=off).
 // - Overhead: while the world says the body is sheltered (its "Sheltered" attribute, main.lua shelterOf), every
 //   building piece over its head close by, so the whole roof comes off, not a patch of it.
 // - In the way: any building piece close by that crosses the line from the camera to the body, a wall in front of it.
 // Only pieces within NEAR of the body count: its hut, not a tower across the beach the camera happens to look past.
 // A piece stays out for HOLD seconds after it stops being in the way, so the follow camera's sway never makes it
-// flicker. Godling's own eyes (the first-person capture) see their roof.
+// flicker. Godling's own eyes (the first-person capture) see their roof from the first frame.
 
 export const CUTAWAY_ROLES = new Set(['PickupObject', 'Stone', 'Log', 'Brick', 'Boulder', 'Meteor'])
 export const NEAR = 8 // world units from the body to a piece's nearest side
@@ -53,6 +53,7 @@ export function createCutaway({ near = NEAR, hold = HOLD } = {}) {
   // of the building pieces drawn now. Returns {hidden: Set of ids, restored: [ids to draw again]}.
   function update({ body, camera, pieces, dt }) {
     const now = new Set()
+    const present = new Set(pieces.map((piece) => piece.id))
     if (body) {
       const [bx, by, bz] = body.position
       const head = by + BODY_HALF
@@ -62,8 +63,10 @@ export function createCutaway({ near = NEAR, hold = HOLD } = {}) {
         if (!piece.size) continue
         const box = boxOf(piece)
         const dx = Math.max(box.min[0] - bx, 0, bx - box.max[0])
+        // Height from the body's whole span, feet to head: a roof on walls four blocks high is as near as one on two.
+        const dy = Math.max(box.min[1] - head, 0, feet - box.max[1])
         const dz = Math.max(box.min[2] - bz, 0, bz - box.max[2])
-        if (Math.hypot(dx, dz) > near || box.max[1] <= feet + 0.3) continue // far off, or what it stands on
+        if (Math.hypot(dx, dy, dz) > near || box.max[1] <= feet + 0.3) continue // far off, or what it stands on
         const overhead = body.sheltered && box.min[1] >= head - 0.3
         if (overhead || sight.some((eye) => crosses(camera, eye, box))) now.add(piece.id)
       }
@@ -72,7 +75,8 @@ export function createCutaway({ near = NEAR, hold = HOLD } = {}) {
     for (const id of now) left.set(id, hold)
     for (const [id, seconds] of left) {
       if (now.has(id)) continue
-      if (seconds - dt <= 0) {
+      // The hold is for camera movement, not pieces picked up, removed or changed into another kind.
+      if (!present.has(id) || seconds - dt <= 0) {
         left.delete(id)
         restored.push(id)
       } else {
