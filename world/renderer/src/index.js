@@ -23,6 +23,7 @@ import { createCutaway, CUTAWAY_ROLES } from './cutaway.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
 import { createStateBuffer } from './buffer.js'
+import { BUILD, createBuildWatch } from './freshness.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -578,6 +579,8 @@ export function createRenderer(ctx) {
     onAimed: (spot) => tellScreen({ type: 'godling-aimed', ...spot }),
     onCancel: () => tellScreen({ type: 'godling-aim-cancel' }),
   }) : null
+  // A newer renderer on the island reloads this page (freshness.js); never mid-aim, never on the world's own capture.
+  const buildWatch = tier.capture ? null : createBuildWatch({ bundleUrl: import.meta.url, busy: () => Boolean(aim?.active) })
   if (embedded) {
     const style = document.createElement('style')
     style.textContent = 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }'
@@ -1265,6 +1268,8 @@ export function createRenderer(ctx) {
   globalThis.__godlingRenderer = {
     tier,
     sky,
+    build: BUILD, // this bundle's build (freshness.js); the island serves its own in dist/build.json
+    checkBuild: () => buildWatch?.check() ?? Promise.resolve('off'), // a look now, instead of at the next one
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
     hands: () => hands.info(), // tools in hands, or on their way in or out
@@ -1359,6 +1364,7 @@ export function createRenderer(ctx) {
       dust.dispose()
       blasts.dispose()
       lightning.dispose()
+      buildWatch?.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()

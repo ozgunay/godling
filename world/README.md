@@ -124,6 +124,8 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - three.js r187 is bundled in: `npm install`, then `npm run build` (`build.mjs`).
     - The bundle `dist/renderer.bundle.js` is committed. Runs copy the world without `node_modules`, and the build step then keeps the committed bundle.
     - On native Windows `clawblox run` can't find `npm`, and in WSL `npm` may be Windows' own. Either way Clawblox falls back to the committed bundle, so rebuild after changing `src/`.
+    - **Open pages pick up a new renderer** (`freshness.js`). The build bakes a hash of `src/` into the bundle and writes it to `dist/build.json` (also committed). Every 5 minutes, and when a tab comes back, a page fetches that file past every cache. When the island serves another build, the page fetches the new bundle past the browser's cache and reloads, never while a viewer aims, and only once per build. Without this, a page left open (or the stream's browser source) kept its old renderer across deploys, and Cloudflare tells browsers to keep the bundle 4 hours.
+    - A test fails when `dist/build.json` does not match `src/`: run `npm run build` after changing `src/`, and after a merge that changed it.
     - With Clawblox patched (`patches/VIEWER-001`), the page loads nothing from outside the server.
   - **Quality tiers** (`quality.js`): low, medium, high.
     - They set resolution, antialiasing, shadows, the sea's detail and the clouds.

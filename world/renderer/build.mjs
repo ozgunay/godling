@@ -1,6 +1,6 @@
 // Bundles the renderer with three.js inside it, so neither the viewer nor Godling's camera needs a CDN.
 // `clawblox run` calls this through `npm run build`.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const here = (path) => new URL(path, import.meta.url)
@@ -17,6 +17,8 @@ if (!existsSync(here('./node_modules/three/package.json'))) {
 }
 
 const esbuild = await import('esbuild')
+const { buildId } = await import('./build-id.mjs')
+const build = buildId()
 await esbuild.build({
   absWorkingDir: fileURLToPath(new URL('.', import.meta.url)),
   entryPoints: ['src/index.js'],
@@ -29,5 +31,8 @@ await esbuild.build({
   sourcemap: true,
   legalComments: 'eof',
   logLevel: 'warning',
+  define: { __RENDERER_BUILD__: JSON.stringify(build) }, // src/freshness.js: the build this bundle is
 })
-console.log(`renderer: built ${outfile}`)
+// Served beside the bundle: an open page that finds another build here reloads (src/freshness.js).
+writeFileSync(here('dist/build.json'), `${JSON.stringify({ build })}\n`)
+console.log(`renderer: built ${outfile} (build ${build})`)
