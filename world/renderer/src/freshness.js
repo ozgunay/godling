@@ -46,6 +46,7 @@ export function createBuildWatch({
     lastLook = now()
     try {
       const served = await servedBuild()
+      if (stopped) return 'off'
       if (!served || served === build) return 'fresh'
       if (busy()) return 'busy' // a viewer aiming: the next look tries again
       const before = readGuard()
@@ -54,13 +55,15 @@ export function createBuildWatch({
         warned = true
         return 'stuck'
       }
-      writeGuard({ to: served, at: now() })
       try {
-        await fetch(bundleUrl, { cache: 'reload' }) // the fresh bundle into the browser's cache, for the reload
+        const answer = await fetch(bundleUrl, { cache: 'reload' })
+        await answer.arrayBuffer() // finish caching the body before navigation can abort its download
       } catch {
         // the reload asks again
       }
       if (stopped) return 'off'
+      if (busy()) return 'busy' // aiming may have started while the bundle was downloading
+      writeGuard({ to: served, at: now() }) // only an actual navigation consumes the reload attempt
       reload()
       return 'reloading'
     } finally {
