@@ -57,6 +57,14 @@ describe('cutaway', () => {
     expect([...out.hidden]).toEqual([roof.id])
   })
 
+  it('takes off the whole roof of a tall house, its edge rows too', () => {
+    // Walls four blocks high (their top at 10): the roof logs lie at 11.25, one over the body and one over the wall.
+    const middle = { id: 8, position: [0, 11.25, 0], size: [7.5, 2.5, 2.5], rotation: null }
+    const edge = { id: 9, position: [0, 11.25, 5], size: [7.5, 2.5, 2.5], rotation: null }
+    const out = createCutaway().update({ body: body(true), camera, pieces: [middle, edge], dt: 0.05 })
+    expect([...out.hidden].sort()).toEqual([8, 9])
+  })
+
   it('forgets pieces that stop being cutaway candidates without the camera hold', () => {
     const cutaway = createCutaway()
     cutaway.update({ body: body(true), camera, pieces: [roof], dt: 0 })

@@ -63,7 +63,8 @@ export function createCutaway({ near = NEAR, hold = HOLD } = {}) {
         if (!piece.size) continue
         const box = boxOf(piece)
         const dx = Math.max(box.min[0] - bx, 0, bx - box.max[0])
-        const dy = Math.max(box.min[1] - by, 0, by - box.max[1])
+        // Height from the body's whole span, feet to head: a roof on walls four blocks high is as near as one on two.
+        const dy = Math.max(box.min[1] - head, 0, feet - box.max[1])
         const dz = Math.max(box.min[2] - bz, 0, bz - box.max[2])
         if (Math.hypot(dx, dy, dz) > near || box.max[1] <= feet + 0.3) continue // far off, or what it stands on
         const overhead = body.sheltered && box.min[1] >= head - 0.3
