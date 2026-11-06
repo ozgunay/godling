@@ -80,8 +80,8 @@ def test_island_map_and_feelings():
     assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
         "A fire close by halves the cold. You are cold, and it is wearing your health down.")
     assert _how_it_feels(snap([ground()], attrs={"Drowning": True})) == (
-        "You are in the sea and cannot climb out: the water is drowning you, and you will wake at the start spot in "
-        "the middle of the island.")
+        "You are in the sea and cannot climb out: the water is drowning you. If it drowns you, you die, and come back "
+        "to life at the start spot in the middle of the island.")
 
 
 def test_prompts(world, tmp_path):

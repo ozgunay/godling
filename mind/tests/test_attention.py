@@ -184,16 +184,21 @@ def test_notices_the_sea(mem):
     with pytest.raises(Interrupted):
         a.on_step(snap([ground()], attrs={"Drowning": True}, me=(-117, -1.8, -50)))
     assert [e["text"] for e in a.take_events()] == [
-        "You have slipped into the sea and cannot climb back out: the water is drowning you, and you will wake at the "
-        "start spot in the middle of the island"]
+        "You have slipped into the sea and cannot climb back out: the water is drowning you. If it drowns you, you die, "
+        "and come back to life at the start spot in the middle of the island"]
     a.on_step(snap([ground()], attrs={"Drowning": True}, me=(-117, -1.8, -50)))  # still drowning: said once
     assert a.take_events() == []
     with pytest.raises(Interrupted):
-        a.on_step(snap([ground()], attrs={"Drowned": 1, "Faints": 1}, me=(15, 2.5, -27.5)))
-    assert [e["text"] for e in a.take_events()] == [
-        "You drowned in the sea, and woke at the start spot at (15, -28), weak and half fed; what you held went down "
-        "with you"]
-    a.on_step(snap([ground()], attrs={"Drowned": 1, "Ashore": 1}, me=(-117, 2.4, -46)))  # not salient enough to stop
+        a.on_step(snap([ground()], attrs={"Drowned": 1, "Deaths": 1, "DiedOf": "Sea", "Dead": True, "DeadFor": 30},
+                       me=(-117, -1.8, -50)))
+    assert [e["text"] for e in a.take_events()] == [  # drowned: it died of the sea (DEATH), said once, by the death
+        "You died of drowning in the sea. Your body lies where it fell; you will come back to life at the start in "
+        "about 30s"]
+    with pytest.raises(Interrupted, match="You have come back to life at the start"):
+        a.on_step(snap([ground()], attrs={"Drowned": 1, "Deaths": 1, "DiedOf": "Sea"}, me=(15, 2.5, -27.5)))
+    a.take_events()
+    # not salient enough to stop
+    a.on_step(snap([ground()], attrs={"Drowned": 1, "Deaths": 1, "Ashore": 1}, me=(-117, 2.4, -46)))
     assert [e["text"] for e in a.take_events()] == [
         "You hung on the edge of the beach over the sea, and found yourself back on the sand at (-117, -46)"]
 

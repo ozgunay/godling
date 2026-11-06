@@ -608,7 +608,8 @@ class Skills:
             if snap.me[1] < 0.8:  # in the water: the island's edge is too high to climb back onto (main.lua THE SEA)
                 self.world.act("Stop")
                 raise Stuck("fell off the edge into the sea: you cannot climb back out, and the water is drowning you; "
-                            "you will wake at the start spot in the middle of the island")
+                            "if it drowns you, you die, and come back to life at the start spot in the middle of the "
+                            "island")
             dist = hdist(snap.me, (x, 0, z))
             if dist < best - 0.05:
                 best, last_progress = dist, time.time()

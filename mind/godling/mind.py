@@ -158,8 +158,8 @@ def _how_it_feels(snap):
     """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
     parts = []
     if snap.drowning:  # main.lua THE SEA
-        parts.append("You are in the sea and cannot climb out: the water is drowning you, and you will wake at the "
-                     "start spot in the middle of the island")
+        parts.append("You are in the sea and cannot climb out: the water is drowning you. If it drowns you, you die, "
+                     "and come back to life at the start spot in the middle of the island")
     if snap.wind >= 0.75:
         parts.append("A storm wind is blowing")
     if snap.rain >= 0.3:
