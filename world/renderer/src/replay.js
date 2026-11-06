@@ -34,7 +34,9 @@ function hudOf(obs) {
   if (c.GodlingHealth !== undefined) {
     out.godling = { health: c.GodlingHealth, hunger: c.GodlingHunger, wet: c.GodlingWet || 0, cold: Boolean(c.GodlingCold),
       bracing: Boolean(c.GodlingBracing), knockedDown: Boolean(c.GodlingKnockedDown),
-      drowning: Boolean(c.GodlingDrowning) }
+      drowning: Boolean(c.GodlingDrowning),
+      dead: Boolean(c.GodlingDead), deadFor: c.GodlingDeadFor || 0, diedOf: c.GodlingDiedOf || '', deaths: c.GodlingDeaths || 0,
+      scorched: c.GodlingScorched || 0 }
   }
   return out
 }
@@ -213,6 +215,7 @@ export function createReplay({ onFrame, onReset, tell, assetBase, defaultAssetBa
 
   return {
     get active() { return active },
+    get time() { return playhead }, // effects use recorded time too: paused, sped up, or waiting for a chunk
     step,
     // From the screen: { action: 'start' | 'seek' | 'segments' | 'live', … }, and speed, paused, base, remote and
     // remoteUntil whatever the action.

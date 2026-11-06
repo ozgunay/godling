@@ -15,7 +15,7 @@ from .learned import SkillError
 from .discovery import EYE, FOG_HIDES, SIGHT
 from .house import Grid, assess, at, layout as house_layout, outside_of, plan as house_plan, ring
 from .structures import pieces_of, terrain_of
-from .world import BODY_CENTRE_Y, CUBE, Snapshot, hdist
+from .world import BODY_CENTRE_Y, CUBE, Snapshot, death_cause, hdist
 
 ANSWER_SHAPE = {
     "thought": "1-2 sentences: what you notice, remember or wonder (viewers see this)",
@@ -158,8 +158,8 @@ def _how_it_feels(snap):
     """The weather on the body, as the body feels it (ADR-010): rain, being soaked, the cold, and what shelters it."""
     parts = []
     if snap.drowning:  # main.lua THE SEA
-        parts.append("You are in the sea and cannot climb out: the water is drowning you, and you will wake at the "
-                     "start spot in the middle of the island")
+        parts.append("You are in the sea and cannot climb out: the water is drowning you. If it drowns you, you die, "
+                     "and come back to life at the start spot in the middle of the island")
     if snap.wind >= 0.75:
         parts.append("A storm wind is blowing")
     if snap.rain >= 0.3:
@@ -338,8 +338,10 @@ settles into a grid of cells 2.5 apart. Things you can build with: stone blocks,
 off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back) and
 which sometimes wash up on the beach; boulders, which are very heavy. The ladder is three blocks tall.
 Pieces you set down can be turned a quarter round or stood on end, and fastened in place, like mortar.
-Your body grows hungry. With nothing left in you, you lose health, and with no health you faint. Lightning, or a
-stone falling from the sky, hurts you if you are close when it strikes. Fed at least half full, you heal. You eat what
+Your body grows hungry. With nothing left in you, you lose health, and with no health you die. You come back to life
+at the start, whole but half fed, and what you carried lies where you fell; but dying is a failure, to be avoided
+whatever it takes. Lightning, or a stone falling from the sky, hurts you if you are close when it strikes. Fed at
+least half full, you heal. You eat what
 you hold. Coconuts grow on the palms; fish swim in the shallows off the beach. Cooked fish fills you far more than raw.
 Fire is made as people make it without matches: hold your spear and rub it hard against a log lying on the ground,
 over and over, with something dry and fine right beside the log for tinder (a coconut's dry husk). The wood grows warm,
@@ -519,7 +521,8 @@ thought and in that project's intention."""
             f"{(held.name + (f' ({held.look})' if held.look else '')) if held else 'nothing'}.",
             *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
-               + (f"; you have fainted {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
+               + (f"; you have died {snap.deaths} time{'s' if snap.deaths != 1 else ''}"
+                  + (f", the last of {death_cause(snap.died_of)}" if snap.died_of else "") if snap.deaths else "")
                + "."] if snap.hunger is not None else []),
             *([_how_it_feels(snap)] if _how_it_feels(snap) else []),
             f"Others: {others}.",
@@ -793,6 +796,32 @@ thought and in that project's intention."""
         self.memory.save()
         self.memory.flush()
         return ok
+
+    def reflect_on_death(self, snap, report):
+        """Born again after dying (main.lua DEATH): the mind is told what happened, facts only, and draws its own
+        lessons. They are kept at the highest importance, so they come back whenever the same danger shows (memory
+        recall weighs importance), and the next plan hears of the death."""
+        user = f"""You died, and have just come back to life at the start.
+{report}
+
+Think about what led to your death, and what you will do differently so that it never happens again. Reply with ONE
+json object: {{"lessons": [{{"about": "subject", "text": "a durable lesson in your own words"}}] (one to three),
+"feeling": "one sentence a viewer could read about coming back from death"}}"""
+        reply = self.llm.complete_json(f"{self.soul}\n\nYou are {self.name}.", user, purpose="death")
+        lessons = []
+        for lesson in reply.get("lessons") or []:
+            about, text = (lesson.get("about", ""), lesson.get("text", "")) if isinstance(lesson, dict) else ("", str(lesson))
+            if str(text).strip():
+                lessons.append({"about": str(about), "text": str(text).strip()})
+                self.memory.note(str(text).strip(), about=str(about) or "death", tick=snap.tick, importance=5)
+        self.memory.save()
+        cause = death_cause(snap.died_of)
+        self.notes.append(f"You died of {cause} and came back to life at the start"
+                          + (f"; your lesson: {lessons[0]['text']}" if lessons else "") + ".")
+        self.last_outcome = f"You died of {cause}, and have come back to life at the start."
+        self.log(kind="death", cause=snap.died_of, deaths=snap.deaths, lessons=lessons,
+                 feeling=str(reply.get("feeling", ""))[:300])
+        return lessons
 
     def sleep(self, snap):
         """Consolidate: episodes -> digest and intentions; facts rewritten per subject (merge, resolve)."""

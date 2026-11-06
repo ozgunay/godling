@@ -158,6 +158,21 @@ describe('the viewer screen', () => {
     expect($('.b-note .get').textContent).toMatch(/^Next note in 0:/)
   })
 
+  it('says when Godling lies dead, what killed it, when it comes back, and how often it has died', async () => {
+    const dead = panelStatus({ godling: { health: 0, hunger: 10, wet: 0, cold: true, bracing: false, knockedDown: true,
+      dead: true, deadFor: 23, diedOf: 'HungerAndCold', deaths: 2 } })
+    const back = panelStatus({ godling: { health: 100, hunger: 50, wet: 0, dead: false, deaths: 2, diedOf: 'HungerAndCold' } })
+    const odd = panelStatus({ godling: { health: 0, dead: true, deadFor: 0, diedOf: 'Quicksand', deaths: 1 } })
+    const { $, tick } = await boot({ statuses: [dead, back, odd] })
+    const states = () => [...document.querySelectorAll('.b-vitals .state')].map((s) => s.textContent)
+    expect(states()).toEqual(['Died of hunger and cold · back in 23 s', '2 deaths'], 'dead: nothing else about the body')
+    await tick(1500)
+    expect(states()).toEqual(['2 deaths'])
+    await tick(1500)
+    expect(states()).toEqual(['Died of quicksand', '1 death'])
+    expect($('.b-vitals .hearts').getAttribute('aria-label')).toBe('Health 0 of 100')
+  })
+
   it('switches the walls mode with one small button, cutaway or walls up, and remembers it', async () => {
     const { $, view, told } = await boot()
     const walls = $('.b-camera .walls')
@@ -374,10 +389,10 @@ describe('the viewer screen', () => {
     await tick(0)
     expect(posts.at(-1).body).toMatchObject({ power: 'Regrow' })
     expect(posts.at(-1).body.at).toBeUndefined()
-    slot('Lightning').click()
+    slot('Storm').click()
     $('.b-aim .cancel').click()
     expect($('.b-aim').hidden).toBe(true)
-    slot('Lightning').click()
+    slot('Storm').click()
     dispatchEvent(key('keydown', 'Escape', { key: 'Escape' }))
     expect($('.b-aim').hidden).toBe(true)
     $('.b-aim .get').click() // nothing picked: nothing called
@@ -385,13 +400,42 @@ describe('the viewer screen', () => {
     expect(posts.at(-1).body.power).toBe('Regrow')
   })
 
+  it("aims a storm's three strikes one by one, marks each, and lets the sky choose the rest", async () => {
+    const { slot, $, told, posts, fromIsland, tick } = await boot()
+    slot('Storm').click()
+    expect($('.b-aim .words').textContent).toBe('Click where strike 1 of 3 should land')
+    expect($('.b-aim .get').textContent).toBe('Let the sky choose')
+    fromIsland({ type: 'godling-aim-hover', atGodling: true })
+    expect($('.b-aim .words').textContent).toBe('On Godling: a strike here leaves it with half a heart')
+    fromIsland({ type: 'godling-aim-hover', atGodling: false })
+    expect($('.b-aim .words').textContent).toBe('Click to strike here (1 of 3)')
+    fromIsland({ type: 'godling-aimed', x: 1, y: 2.5, z: 2 })
+    expect(told.at(-2)).toMatchObject({ type: 'godling-aim-marks', spots: [{ x: 1, y: 2.5, z: 2 }] })
+    expect(told.at(-1)).toMatchObject({ type: 'godling-aim', power: 'Storm' }) // and it aims the next
+    expect($('.b-aim .words').textContent).toBe('Click where strike 2 of 3 should land')
+    expect($('.b-aim .get').textContent).toBe('Let the sky choose the rest')
+    fromIsland({ type: 'godling-aimed', x: 3, y: 0, z: 4 })
+    fromIsland({ type: 'godling-aimed', x: '5', y: 0, z: 6 })
+    await tick(0)
+    expect(posts.at(-1).body).toMatchObject({ power: 'Storm', spots: [[1, 2], [3, 4], [5, 6]] })
+    expect(posts.at(-1).body.at).toBeUndefined()
+    expect($('.b-aim').hidden).toBe(true)
+    expect(told.some((m) => m.type === 'godling-aim-marks' && m.spots.length === 0)).toBe(true) // the marks go
+    await tick(3000)
+    slot('Storm').click()
+    fromIsland({ type: 'godling-aimed', x: 7, y: 0, z: 8 })
+    $('.b-aim .get').click() // one picked: the sky picks the other two
+    await tick(0)
+    expect(posts.at(-1).body).toMatchObject({ power: 'Storm', spots: [[7, 8]] })
+  })
+
   it('cools an aimed power, and the note box closes the aim', async () => {
     const { slot, $, tick } = await boot({ answers: { 'api/power': { ok: false, text: 'no', wait: 90 } } })
-    slot('Lightning').click()
+    slot('Storm').click()
     $('.b-aim .get').click()
     await tick(0)
-    slot('Lightning').click()
-    expect($('.b-say').textContent).toMatch(/Lightning is not ready yet: 1:30/)
+    slot('Storm').click()
+    expect($('.b-say').textContent).toMatch(/Storm is not ready yet: 1:30/)
     slot('Stone').click()
     slot('Note').click() // the note box takes the aim's place
     expect($('.b-aim').hidden).toBe(true)

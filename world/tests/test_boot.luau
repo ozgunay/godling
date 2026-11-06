@@ -162,9 +162,25 @@ T.test("the island is put back as a run left it (sky.restore)", function()
     local g = w.godling()
     T.near(e.hrp(g).Position.X, 1, 1e-9, "Godling stands where it stood")
     T.eq(g:GetAttribute("Health"), 60)
+    T.eq(g:GetAttribute("Deaths"), nil, "older saves need no death metadata")
     local again = e.player("Godling2")
     T.near(e.hrp(again).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "only once")
     w.skyPlayer() -- the guest panel never takes Godling's body
+    -- Stopped while Godling lay dead: the save has no place for the body (run_godling.py), so it is born again at the
+    -- start spot, with the vitals the save gives.
+    local dead = T.boot({ patch = { { "sky.saved = nil -- ISLAND SAVE", (save:gsub("\n%s*", " "):gsub(
+        '%["pos"%] = {1.0, 2.55, 2.0}, %["health"%] = 60.0, %["hunger"%] = 40.0',
+        '["health"] = 100.0, ["hunger"] = 50.0, ["deaths"] = 3, ["died_of"] = "Cold", ["died_at"] = "3.0,4.0"')) } } })
+    local born = dead.godling()
+    T.near(dead.e.hrp(born).Position.X, dead.x.PLAYER_SPAWN_POSITION.X, 1e-9, "at the start spot")
+    T.eq(born:GetAttribute("Hunger"), 50)
+    T.eq(born:GetAttribute("Health"), 100)
+    T.no(born:GetAttribute("Dead"), "the saved corpse is reborn")
+    T.eq(born:GetAttribute("Deaths"), 3, "the death count survives restart")
+    T.eq(born:GetAttribute("DiedOf"), "Cold")
+    T.eq(born:GetAttribute("DiedAt"), "3.0,4.0")
+    dead.x.hurt(born, 200, "Meteor")
+    T.eq(born:GetAttribute("Deaths"), 4, "the next death continues the count")
 end)
 
 return T.done("test_boot")

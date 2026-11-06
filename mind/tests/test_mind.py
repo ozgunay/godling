@@ -80,8 +80,8 @@ def test_island_map_and_feelings():
     assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
         "A fire close by halves the cold. You are cold, and it is wearing your health down.")
     assert _how_it_feels(snap([ground()], attrs={"Drowning": True})) == (
-        "You are in the sea and cannot climb out: the water is drowning you, and you will wake at the start spot in "
-        "the middle of the island.")
+        "You are in the sea and cannot climb out: the water is drowning you. If it drowns you, you die, and come back "
+        "to life at the start spot in the middle of the island.")
 
 
 def test_prompts(world, tmp_path):
@@ -120,7 +120,7 @@ def test_situation_lists_what_matters(world, tmp_path):
     mem.add_structure("tower", ["Block_1", "Block_2"], (5, 0), {"Block_1": (5, 1.25, 0), "Block_2": (5, 3.75, 0)})
     mem.state["digest"] = "I washed up here."
     mem.set_intentions(["build a hut"])
-    island.attrs.update(Hunger=50, Health=90, Faints=1, Wet=20)
+    island.attrs.update(Hunger=50, Health=90, Deaths=1, DiedOf="HungerAndCold", Wet=20)
     island.clock = {"TimeOfDay": 6.5}
     island.held = "Log_4"
     mind = make_mind(world, tmp_path, FakeLLM(), memory=mem)
@@ -130,7 +130,8 @@ def test_situation_lists_what_matters(world, tmp_path):
     text = mind.situation(island.snap(), [{"text": "A thing happened", "entities": ["Block_3"]}],
                           [{"agent_name": "Ann", "content": "hello"}], doing=[{"goal": "a wall"}])
     assert "It is 06:30, dawn." in text and "holding Log_4" in text
-    assert "You are 50% fed, with health 90 of 100; you have fainted 1 time." in text
+    assert ("You are 50% fed, with health 90 of 100; you have died 1 time, the last of hunger and the cold "
+            "together.") in text
     assert "You are wet (20%)." in text and "Fires burning: Fire_1 (2.0, -2.0)." in text
     assert "Fish swimming in the shallows nearest you: Fish_1 (0.0, 20.0)." in text
     assert "Lines you drew in the sand (2, oldest first): (2, 2)-(3, 3); (0, 0)-(1, 1)." in text
@@ -150,11 +151,11 @@ def test_situation_lists_what_matters(world, tmp_path):
 
 def test_situation_does_not_describe_drowning_as_hunger(world, tmp_path):
     island, _, _ = world
-    island.attrs.update(Hunger=50, Health=30, Faints=1, Drowned=1)
+    island.attrs.update(Hunger=50, Health=100, Deaths=1, DiedOf="Sea", Drowned=1)
     mind = make_mind(world, tmp_path, FakeLLM())
     text = mind.situation(island.snap(), [], [])
-    assert "you have fainted 1 time" in text
-    assert "fainted from hunger" not in text
+    assert "you have died 1 time, the last of drowning in the sea" in text  # its cause, never hunger by default
+    assert "hunger" not in text.split("you have died")[1].split(".")[0]
 
 
 def test_situation_with_discovery_and_many_loose_things(world, tmp_path):
@@ -653,6 +654,33 @@ def test_knows_and_sees(world, tmp_path):
     mind.log(kind="x")
     assert Mind(FakeLLM(), NativeMemory(tmp_path / "z"), "", body, library).log(kind="y") is None
     assert mind_module.MAX_STEPS == 12 and BODY_CENTRE_Y
+
+
+def test_reflect_on_death(world, tmp_path):
+    """Born again, the mind draws its own lessons from the death report: kept at the highest importance, told to the
+    next plan, and logged (with the feeling a viewer can read)."""
+    island, body, library = world
+    island.attrs.update(Deaths=2, DiedOf="Storm")
+    llm = FakeLLM({"lessons": [{"about": "storm", "text": "When the sky darkens, get under the roof"}, "keep moving",
+                               {"about": "x", "text": "  "}], "feeling": "The sky is not to be trusted"})
+    mind = make_mind(world, tmp_path, llm)
+    lessons = mind.reflect_on_death(island.snap(), "You died of lightning in a storm.")
+    assert lessons == [{"about": "storm", "text": "When the sky darkens, get under the roof"},
+                       {"about": "", "text": "keep moving"}]
+    call = llm.calls[0]
+    assert call["purpose"] == "death" and "You died of lightning in a storm." in call["user"]
+    assert "I am a castaway." in call["system"]
+    kept = {e["text"]: e for e in mind.memory.episodes}
+    assert kept["When the sky darkens, get under the roof"]["importance"] == 5
+    assert kept["keep moving"]["entities"] == ["death"], "a lesson without a subject is about death"
+    assert mind.notes[-1] == ("You died of lightning in a storm and came back to life at the start; your lesson: "
+                              "When the sky darkens, get under the roof.")
+    assert mind.last_outcome == "You died of lightning in a storm, and have come back to life at the start."
+    assert mind.logs[-1] == {"kind": "death", "cause": "Storm", "deaths": 2, "lessons": lessons,
+                             "feeling": "The sky is not to be trusted"}
+    quiet = make_mind(world, tmp_path, FakeLLM({}))
+    assert quiet.reflect_on_death(island.snap(), "report") == []
+    assert quiet.notes[-1] == "You died of lightning in a storm and came back to life at the start."
 
 
 def test_situation_tells_what_a_meteors_stone_and_its_iron_look_like(world, tmp_path):

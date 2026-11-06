@@ -51,6 +51,18 @@ class WorldError(RuntimeError):
     pass
 
 
+CAUSES = {  # main.lua DEATH's DiedOf, in the mind's words
+    "Hunger": "hunger", "Cold": "the cold", "HungerAndCold": "hunger and the cold together",
+    "Lightning": "lightning", "Meteor": "a stone falling from the sky", "Storm": "lightning in a storm",
+    "Sea": "drowning in the sea",
+}
+
+
+def death_cause(died_of):
+    """What killed the body, in words (an unknown cause as the world named it)."""
+    return CAUSES.get(died_of, str(died_of or "something").lower())
+
+
 def hdist(a, b):
     return math.hypot(a[0] - b[0], a[2] - b[2])
 
@@ -194,7 +206,11 @@ class Snapshot:
         self.last_result = attrs.get("LastActionResult", "")
         self.hunger = attrs.get("Hunger")  # 100 full, 0 starving (main.lua SURVIVAL)
         self.health = attrs.get("Health")
-        self.faints = attrs.get("Faints") or 0
+        # Death (main.lua DEATH): it lies dead for a while, then is born again at the start spot. DiedOf names the cause.
+        self.dead, self.deaths = bool(attrs.get("Dead")), attrs.get("Deaths") or 0
+        self.died_of, self.dead_for = attrs.get("DiedOf") or "", attrs.get("DeadFor") or 0
+        at = str(attrs.get("DiedAt") or "").split(",")
+        self.died_at = (float(at[0]), float(at[1])) if len(at) == 2 else None
         self.hurts, self.hurt_by = attrs.get("Hurts") or 0, attrs.get("Hurt")  # what the sky did to the body last
         self.freed = attrs.get("Freed") or 0  # times the world moved the body out from inside a piece
         # The sea (main.lua THE SEA): in the water and drowning now; times it drowned (and woke at the start spot); times
@@ -236,6 +252,19 @@ class Snapshot:
         self.meteor_at = (a.get("MeteorX") or 0, 0, a.get("MeteorZ") or 0)
         self.meteor_did = {k: int(a.get("Meteor" + k) or 0) for k in ("Smashed", "Thrown", "Unfastened", "Felled", "Hurt")}
         self.bracing, self.knocked_down = bool(attrs.get("Bracing")), bool(attrs.get("KnockedDown"))
+        # A storm called down (main.lua THE STORM): its phase ("warning", "storm", or "" when there is none), its
+        # number, and the spots where the air crackles; on the body, how often a strike hit it and how long it stays
+        # charred.
+        self.storm_phase, self.storm_id = str(a.get("StormPhase") or ""), a.get("StormId")
+        self.storm_spots = []
+        for spot in str(a.get("StormSpots") or "").split(";"):
+            xz = spot.split(",")
+            if len(xz) == 2:
+                try:
+                    self.storm_spots.append((float(xz[0]), float(xz[1])))
+                except ValueError:
+                    pass
+        self.struck, self.scorched = attrs.get("Struck") or 0, attrs.get("Scorched") or 0
         self._held, self._held_known = None, False
 
     @property

@@ -2059,11 +2059,10 @@ end
 -- SURVIVAL (the user's wish, after Cast Away; ADR-007): hunger, coconuts, a carved spear, fish, and a volleyball
 --------------------------------------------------------------------------------
 
--- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling faints, drops what it
--- holds, and wakes at the start spot half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
+-- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling dies (DEATH, below).
+-- A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
 local HUNGER_EMPTY_SECONDS, STARVE_SECONDS = 3600, 1800
 local FOOD = { Coconut = 15, Catch = 20, CookedCatch = 50 }
-local FAINT_HUNGER, FAINT_HEALTH = 50, 30
 -- Hurt and healing: lightning striking close by, or a stone from the sky landing close by, takes health. Fed at
 -- least half full, the body mends: from none to whole in about half an hour.
 local HARM = {
@@ -2080,32 +2079,107 @@ local FISH_COUNT, FISH_SPEED, FISH_Y, FISH_SIZE = 12, 1.6, OCEAN_TOP_Y + 0.15, V
 local CATCH_CHANCE, FISH_RESPAWN = 0.6, 60
 local survivalCounters = { coconuts = 0, spears = 0, fish = 0, catches = 0 }
 local surviving = {} -- player -> { hunger, health, beat }
+-- Body controllers are declared here so death can stop every motion already in progress, including a ladder or step.
+local climbers = {} -- player -> { path = {Vector3...}, times = {seconds per leg}, leg, t }
 
 local function setVitals(player, s)
     player:SetAttribute("Hunger", math.floor(s.hunger * 10 + 0.5) / 10)
     player:SetAttribute("Health", math.floor(s.health * 10 + 0.5) / 10)
     local humanoid = getHumanoid(player)
     if humanoid then
-        humanoid.Health = math.max(1, s.health) -- the viewers' HP; fainting, not the engine's death, handles none
+        humanoid.Health = math.max(1, s.health) -- the viewers' HP; the world's death (DEATH), not the engine's, handles none
     end
 end
 
-local function faint(player, s)
-    local held = releaseHeldBlock(player)
-    if held then -- it drops where Godling fell
-        held.Anchored = false
-        held.CanCollide = true
+-- DEATH (the user's wish, 2026-11-06; it replaced fainting). At no health Godling dies: what it holds drops where it
+-- fell, and the body lies there DEAD_SECONDS, taking nothing in (no inputs, no hurt, no hunger). Then it is born again
+-- at the start spot, whole but half fed: dying is never a meal. The body carries Dead, DeadFor (seconds left), DiedOf
+-- (the cause), DiedAt ("x,z") and Deaths (how often), for the renderer (it falls and lies, fades, and comes back
+-- glowing), for viewers, and for the mind, which is told what killed it and learns from it.
+local death = (function()
+    local DEAD_SECONDS, REBORN_HEALTH, REBORN_HUNGER = 30, 100, 50
+    local dead = {} -- player -> { left = seconds, cause }
+    local diedAt = {} -- player -> os.clock() of its last death (the disasters' mercy rule)
+
+    local function die(player, s, cause)
+        if dead[player] then
+            return
+        end
+        local held = releaseHeldBlock(player)
+        if held then -- it drops where Godling fell, and lies there for it to come back for
+            held.Anchored = false
+            held.CanCollide = true
+        end
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:CancelMoveTo()
+        end
+        climbers[player], sky.turners[player] = nil, nil
+        player:SetAttribute("Climbing", false)
+        sky.quake.releaseBody(player)
+        s.health = 0
+        dead[player] = { left = DEAD_SECONDS, cause = cause }
+        diedAt[player] = os.clock()
+        local hrp = getHumanoidRootPart(player)
+        if hrp then
+            hrp.Anchored = true -- the corpse stays where it fell, even on a slope or during a quake
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+        player:SetAttribute("Dead", true)
+        player:SetAttribute("DeadFor", DEAD_SECONDS)
+        player:SetAttribute("DiedOf", cause)
+        player:SetAttribute("DiedAt", hrp and string.format("%.1f,%.1f", hrp.Position.X, hrp.Position.Z) or "")
+        player:SetAttribute("Deaths", (player:GetAttribute("Deaths") or 0) + 1)
+        setVitals(player, s)
+        gesture(player, "Stagger") -- it falls; the renderer keeps it down while Dead
+        print(string.format("DIED %s of %s%s", player.Name, cause,
+            hrp and string.format(" at (%.1f, %.1f)", hrp.Position.X, hrp.Position.Z) or ""))
     end
-    resetPlayerToSpawn(player)
-    s.hunger, s.health = FAINT_HUNGER, FAINT_HEALTH
-    player:SetAttribute("Faints", (player:GetAttribute("Faints") or 0) + 1)
-    setVitals(player, s)
-    gesture(player, "WakeUp") -- getting up off its back at the start spot
-end
+
+    local function rise(player, s)
+        dead[player] = nil
+        resetPlayerToSpawn(player)
+        local hrp = getHumanoidRootPart(player)
+        if hrp then
+            hrp.Anchored = false
+        end
+        s.health, s.hunger = REBORN_HEALTH, REBORN_HUNGER
+        player:SetAttribute("Dead", false)
+        player:SetAttribute("DeadFor", 0)
+        setVitals(player, s)
+        gesture(player, "WakeUp") -- getting up off its back at the start spot
+        print(string.format("REBORN %s at the start spot", player.Name))
+    end
+
+    -- Each frame, for a body with vitals: true while it lies dead (nothing else of SURVIVAL happens to it then).
+    local function tick(player, s, dt)
+        local d = dead[player]
+        if not d then
+            return false
+        end
+        d.left = d.left - dt
+        if d.left <= 0 then
+            rise(player, s)
+        else
+            local left = math.ceil(d.left)
+            if player:GetAttribute("DeadFor") ~= left then
+                player:SetAttribute("DeadFor", left)
+            end
+        end
+        return true
+    end
+
+    return { die = die, tick = tick, SECONDS = DEAD_SECONDS, REBORN_HUNGER = REBORN_HUNGER,
+        is = function(player) return dead[player] ~= nil end,
+        since = function(player) -- seconds since it last died; forever if it never has (since the world started)
+            return diedAt[player] and os.clock() - diedAt[player] or math.huge
+        end }
+end)()
 
 local function hurt(player, amount, cause)
     local s = surviving[player]
-    if not s then
+    if not s or death.is(player) then
         return
     end
     s.health = math.max(0, s.health - amount)
@@ -2113,7 +2187,7 @@ local function hurt(player, amount, cause)
     player:SetAttribute("Hurts", (player:GetAttribute("Hurts") or 0) + 1)
     print(string.format("HURT %s by %s: health %.0f", player.Name, cause, s.health))
     if s.health <= 0 then
-        faint(player, s)
+        death.die(player, s, cause)
     else
         setVitals(player, s)
     end
@@ -2141,7 +2215,7 @@ local function tickSurvival(dt)
             s = { hunger = player:GetAttribute("Hunger") or 100, health = player:GetAttribute("Health") or 100, beat = 0 }
             surviving[player] = s
         end
-        if s then
+        if s and not death.tick(player, s, dt) then
             if s.hunger > 0 then
                 s.hunger = math.max(0, s.hunger - dt * 100 / HUNGER_EMPTY_SECONDS)
             else
@@ -2153,8 +2227,8 @@ local function tickSurvival(dt)
                 s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and HARM.houseHeals or 1))
             end
             s.beat = s.beat + dt
-            if s.health <= 0 then
-                faint(player, s)
+            if s.health <= 0 then -- what wore it down: the mind is told
+                death.die(player, s, s.hunger <= 0 and s.cold and "HungerAndCold" or s.hunger <= 0 and "Hunger" or "Cold")
             elseif s.beat >= 1 then -- attributes once a second, not every frame
                 s.beat = 0
                 setVitals(player, s)
@@ -2630,7 +2704,7 @@ local tickWeather = (function()
     end
 
     local function tickSkies(dt, hour) -- the storm's lightning and the morning fog
-        if weather.rain >= STORM_RAIN then
+        if weather.rain >= STORM_RAIN and not weather.held then -- a storm called down strikes only where it was aimed
             weather.storm = weather.storm - dt
             if weather.storm <= 0 then
                 weather.storm = between(STORM_MIN, STORM_MAX)
@@ -2888,7 +2962,8 @@ local tickWeather = (function()
             nextWeather()
         end
         -- A wet spell swells and eases (0.6 to 1) through its days; a shower comes down hard.
-        local target = weather.raining and (weather.spell and 0.8 + 0.2 * math.sin(weather.clock / 170) or 1) or 0
+        local target = weather.held -- a storm called down (sky.storm) holds the rain where it wants it
+            or weather.raining and (weather.spell and 0.8 + 0.2 * math.sin(weather.clock / 170) or 1) or 0
         weather.rain = weather.rain + math.clamp(target - weather.rain, -dt / RAIN_FADE, dt / RAIN_FADE)
         local hour = (START_HOUR + clockSeconds / DAY_SECONDS * 24) % 24
         tickSkies(dt, hour)
@@ -2960,7 +3035,18 @@ local tickWeather = (function()
         end
     end
 
-    return tickWeather
+    -- Called each frame as before; `hold(level)` lets a storm called down (sky.storm) keep the rain at `level` (nil
+    -- lets go: the weather goes back to its own, fading as a shower does). A callable table: no new main-chunk local.
+    return setmetatable({
+        hold = function(level)
+            weather.held = level
+        end,
+        rain = function()
+            return weather.rain
+        end,
+    }, { __call = function(_, dt)
+        tickWeather(dt)
+    end })
 end)()
 
 -- The volleyball that washed up with the raft, as Wilson did. It has no name: Godling may give it one.
@@ -3313,8 +3399,6 @@ local function fasten(player, inputData)
     player:SetAttribute("LastActionResult", "FastenSuccess:fixed")
 end
 
-local climbers = {} -- player -> { path = {Vector3...}, times = {seconds per leg}, leg, t }
-
 -- Is there room for a standing body at `spot` with its feet at `feetY`? Nothing solid but the ladder in the way.
 local function bodyFits(player, spot, feetY, ladder)
     local params = OverlapParams.new()
@@ -3557,6 +3641,10 @@ if AgentInputService then
     AgentInputService.InputReceived:Connect(function(player, inputType, inputData)
         local humanoid = getHumanoid(player)
         if not humanoid then return end
+        if death.is(player) then -- a dead body does nothing until it is born again (DEATH)
+            player:SetAttribute("LastActionResult", "Dead")
+            return
+        end
 
         if inputType == "MoveTo" and inputData and inputData.position then
             local targetPosition = parsePosition(inputData.position)
@@ -4090,21 +4178,20 @@ sky.quake = (function()
     local REACH, MAX_WOKEN = 60, 200 -- pieces within this of Godling are shaken loose, nearest first
     local MIN_PIECES = 15 -- something worth testing must stand within reach
     local COOLDOWN = 600 -- seconds between disasters in test mode; the paid stream will allow one a day (phase 3)
-    local MERCY_HEALTH, MERCY_AFTER_FAINT = 30, 900 -- no disaster while Godling is this weak, or this soon after a faint
+    local MERCY_HEALTH, MERCY_AFTER_DEATH = 30, 900 -- no disaster while Godling is this weak, or this soon after it died
     local KNOCKDOWN, LET_GO = 2.5, 1.5 -- seconds knocked down; seconds a braced body holds on after the shaking
     local active, lastEnded = nil, -math.huge
     local braced, knocked = {}, {} -- player -> true; player -> when it gets up
-    local faints = {} -- player -> { count, at }: when it last fainted, for the mercy rule
 
     local function shakeable(part) -- blocks, stones and logs (boulders hold where they lie, ADR-009)
         return part:IsA("BasePart") and SNAPPED_ROLES[part:GetAttribute("RenderRole")] and not isCarried(part)
             and not isPlacing(part)
     end
 
-    local function bodies()
+    local function bodies() -- the living: a dead body lies still through a quake (DEATH)
         local out = {}
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and getHumanoidRootPart(player)
             if hrp then
                 out[player] = hrp
             end
@@ -4247,7 +4334,9 @@ sky.quake = (function()
                 if hrp and not climbers[player] and not braced[player] then
                     hrp.Anchored = false
                 end
-                gesture(player, "GetUp") -- from sitting, where Stagger leaves it (WakeUp starts from standing)
+                if not death.is(player) then -- one that died meanwhile gets up only when it is born again
+                    gesture(player, "GetUp") -- from sitting, where Stagger leaves it (WakeUp starts from standing)
+                end
             end
         end
     end
@@ -4270,16 +4359,6 @@ sky.quake = (function()
         return moved, fell
     end
 
-    local function watchFaints()
-        for player in pairs(bodies()) do
-            local n = player:GetAttribute("Faints") or 0
-            local seen = faints[player]
-            if not seen or n > seen.count then
-                faints[player] = { count = n, at = seen and os.clock() or -math.huge }
-            end
-        end
-    end
-
     local function start(godling)
         if active then
             return nil, "AlreadyShaking"
@@ -4288,8 +4367,8 @@ sky.quake = (function()
         if wait > 0 then
             return nil, "TooSoon:" .. math.ceil(wait)
         end
-        local s, f = surviving[godling], faints[godling]
-        if (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) then
+        local s = surviving[godling]
+        if (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH then
             return nil, "GodlingIsWeak"
         end
         local hrp = getHumanoidRootPart(godling)
@@ -4320,7 +4399,6 @@ sky.quake = (function()
     end
 
     local function tick(dt)
-        watchFaints()
         getUp()
         if not active then
             return
@@ -4396,12 +4474,18 @@ sky.quake = (function()
     end
 
     local function weak(godling) -- the mercy rule, for every disaster
-        local s, f = surviving[godling], faints[godling]
-        return (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) or false
+        local s = surviving[godling]
+        return (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH
+    end
+
+    local function releaseBody(player) -- death ends a living body's brace or knock-down without getting it up
+        braced[player], knocked[player] = nil, nil
+        player:SetAttribute("Bracing", false)
+        player:SetAttribute("KnockedDown", false)
     end
 
     return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
-        knocked = function(player) return knocked[player] ~= nil end }
+        knocked = function(player) return knocked[player] ~= nil end, releaseBody = releaseBody }
 end)()
 
 -- AIMED POWERS (the user's rule, 2026-11-02): viewers choose where a power lands, and only the meteor may land on
@@ -4660,10 +4744,9 @@ function sky.meteor.blast(fall, top)
         local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
         if hrp and Vector3.new(hrp.Position.X - c.X, 0, hrp.Position.Z - c.Z).Magnitude <= HARM.meteorRange
             and math.abs(hrp.Position.Y - c.Y) <= HARM.meteorRange then
-            local faints = player:GetAttribute("Faints") or 0
             hurt(player, HARM.meteor, "Meteor")
             hurtCount = hurtCount + 1
-            if (player:GetAttribute("Faints") or 0) == faints and not climbers[player] and not sky.quake.knocked(player) then
+            if not death.is(player) and not climbers[player] and not sky.quake.knocked(player) then
                 sky.quake.knockDown(player, hrp) -- staggers, sits, and gets up 2.5 s later
             end
         end
@@ -4790,7 +4873,8 @@ function sky.mirrorGodling()
     if not godling then
         return
     end
-    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Drowning" }) do
+    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Drowning", "Dead", "DeadFor",
+        "DiedOf", "Deaths", "Scorched" }) do
         local value = godling:GetAttribute(name)
         if clockPart:GetAttribute("Godling" .. name) ~= value then
             clockPart:SetAttribute("Godling" .. name, value)
@@ -4841,6 +4925,252 @@ function sky.parkGuest()
         end
     end
 end
+
+-- THE STORM (the user's wish, 2026-11-06: it took Lightning's place on the panel; ADR-023). A viewer calls a storm
+-- down and picks three spots for its strikes (`inputData.spots`; the sky picks any left out); the world picks when, and
+-- in which order. First 30 seconds of warning: the sky darkens, a gale gets up, and the three spots crackle on the
+-- ground (StormSpot parts, which Godling sees). Then about two and a half minutes of heavy rain (it slows and soaks,
+-- and puts fires out), with the strikes 20 to 50 s apart, each spot flaring (Charged) 1.5 s before its bolt.
+-- - A palm within PALM_SNAP of a spot takes the bolt and is felled into two logs; open ground keeps a scorch a while.
+-- - It never breaks what Godling built, and a roof over Godling takes the strike (Sheltered, InHouse).
+-- - On Godling (within HIT of the spot as it strikes): it is left with half a heart (FLOOR), or what it had if less,
+--   knocked down, electrocuted for a moment (Struck counts) and charred for a minute (Scorched counts down): the
+--   renderer shows both, and the bolt ends on its head. Close by (within NEAR): 35, never below half a heart, and
+--   knocked down. It never kills. The disasters' mercy rule holds, and one storm at a time, one every 30 minutes.
+sky.storm = (function()
+    local WARN, LAST = 30, 150 -- seconds of warning; seconds of storm after it
+    local FIRST_MIN, FIRST_MAX, GAP_MIN, GAP_MAX = 15, 30, 20, 50 -- the first strike into the storm, and the gaps
+    local CHARGE = 1.5 -- seconds a spot flares before its bolt
+    local SPOTS, PALM_SNAP, HIT, NEAR, FLOOR = 3, 3, 2.5, HARM.lightningRange, 5
+    local SCORCHED, SCORCH_KEPT = 60, 240 -- seconds Godling stays charred; seconds a scorch on the ground lasts
+    local COOLDOWN, ALREADY = 1800, 0.85 -- seconds between storms called down; rain this heavy is a storm already
+    local SKY_FROM, SKY_TO = 12, 45 -- the sky's own picks: palms this far from Godling, as a storm's lightning picks
+    local active, lastStarted = nil, -math.huge
+    local scorches, charred = {}, {} -- { part, gone }; player -> seconds it stays charred
+
+    local function between(lo, hi)
+        return lo + math.random() * (hi - lo)
+    end
+
+    local function standing(t)
+        return t.part and t.part.Parent and t.part:GetAttribute("RenderRole") == "Tree"
+    end
+
+    local function palmAt(x, z) -- the standing palm nearest (x, z), within PALM_SNAP
+        local best, bestDist = nil, PALM_SNAP
+        for _, t in ipairs(trees) do
+            if standing(t) then
+                local d = Vector3.new(t.part.Position.X - x, 0, t.part.Position.Z - z).Magnitude
+                if d <= bestDist then
+                    best, bestDist = t, d
+                end
+            end
+        end
+        return best
+    end
+
+    local function skyPick(hrp, taken) -- a standing palm 12 to 45 from Godling not yet picked, else open ground there
+        local near = {}
+        for _, t in ipairs(trees) do
+            local d = standing(t) and not taken[t]
+                and Vector3.new(t.part.Position.X - hrp.Position.X, 0, t.part.Position.Z - hrp.Position.Z).Magnitude
+            if d and d >= SKY_FROM and d <= SKY_TO then
+                table.insert(near, t)
+            end
+        end
+        if #near > 0 then
+            local t = near[math.random(1, #near)]
+            taken[t] = true
+            return { x = t.part.Position.X, z = t.part.Position.Z }
+        end
+        local angle, r = math.random() * 2 * math.pi, between(SKY_FROM, SKY_TO)
+        return { x = hrp.Position.X + math.cos(angle) * r, z = hrp.Position.Z + math.sin(angle) * r }
+    end
+
+    local function strike(n, spot, k)
+        skyCounter = skyCounter + 1
+        local id = skyCounter
+        local godling = godlingPlayer()
+        local hrp = godling and getHumanoidRootPart(godling)
+        local x, z = spot.x, spot.z
+        local alive = hrp and not death.is(godling)
+        local roofed = alive and ((godling:GetAttribute("Sheltered") or "") ~= ""
+            or godling:GetAttribute("InHouse") == true)
+        -- On Godling first, then a palm beside the spot, else the ground (or the roof, or what was built: unbroken).
+        local hit = alive and not roofed and Vector3.new(hrp.Position.X - x, 0, hrp.Position.Z - z).Magnitude <= HIT
+        local palm = not hit and palmAt(x, z)
+        local y
+        if hit then -- the bolt ends on its head (the body is 5 tall about its middle)
+            x, z, y = hrp.Position.X, hrp.Position.Z, hrp.Position.Y + 2.5
+        elseif palm then
+            x, z, y = palm.part.Position.X, palm.part.Position.Z, palm.part.Position.Y - palm.part.Size.Y / 2
+        else
+            y = surfaceTopAt(x, z, -20, 60)
+        end
+        local d = alive and Vector3.new(hrp.Position.X - x, 0, hrp.Position.Z - z).Magnitude
+        local near = not hit and not roofed and d and d <= NEAR
+        local bolt = skyMarker("SkyBolt_" .. id, Vector3.new(0.35, 30, 0.35), Vector3.new(x, 15, z),
+            Color3.fromRGB(255, 244, 170), "SkyFlash")
+        bolt:SetAttribute("SkyId", id)
+        bolt:SetAttribute("StrikeX", x)
+        bolt:SetAttribute("StrikeY", y or 0)
+        bolt:SetAttribute("StrikeZ", z)
+        table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+        local what
+        if palm then -- the palm comes down as two logs (as Lightning fells one)
+            local mark = skyMark("Lightning", id)
+            local names = fellTree(palm.part, hrp and hrp.Position or Vector3.new(x, 0, z + 1), function(log)
+                mark(log)
+                log:SetAttribute("FromTree", palm.name)
+            end)
+            what = string.format("felled %s into %s", palm.name, table.concat(names, ","))
+        elseif not hit and y then -- a scorch on the ground (or on what stands there: nothing built is broken)
+            local scorch = skyMarker("Scorch_" .. id, Vector3.new(3, 0.04, 3), Vector3.new(x, y + 0.03, z),
+                Color3.fromRGB(30, 26, 22), "Scorch")
+            table.insert(scorches, { part = scorch, gone = os.clock() + SCORCH_KEPT })
+            what = "scorched the ground"
+        else
+            what = hit and "struck Godling" or "struck the sea"
+        end
+        local s = (hit or near) and surviving[godling]
+        if s then
+            local take = math.max(0, s.health - FLOOR) -- never below half a heart
+            if near then
+                take = math.min(HARM.lightning, take)
+            end
+            if take > 0 then
+                hurt(godling, take, "Storm")
+            end
+            if hit then
+                godling:SetAttribute("Struck", (godling:GetAttribute("Struck") or 0) + 1)
+                godling:SetAttribute("Scorched", SCORCHED)
+                charred[godling] = SCORCHED
+            end
+            if not climbers[godling] and not sky.quake.knocked(godling) then
+                sky.quake.knockDown(godling, hrp)
+            end
+            what = what .. string.format(", %s Godling: health %.0f", hit and "on" or "close to", s.health)
+        elseif roofed and d and d <= NEAR then
+            what = what .. ", a roof over Godling took it"
+        end
+        print(string.format("SKY Storm #%d strike %d of %d at (%.1f, %.1f): %s", n, k, SPOTS, x, z, what))
+    end
+
+    local function start(godling, inputData)
+        if active or tickWeather.rain() >= ALREADY then
+            return nil, "AlreadyStorming"
+        end
+        local wait = COOLDOWN - (os.clock() - lastStarted)
+        if wait > 0 then
+            return nil, "TooSoon:" .. math.ceil(wait)
+        end
+        if sky.quake.weak(godling) then
+            return nil, "GodlingIsWeak"
+        end
+        local hrp = getHumanoidRootPart(godling)
+        if not hrp then
+            return nil, "NobodyHere"
+        end
+        local spots, taken = {}, {}
+        local given = inputData and inputData.spots
+        for i = 1, type(given) == "table" and math.min(#given, SPOTS) or 0 do
+            local at = given[i]
+            local x, z, why = sky.aim.read(godling, { at = type(at) == "table" and { x = at.x or at[1], z = at.z or at[2] } })
+            if why then
+                return nil, why
+            end
+            if x then
+                table.insert(spots, { x = x, z = z })
+                local palm = palmAt(x, z)
+                if palm then
+                    taken[palm] = true
+                end
+            end
+        end
+        while #spots < SPOTS do
+            table.insert(spots, skyPick(hrp, taken))
+        end
+        skyCounter = skyCounter + 1
+        local n = skyCounter
+        for k, spot in ipairs(spots) do
+            local top = surfaceTopAt(spot.x, spot.z, -20, 60) or OCEAN_TOP_Y
+            spot.marker = skyMarker(string.format("StormSpot_%d_%d", n, k), Vector3.new(4, 0.06, 4),
+                Vector3.new(spot.x, top + 0.05, spot.z), Color3.fromRGB(150, 190, 255), "StormSpot")
+            spot.marker:SetAttribute("StormId", n)
+            spot.marker:SetAttribute("Charged", false)
+        end
+        for i = #spots, 2, -1 do -- the order the world strikes them in
+            local j = math.random(1, i)
+            spots[i], spots[j] = spots[j], spots[i]
+        end
+        local at = WARN + between(FIRST_MIN, FIRST_MAX)
+        for _, spot in ipairs(spots) do
+            spot.at = at
+            at = at + between(GAP_MIN, GAP_MAX)
+        end
+        active = { n = n, spots = spots, age = 0, struck = 0 }
+        lastStarted = os.clock()
+        tickWeather.hold(1) -- the sky darkens and the rain comes down hard
+        clockPart:SetAttribute("StormId", n)
+        clockPart:SetAttribute("StormPhase", "warning")
+        local where = {}
+        for _, spot in ipairs(spots) do
+            table.insert(where, string.format("%.1f,%.1f", spot.x, spot.z))
+        end
+        clockPart:SetAttribute("StormSpots", table.concat(where, ";"))
+        print(string.format("SKY Storm #%d called: strikes at (%s), the first in %.0fs", n,
+            table.concat(where, "), ("), spots[1].at))
+        return n
+    end
+
+    local function tick(dt)
+        for player, left in pairs(charred) do -- the char fades from a body struck a minute ago
+            left = left - dt
+            charred[player] = left > 0 and left or nil
+            local seconds = math.max(0, math.ceil(left))
+            if player:GetAttribute("Scorched") ~= seconds then
+                player:SetAttribute("Scorched", seconds)
+            end
+        end
+        local i = 1
+        while i <= #scorches do
+            if os.clock() >= scorches[i].gone then
+                scorches[i].part:Destroy()
+                table.remove(scorches, i)
+            else
+                i = i + 1
+            end
+        end
+        if not active then
+            return
+        end
+        active.age = active.age + dt
+        if active.age >= WARN and clockPart:GetAttribute("StormPhase") == "warning" then
+            clockPart:SetAttribute("StormPhase", "storm")
+        end
+        for _, spot in ipairs(active.spots) do
+            if spot.marker and active.age >= spot.at - CHARGE then
+                spot.marker:SetAttribute("Charged", true) -- it flares: the bolt comes
+            end
+            if spot.marker and active.age >= spot.at then
+                spot.marker:Destroy()
+                spot.marker = nil
+                active.struck = active.struck + 1
+                strike(active.n, spot, active.struck)
+            end
+        end
+        if active.age >= WARN + LAST then
+            tickWeather.hold(nil) -- the rain eases off, as a shower ends
+            clockPart:SetAttribute("StormPhase", "")
+            clockPart:SetAttribute("StormSpots", "")
+            print(string.format("SKY Storm #%d passed", active.n))
+            active = nil
+        end
+    end
+
+    return { start = start, tick = tick, active = function() return active end,
+        WARN = WARN, LAST = LAST, CHARGE = CHARGE, FLOOR = FLOOR, SCORCHED = SCORCHED, COOLDOWN = COOLDOWN }
+end)()
 
 -- What the guest panel can do. Viewers choose what, and where (`inputData.at`, see sky.aim): only the meteor lands
 -- where it was aimed whatever is there. Unaimed, the world chooses: near Godling, in view, clear of what it built.
@@ -4906,6 +5236,9 @@ local SKY_POWERS = {
     end,
     Earthquake = function(godling)
         return sky.quake.start(godling)
+    end,
+    Storm = function(godling, inputData)
+        return sky.storm.start(godling, inputData)
     end,
     Note = function(godling, inputData)
         local text = tostring(inputData and inputData.text or ""):gsub("[%c]", " "):gsub("%s+", " ")
@@ -4978,7 +5311,7 @@ local freeTrappedBodies = (function()
 
     local function freeTrappedBodies()
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and getHumanoidRootPart(player)
             if hrp and not player:GetAttribute("Climbing") and #piecesInBody(player, hrp.Position) > 0 then
                 insideLooks[player] = (insideLooks[player] or 0) + 1
             else
@@ -5081,8 +5414,8 @@ end)()
 --   EDGE_SECONDS is put back on the nearest sand where it fits, as a body caught inside a piece is (FREED above);
 --   if no safe landing exists, it drowns while the world keeps looking every EDGE_SECONDS;
 -- - a body in the sea (below the water's top, no ground under it or just beside its feet) drowns slowly: the sea takes
---   a whole body's health in DROWN_SECONDS. At none it faints as a starving body does: what it holds drops, and it
---   wakes at the start spot. `Drowning` says so meanwhile, to the mind and to viewers.
+--   a whole body's health in DROWN_SECONDS. At none it dies of the sea (DEATH, ADR-022): what it holds drops, and it
+--   is born again at the start spot. `Drowning` says so meanwhile, to the mind and to viewers.
 -- (A function of its own, as freeTrappedBodies is, so its locals stay out of the main chunk's 200.)
 sky.tickSea = (function()
     local DROWN_SECONDS = 90 -- the sea takes a whole body's health in a minute and a half
@@ -5143,7 +5476,8 @@ sky.tickSea = (function()
 
     return function(dt)
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and not player:GetAttribute("Climbing") and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and not player:GetAttribute("Climbing")
+                and getHumanoidRootPart(player)
             local where, lip = nil, nil
             if hrp then
                 where, lip = whereIs(hrp)
@@ -5177,15 +5511,15 @@ sky.tickSea = (function()
                 edgeFailed[player] = nil
             end
             local s = surviving[player]
-            if where == "sea" and s then
+            if where == "sea" and s and not death.is(player) then -- the dead drown no further
                 setDrowning(player, true)
                 s.health = math.max(0, s.health - dt * 100 / DROWN_SECONDS)
                 if s.health <= 0 then
                     player:SetAttribute("Drowned", (player:GetAttribute("Drowned") or 0) + 1)
-                    print(string.format("DROWNED %s at (%.1f, %.1f): wakes at the start spot", player.Name,
+                    print(string.format("DROWNED %s at (%.1f, %.1f): born again at the start spot", player.Name,
                         hrp.Position.X, hrp.Position.Z))
                     setDrowning(player, false)
-                    faint(player, s)
+                    death.die(player, s, "Sea")
                 end
             elseif player.Name ~= SKY_PLAYER then
                 setDrowning(player, false)
@@ -5201,7 +5535,7 @@ end)()
 RunService.Heartbeat:Connect(function(dt)
     for _, player in ipairs(Players:GetPlayers()) do
         local hrp = getHumanoidRootPart(player)
-        if hrp and hrp.Position.Y < OUT_OF_BOUNDS_Y then
+        if hrp and not death.is(player) and hrp.Position.Y < OUT_OF_BOUNDS_Y then
             resetPlayerToSpawn(player)
         end
     end
@@ -5273,6 +5607,7 @@ RunService.Heartbeat:Connect(function(dt)
     advanceSkyFalls(dt)
     sky.meteor.cool(dt) -- a meteor's stone, and its crater, cool over a day
     sky.quake.tick(dt) -- an earthquake shakes what is loose
+    sky.storm.tick(dt) -- a storm called down strikes where it was aimed
     sky.tickNotes(dt) -- notes from viewers drift down
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
     tickShip(dt) -- and a ship passes far out
@@ -5425,10 +5760,17 @@ function sky.restoreBody(player) -- Godling's body, where it stood and as it was
         return
     end
     sky.body = nil
-    hrp.CFrame = CFrame.new(body.pos[1], body.pos[2], body.pos[3])
+    if body.pos then -- none when the island stopped while Godling lay dead: it is born again at the start spot
+        hrp.CFrame = CFrame.new(body.pos[1], body.pos[2], body.pos[3])
+    end
     player:SetAttribute("Health", body.health)
     player:SetAttribute("Hunger", body.hunger)
     player:SetAttribute("Wet", body.wet)
+    for key, attribute in pairs({ deaths = "Deaths", died_of = "DiedOf", died_at = "DiedAt" }) do
+        if body[key] ~= nil then
+            player:SetAttribute(attribute, body[key])
+        end
+    end
     surviving[player] = { hunger = body.hunger, health = body.health, beat = 0 }
 end
 

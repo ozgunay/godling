@@ -17,6 +17,8 @@ import { createBlasts } from './blast.js'
 import { createCooling, heatStep } from './cooling.js'
 import { createIronLook } from './iron.js'
 import { createLightning } from './lightning.js'
+import { createBodyLook } from './bodylook.js'
+import { createStormSpots } from './stormspots.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
@@ -25,6 +27,7 @@ import { createCutaway, CUTAWAY_ROLES } from './cutaway.js'
 import { createAim } from './aim.js'
 import { createReplay } from './replay.js'
 import { createStateBuffer } from './buffer.js'
+import { BUILD, createBuildWatch } from './freshness.js'
 
 // Godling's renderer. three.js is bundled in (build.mjs): nothing loads from a CDN, so the viewer and Godling's
 // own camera (the server's capture) keep working offline. Parts are drawn instanced, models load once, and a
@@ -471,10 +474,19 @@ export function createRenderer(ctx) {
   }
   const litMaterials = new Set()
   const onMaterial = (material) => {
+    const added = []
     for (const m of Array.isArray(material) ? material : [material]) {
       if (!m || litMaterials.has(m) || !(m.isMeshStandardMaterial || m.isMeshPhongMaterial || m.isMeshLambertMaterial)) continue
       litMaterials.add(m)
+      added.push(m)
       csm?.setupMaterial(m)
+    }
+    // Most materials live for the renderer's lifetime; death's per-body copies release their registrations sooner.
+    return () => {
+      for (const m of added) {
+        litMaterials.delete(m)
+        csm?.shaders.delete(m)
+      }
     }
   }
 
@@ -509,6 +521,11 @@ export function createRenderer(ctx) {
   // Lightning: a strike where a SkyBolt_<n> marker appears (lightning.js), lighting the ground with the meteor's
   // flash light. `?bolt=4` strikes near the camera's target every 4 seconds, to look.
   const lightning = createLightning(scene, tier, { light: blasts.light })
+  // A body's looks (bodylook.js): dead, it fades before it is born again and comes back at the start in a glow;
+  // struck by a storm's lightning, it is electrocuted, then charred for a minute. A storm's strike spots crackle on the
+  // ground (stormspots.js).
+  const bodyLook = createBodyLook(scene, { onMaterial })
+  const stormSpots = createStormSpots(scene)
   const boltEvery = Number(params.get('bolt'))
   let nextBolt = 1
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
@@ -580,6 +597,8 @@ export function createRenderer(ctx) {
     onAimed: (spot) => tellScreen({ type: 'godling-aimed', ...spot }),
     onCancel: () => tellScreen({ type: 'godling-aim-cancel' }),
   }) : null
+  // A newer renderer on the island reloads this page (freshness.js); never mid-aim, never on the world's own capture.
+  const buildWatch = tier.capture ? null : createBuildWatch({ bundleUrl: import.meta.url, busy: () => Boolean(aim?.active) })
   if (embedded) {
     const style = document.createElement('style')
     style.textContent = 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }'
@@ -591,6 +610,7 @@ export function createRenderer(ctx) {
       else if (data.type === 'godling-cutaway') cutawayWish = Boolean(data.on)
       else if (data.type === 'godling-key') freeCam.key(String(data.code), Boolean(data.down))
       else if (data.type === 'godling-aim') (data.power ? aim.start(String(data.power)) : aim.stop())
+      else if (data.type === 'godling-aim-marks') aim.marks(data.spots) // a storm's spots picked so far
       else if (data.type === 'godling-replay') replay?.command(data)
     })
     // The screen sends the camera and the island's past only once this page can hear it (it loads after the frame's
@@ -625,9 +645,14 @@ export function createRenderer(ctx) {
   const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
   // The island's past, when the screen asks for it (ADR-016): its frames go into the same buffer the live ones do, so
   // the camera follows Godling in replay as it does live.
+  let lastDeathReplayTime = null
   const replay = embedded ? createReplay({
     onFrame: (obs) => stateBuffer.push(obs),
-    onReset: () => stateBuffer.clear(),
+    onReset: () => {
+      stateBuffer.clear()
+      bodyLook.reset()
+      lastDeathReplayTime = null
+    },
     tell: tellScreen,
     assetBase: () => assetBase,
     // Before any live entity has shown where the island serves models: beside this renderer (renderer-files/dist).
@@ -749,6 +774,10 @@ export function createRenderer(ctx) {
         return { kind: 'parts', parts: [part('skyShadow', kit.geometry('disk'), kit.material('skyShadow'), scaled(size[0], 1, size[2]), { castShadow: false })] }
       case 'SkyFlash': // a lightning strike's marker: the bolt is drawn by lightning.js, the part itself never
         return { kind: 'none' }
+      case 'StormSpot': // a storm's strike spot: its crackling ring is drawn by stormspots.js, the part itself never
+        return { kind: 'none' }
+      case 'Scorch': // where a storm's bolt struck open ground: a burn on it, for a few minutes
+        return { kind: 'parts', parts: [part('scorch', kit.geometry('disk'), kit.material('scorch'), scaled(size[0], 1, size[2]), { castShadow: false })] }
       case 'Blast': // a meteor's contact point: its explosion is drawn by blast.js, the part itself never
         return { kind: 'none' }
       case 'Crater': { // lying on the ground, its foot on it (as crater.glb, whose base is the ground)
@@ -938,7 +967,7 @@ export function createRenderer(ctx) {
   }
 
   // Returns the sea level and the island's footprint for the sea.
-  function updateScene(obs, dt) {
+  function updateScene(obs, dt, deathDt = dt) {
     const activeIds = new Set()
     const stateByRootPartId = new Map()
     const attributesByRootPartId = new Map()
@@ -990,6 +1019,7 @@ export function createRenderer(ctx) {
       }
       blasts.watch(entity, dt)
       lightning.watch(entity)
+      stormSpots.watch(entity)
       const key = lookKey(entity)
       let record = records.get(entity.id)
       if (!record || record.key !== key) {
@@ -1069,6 +1099,7 @@ export function createRenderer(ctx) {
         })
         bodies.push({ id: entity.id, speed })
         bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
+        bodyLook.update(entity.id, root, attributesByRootPartId.get(entity.id) || {}, position, deathDt) // death, a strike
       }
       record.fresh = false
       if (moved) {
@@ -1114,6 +1145,8 @@ export function createRenderer(ctx) {
     dust.prune(activeIds)
     blasts.prune(activeIds)
     lightning.prune(activeIds)
+    bodyLook.prune(activeIds)
+    stormSpots.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -1238,17 +1271,20 @@ export function createRenderer(ctx) {
   // A frame of the past: drawn from the replay's frames, even before the first live state was ever drawn.
   function drawReplay() {
     replay.step()
+    const deathTime = replay.time
+    const deathDt = lastDeathReplayTime === null ? 0 : Math.max(0, (deathTime - lastDeathReplayTime) / 1000)
+    lastDeathReplayTime = deathTime
     const now = performance.now()
     const dt = Math.min((now - lastStateMs) / 1000, 0.05)
     lastStateMs = now
     const obs = stateBuffer.interpolated() || latestObs
-    if (obs) draw(obs, dt)
+    if (obs) draw(obs, dt, deathDt)
   }
 
-  function draw(obs, dt) {
+  function draw(obs, dt, deathDt = dt) {
     latestObs = obs
     elapsed += dt
-    const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt)
+    const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt, deathDt)
     if (seaLevel != null) lastSeaLevel = seaLevel
     quakeNow += (worldQuake - quakeNow) * Math.min(1, dt * 3)
     updateSunAndLights(dt, cameraTarget)
@@ -1266,6 +1302,7 @@ export function createRenderer(ctx) {
       lightning.strike(cameraTarget.x + Math.cos(angle) * 12, 0, cameraTarget.z + Math.sin(angle) * 12, Math.floor(elapsed * 1000))
     }
     ambient.intensity += lightning.update({ time: elapsed, daylight: sky.daylight })
+    stormSpots.update(elapsed)
     renderer.toneMappingExposure = EXPOSURE * lightning.exposure()
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
@@ -1281,6 +1318,8 @@ export function createRenderer(ctx) {
   globalThis.__godlingRenderer = {
     tier,
     sky,
+    build: BUILD, // this bundle's build (freshness.js); the island serves its own in dist/build.json
+    checkBuild: () => buildWatch?.check() ?? Promise.resolve('off'), // a look now, instead of at the next one
     info: () => ({ ...renderer.info.render, pixelRatio: renderer.getPixelRatio(), ...instancer.stats(), modelsArrived }),
     animations: () => characters.debug(),
     hands: () => hands.info(), // tools in hands, or on their way in or out
@@ -1290,6 +1329,8 @@ export function createRenderer(ctx) {
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
     lightning: () => lightning.info(),
+    bodies: () => bodyLook.info(), // dead, struck or charred bodies: how faded, charred, shocked, glowing, smoking
+    stormSpots: () => stormSpots.info(),
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
     bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
@@ -1377,6 +1418,9 @@ export function createRenderer(ctx) {
       dust.dispose()
       blasts.dispose()
       lightning.dispose()
+      bodyLook.dispose()
+      stormSpots.dispose()
+      buildWatch?.dispose()
       csm?.remove()
       csm?.dispose()
       stats?.dispose()

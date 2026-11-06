@@ -1,5 +1,7 @@
 import threading
 
+import pytest
+
 from godling import bubble as bubble_module
 from godling.bubble import FEELINGS, SYSTEM, THINGS, Bubble
 from godling.world import WorldError
@@ -102,3 +104,37 @@ def test_thread_runs_readings_and_survives_errors(monkeypatch):
     assert "model down" in logs[0]["message"]
     assert bubble_module.EVERY == 15
     Bubble(FakeWorld(body()), FakeLLM({})).log(kind="x")  # the default log takes anything
+
+
+def test_a_dead_body_makes_no_bubble_calls_and_reads_the_news_after_rebirth():
+    world = FakeWorld(body(Dead=True, Deaths=1, Health=0))
+    llm = FakeLLM({"thing": "shelter", "feeling": "determined"})
+    bubble = Bubble(world, llm)
+    bubble.thought("I need a roof before the cold night")
+    assert bubble.read() is None and bubble.read() is None
+    assert llm.prompts == [] and world.acts == []
+    world.snapshot = body(Deaths=1, Health=100, Hunger=50)
+    assert bubble.read() == ("shelter", "determined")
+    assert "I need a roof" in llm.prompts[0]
+    assert bubble.read() is None and len(llm.prompts) == 1
+
+
+@pytest.mark.parametrize("still_dead", [False, True])
+def test_a_bubble_answer_from_the_previous_life_is_not_shown(still_dead):
+    world = FakeWorld(body(Deaths=2))
+    llm = FakeLLM({"thing": "fish", "feeling": "hungry"})
+    bubble = Bubble(world, llm)
+    bubble.thought("Catch a fish")
+    complete = llm.quick_json
+
+    def died_while_reading(*args, **kwargs):
+        reply = complete(*args, **kwargs)
+        world.snapshot = body(Deaths=3, Dead=still_dead)
+        return reply
+
+    llm.quick_json = died_while_reading
+    assert bubble.read() is None
+    assert world.acts == [] and bubble.shown is None
+    world.snapshot = body(Deaths=3)
+    llm.quick_json = complete
+    assert bubble.read() == ("fish", "hungry"), "the stale answer must leave the news pending"

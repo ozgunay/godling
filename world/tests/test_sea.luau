@@ -42,7 +42,7 @@ T.test("standing on the sand by the water's edge, or on the grass, the sea leave
     T.no(g:GetAttribute("Drowning"))
 end)
 
-T.test("in the sea the body drowns over a minute and a half, faints, and wakes at the start spot", function()
+T.test("in the sea the body drowns over a minute and a half, dies, and is born again at the start spot", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling(V.new(-117.3, -1.85, -50.2)) -- slipped off the lip, in the water beside the sand
@@ -56,12 +56,17 @@ T.test("in the sea the body drowns over a minute and a half, faints, and wakes a
     T.eq(g:GetAttribute("Ashore"), nil, "too far below the sand to be put back on it")
     e.step(60, 0.5)
     T.eq(g:GetAttribute("Drowned"), 1)
-    T.eq(g:GetAttribute("Faints"), 1)
-    T.logged(w, "DROWNED Godling at %(%-117.3, %-50.2%): wakes at the start spot")
+    T.eq(g:GetAttribute("Deaths"), 1, "it died of the sea (DEATH, ADR-022)")
+    T.eq(g:GetAttribute("DiedOf"), "Sea")
+    T.eq(g:GetAttribute("Dead"), true)
+    T.eq(g:GetAttribute("Drowning"), false, "the dead drown no further")
+    T.logged(w, "DROWNED Godling at %(%-117.3, %-50.2%): born again at the start spot")
+    e.step(30, 0.5) -- it lies dead, then is born again
     local p = e.hrp(g).Position
     T.near(p.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "at the start spot")
     T.near(p.Z, x.PLAYER_SPAWN_POSITION.Z, 1e-9)
-    T.eq(s.health, 30, "half fed and weak, as after fainting from hunger")
+    T.near(s.health, 100, 0.5, "whole again, as after any death")
+    T.near(s.hunger, 50, 0.5, "and half fed")
     e.hrp(g).Position = V.new(p.X, 2.55, p.Z) -- landed (no physics here)
     e.step(1, 0.5)
     T.eq(g:GetAttribute("Drowning"), false)
@@ -105,7 +110,8 @@ T.test("hanging on an edge with nowhere safe ashore: the sea still drowns the bo
     s.health = 0.1
     e.step(0.5, 0.5)
     T.eq(g:GetAttribute("Drowned"), 1)
-    T.eq(g:GetAttribute("Faints"), 1)
+    T.eq(g:GetAttribute("Deaths"), 1)
+    e.step(30.5, 0.5) -- dead a while, then born again
     T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9)
     T.near(e.hrp(g).Position.Z, x.PLAYER_SPAWN_POSITION.Z, 1e-9)
     T.eq(g:GetAttribute("Drowning"), false)
@@ -134,6 +140,22 @@ T.test("a failed lip rescue retries when a safe landing appears and stops the dr
     T.near(s.health, ashoreHealth, 1e-9, "the failed-rescue state is cleared ashore")
     T.eq(g:GetAttribute("Drowned"), nil)
     T.eq(g:GetAttribute("Ashore"), 1)
+end)
+
+T.test("a dead body hanging on the lip stays there until rebirth, without a shore rescue", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local at = V.new(-119.76, 1.68, -44.8)
+    local g = w.godling(at)
+    e.step(0.5, 0.5)
+    x.death.die(g, x.surviving[g], "Cold")
+    e.step(4, 0.5)
+    T.eq(g:GetAttribute("Dead"), true)
+    T.eq(g:GetAttribute("Ashore"), nil, "the dead body is not rescued from the lip")
+    T.near((e.hrp(g).Position - at).Magnitude, 0, 1e-9, "it lies where it died")
+    e.step(26, 0.5)
+    T.eq(g:GetAttribute("Dead"), false)
+    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9)
 end)
 
 return T.done("test_sea")
