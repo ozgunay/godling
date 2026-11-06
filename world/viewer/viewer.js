@@ -30,8 +30,11 @@ const POWERS = [
     does: 'A log beam drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },
   { id: 'Regrow', name: 'Regrow a palm', icon: 'sapling', price: 6, kind: 'Gift', aim: true, did: 'regrew a palm',
     after: 'from its stump', does: 'The stump nearest your aim grows back at once.' },
-  { id: 'Lightning', name: 'Lightning', icon: 'lightning', price: 40, kind: 'Wonder', aim: true, did: 'called lightning',
-    after: 'a palm comes down', does: 'Strikes the palm nearest your aim and fells it into two logs. Only palms well away from Godling and its walls.' },
+  // Lightning's place (ADR-023): a storm, its three strikes aimed one by one (`spots`), the world picking when.
+  { id: 'Storm', name: 'Storm', icon: 'lightning', price: 400, kind: 'Disaster', harm: true, aim: true, spots: 3,
+    did: 'called a storm', after: 'it breaks in 30 s',
+    does: 'Pick three spots: 30 s later a storm breaks and lightning strikes each, in its own time. A strike on Godling leaves it with half a heart, burned; close by it hurts. A palm comes down as two logs; a roof over Godling takes the strike. It never kills.',
+    rule: 'One every 30 minutes · never while Godling is weak' },
   { id: 'Meteor', name: 'Meteor', icon: 'meteor', price: 300, kind: 'Disaster', harm: true, aim: true, did: 'called a meteor',
     after: 'it blasts in 40 s', does: 'A shadow spreads where you aim; 40 s later a stone blasts there, whatever stands in it: Godling, its walls, palms. It leaves a crater.',
     rule: 'The only power that can hit Godling or its walls · one a minute · never while Godling is weak' },
@@ -558,11 +561,11 @@ async function settled(answer) {
   return answer.pending ? { ok: false, text: 'The island is slow to answer; your power is still on its way.' } : answer
 }
 
-async function call(p, s, at = null) {
+async function call(p, s, at = null, spots = null) {
   if (inThePast() || s.classList.contains('calling')) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
   s.classList.add('calling')
-  const answer = await settled(await post('api/power', { power: p.id, ...(at ? { at } : {}) }))
+  const answer = await settled(await post('api/power', { power: p.id, ...(at ? { at } : {}), ...(spots ? { spots } : {}) }))
   s.classList.remove('calling')
   if (account && Number.isFinite(answer.credits)) drawPurse({ ...account, credits: answer.credits })
   if (answer.ok) popup(answer)
@@ -573,8 +576,10 @@ async function call(p, s, at = null) {
 }
 
 // Aiming: pick a slot, and the island shows a ring where the power would land (renderer aim.js); a click there calls
-// it. "Let the sky choose" calls it without an aim, as before.
+// it. "Let the sky choose" calls it without an aim, as before. A storm takes three spots (`spots`): each click marks
+// one and aims again; the last calls it, and the sky can choose the rest.
 let aiming = null
+let aimedSpots = [] // a storm's spots picked so far, { x, y, z }
 const aimBar = el('div', 'b-aim stone')
 aimBar.hidden = true
 aimBar.setAttribute('role', 'status')
@@ -590,11 +595,14 @@ const aimTap = matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click'
 function aimHint(p, spot) {
   aimWords.replaceChildren()
   aimWords.insertAdjacentHTML('afterbegin', icon(p.icon, 2))
-  let words = `${aimTap} the island where the ${p.name.toLowerCase()} should land`
+  let words = p.spots ? `${aimTap} where strike ${aimedSpots.length + 1} of ${p.spots} should land`
+    : `${aimTap} the island where the ${p.name.toLowerCase()} should land`
   let tone = ''
+  skyChooses.textContent = aimedSpots.length ? 'Let the sky choose the rest' : 'Let the sky choose'
   if (spot?.atGodling && p.id === 'Meteor') [words, tone] = ['On Godling: the blast will hit it', 'harm']
+  else if (spot?.atGodling && p.id === 'Storm') [words, tone] = ['On Godling: a strike here leaves it with half a heart', 'harm']
   else if (spot?.atGodling && (p.id === 'Stone' || p.id === 'Log')) [words, tone] = ['At Godling: it lands at its feet', 'feet']
-  else if (spot) words = `${aimTap} to call it here`
+  else if (spot) words = p.spots ? `${aimTap} to strike here (${aimedSpots.length + 1} of ${p.spots})` : `${aimTap} to call it here`
   aimWords.append(text('span', tone, words))
 }
 
@@ -606,6 +614,7 @@ function toggleAim(p) {
   bottle?.close({ focus: false })
   unpick() // the slot's focus opened its tip before the click; the aim bar takes that place
   aiming = p
+  aimedSpots = []
   slots.forEach((s, i) => s.classList.toggle('aiming', POWERS[i] === p))
   stage.classList.add('aiming')
   aimBar.hidden = false
@@ -615,6 +624,8 @@ function toggleAim(p) {
 
 function endAim() {
   aiming = null
+  if (aimedSpots.length) tellView({ type: 'godling-aim-marks', spots: [] })
+  aimedSpots = []
   slots.forEach((s) => s.classList.remove('aiming'))
   stage.classList.remove('aiming')
   aimBar.hidden = true
@@ -623,8 +634,9 @@ function endAim() {
 
 skyChooses.addEventListener('click', () => {
   const p = aiming
+  const spots = aimedSpots.map((a) => [a.x, a.z]) // a storm's picked so far: the sky picks the rest
   endAim()
-  if (p) call(p, slots[POWERS.indexOf(p)])
+  if (p) call(p, slots[POWERS.indexOf(p)], null, spots.length ? spots : null)
 })
 aimCancel.addEventListener('click', endAim)
 
@@ -632,7 +644,19 @@ addEventListener('message', (event) => {
   const data = event.data
   if (event.source !== view.contentWindow || data?.source !== 'godling-renderer') return
   if (data.type === 'godling-aim-hover' && aiming) aimHint(aiming, data)
-  else if (data.type === 'godling-aimed' && aiming) {
+  else if (data.type === 'godling-aimed' && aiming?.spots) { // one of a storm's spots
+    const p = aiming
+    aimedSpots.push({ x: Number(data.x), y: Number(data.y), z: Number(data.z) })
+    tellView({ type: 'godling-aim-marks', spots: aimedSpots })
+    if (aimedSpots.length < p.spots) {
+      tellView({ type: 'godling-aim', power: p.id }) // and aim the next
+      aimHint(p)
+      return
+    }
+    const spots = aimedSpots.map((a) => [a.x, a.z])
+    endAim()
+    call(p, slots[POWERS.indexOf(p)], null, spots)
+  } else if (data.type === 'godling-aimed' && aiming) {
     const p = aiming
     endAim()
     call(p, slots[POWERS.indexOf(p)], [Number(data.x), Number(data.z)])
@@ -719,7 +743,7 @@ function drawBody(g) {
   // Dead (main.lua DEATH), nothing else about the body matters: what killed it, and when it comes back.
   const dead = g.dead && ['heartEmpty', `Died of ${diedOf(g.diedOf)}${g.deadFor > 0 ? ` · back in ${g.deadFor} s` : ''}`]
   const states = (dead ? [dead] : [g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'],
-    g.cold && ['cold', 'Cold'], g.wet >= 30 && ['drop', 'Wet']]).filter(Boolean)
+    g.scorched > 0 && ['lightning', 'Burnt'], g.cold && ['cold', 'Cold'], g.wet >= 30 && ['drop', 'Wet']]).filter(Boolean)
   if (g.deaths > 0) states.push(['heartEmpty', `${g.deaths} death${g.deaths === 1 ? '' : 's'}`])
   vitals.innerHTML = `<span class="row hearts" role="img" aria-label="Health ${Math.round(health * 10)} of 100">${hearts}</span>
     <span class="states">${states.map(([i, w]) => `<span class="state">${icon(i, 2)}${w}</span>`).join('')}</span>

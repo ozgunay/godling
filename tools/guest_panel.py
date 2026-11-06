@@ -402,7 +402,8 @@ class Island:
                        "knockedDown": bool(c.get("GodlingKnockedDown")),
                        # main.lua DEATH: dead, the seconds until it is born again, what killed it, how often it died
                        "dead": bool(c.get("GodlingDead")), "deadFor": c.get("GodlingDeadFor") or 0,
-                       "diedOf": c.get("GodlingDiedOf") or "", "deaths": c.get("GodlingDeaths") or 0}
+                       "diedOf": c.get("GodlingDiedOf") or "", "deaths": c.get("GodlingDeaths") or 0,
+                       "scorched": c.get("GodlingScorched") or 0}  # seconds it stays charred (a storm's strike)
         with self.lock:
             mine = self.last_note.get(client, 0)
             notes = {"limit": NOTE_LIMIT, "every": self.note_every, "queue": len(self.notes),
