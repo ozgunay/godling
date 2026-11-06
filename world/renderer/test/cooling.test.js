@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
-import { createCooling, glowAt, heatStep, HEAT_STEPS, largestPiece, SCORCH_FADE } from '../src/cooling.js'
+import { createCooling, glowAt, GLOWS_ABOVE, heatStep, HEAT_STEPS, largestPiece, SCORCH_FADE } from '../src/cooling.js'
 
 // meteor.glb's glowing cracks: an emissive material, as the art pipeline exports it (art/build_props.py "ember").
 const ember = () => new THREE.MeshStandardMaterial({ name: 'ember', color: new THREE.Color(1, 0.133, 0.007),
@@ -45,10 +45,12 @@ describe('a meteor\'s stone cooling', () => {
     expect(heatStep({ Heat: -1 })).toBe(0)
   })
 
-  it('glows as hot iron does: yellow-white, orange, dull red, then not at all', () => {
+  it('glows as hot iron does: yellow-orange, orange, dull red, then not at all once it may be held', () => {
     const white = glowAt(1)
     const orange = glowAt(0.5)
-    const red = glowAt(0.1)
+    const red = glowAt(0.2)
+    expect(glowAt(GLOWS_ABOVE).intensity).toBe(0) // the world lets it be held from here (main.lua sky.iron)
+    expect(glowAt(GLOWS_ABOVE + 0.05).intensity).toBeGreaterThan(0)
     expect(white.color.g).toBeGreaterThan(orange.color.g)
     expect(orange.color.g).toBeGreaterThan(red.color.g)
     expect(white.color.b).toBeGreaterThan(red.color.b)

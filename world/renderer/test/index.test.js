@@ -445,6 +445,48 @@ describe('the renderer', () => {
     r.unmount()
   })
 
+  it('draws a flake of meteoric iron, and a tool with an iron edge in groups of its own', async () => {
+    files['/assets/edged.glb'] = () => {
+      const scene = new THREE.Group()
+      scene.add(new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1), new THREE.MeshStandardMaterial({ name: 'handle' })),
+        new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.2), new THREE.MeshStandardMaterial({ name: 'edge' })))
+      return { scene, animations: [] }
+    }
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    const debug = globalThis.__godlingRenderer
+    const at = (edge, flake) => ({
+      players: [],
+      entities: [
+        part(1, 'Ground', [0, -0.5, 0], [100, 1, 100]),
+        part(2, 'Tool', [0, 0.2, 0], [0.4, 0.4, 1.0], { model_url: '/assets/edged.glb',
+          attributes: { ToolKind: 'Axe', ...(edge ? { Edge: 'Iron' } : {}) } }),
+        ...(flake ? [part(3, 'Iron', [2, 0.1, 0], [0.5, 0.2, 1.0])] : []),
+      ],
+    })
+    r.onState(at(false, false))
+    await flush() // the model arrives
+    r.onState(at(false, false))
+    r.onFrame({ dt: 0.02 })
+    const groups = debug.info().groups
+    const instances = debug.info().instances
+    r.onState(at(false, true)) // a flake lies beside it
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 1)
+    expect(debug.info().instances).toBe(instances + 1)
+    r.onState(at(true, false)) // bound on as the axe's edge: the edge in worked iron, its own group
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 2)
+    expect(debug.info().instances).toBe(instances)
+    const spear = at(true, false)
+    spear.entities[1].attributes.ToolKind = 'Spear' // an iron point: a blade laid over it, one more part
+    r.onState(spear)
+    r.onFrame({ dt: 0.02 })
+    expect(debug.info().groups).toBe(groups + 3)
+    expect(debug.info().instances).toBe(instances + 1)
+    r.unmount()
+  })
+
   it('plays a lightning marker as a strike: the part never drawn, the picture flashing and settling', () => {
     const { ctx } = runtime()
     const r = createRenderer(ctx)

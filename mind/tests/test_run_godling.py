@@ -837,3 +837,22 @@ def test_main_with_the_bubble_and_a_broken_end(main_env, monkeypatch, tmp_path, 
     assert started and "structures at the end" in (run / "mind/log.jsonl").read_text()
     kinds = {kind for kind, _ in started[0].events}
     assert kinds >= {"thought", "happens", "does"}
+
+
+def test_the_save_keeps_flakes_of_iron_their_count_and_iron_edges():
+    """main.lua METEORIC IRON: a flake (Iron_n, RenderRole Iron) is kept, numbered on from the save, and a tool's
+    iron edge (its Edge attribute) stays bound on."""
+    snap = snapshot()
+    lying = {"cframe": {"position": [3, 0.1, 2], "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+             "size": [0.5, 0.2, 1.0], "color": [0.26, 0.25, 0.24], "anchored": False, "can_collide": True}
+    snap["instance"]["workspace_children"] += [
+        {"name": "Iron_3", "class_name": "Part", "part": lying,
+         "attributes": {"RenderRole": {"type": "String", "value": "Iron"}}},
+        {"name": "Spear_2", "class_name": "Part", "part": dict(lying, size=[0.3, 0.3, 4.5]),
+         "attributes": {"RenderRole": {"type": "String", "value": "Tool"}, "ToolKind": {"type": "String", "value": "Spear"},
+                        "Edge": {"type": "String", "value": "Iron"}}}]
+    island = rg.island_of(snap)
+    by_name = {p["name"]: p for p in island["pieces"]}
+    assert "Iron" in island["roles"] and by_name["Iron_3"]["attrs"]["RenderRole"] == "Iron"
+    assert island["counters"]["Iron"] == 3 and island["counters"]["Spear"] == 2
+    assert by_name["Spear_2"]["attrs"]["Edge"] == "Iron"

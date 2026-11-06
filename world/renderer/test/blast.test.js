@@ -53,6 +53,27 @@ describe('meteor blasts', () => {
     expect(scene.children).toHaveLength(0)
   })
 
+  it('fills the trail of a meteor coming in fast all along the way it fell, on every tier', () => {
+    const puffsFor = (tier, step) => {
+      const blasts = createBlasts(new THREE.Scene(), tier)
+      let y = 80
+      blasts.watch(meteor(1, y), 1 / 30)
+      for (let t = 0; t < 0.5; t += step, y -= 80 * step) { // 80 a second (main.lua SKY_FALL_SPEED)
+        blasts.watch(meteor(1, y), step)
+        blasts.update({ time: t, dt: step, daylight: 1, camera: new THREE.PerspectiveCamera() })
+      }
+      const glow = blasts.info().glow
+      blasts.dispose()
+      return glow
+    }
+    // smooth frames, or slow ones: about the same trail over the 40 it fell, one puff every TRAIL_STEP / detail
+    const smooth = puffsFor(HIGH, 1 / 60)
+    const slow = puffsFor(HIGH, 1 / 10)
+    expect(smooth).toBeGreaterThan(25)
+    expect(slow).toBeGreaterThan(smooth * 0.6)
+    expect(puffsFor(LOW, 1 / 10)).toBeGreaterThan(8) // fewer on the low tier, but no gaps
+  })
+
   it('a landed stone smokes while it is hot, less as it cools, and not once it is cold', () => {
     const resting = (heat) => ({ ...meteor(1, 1.25), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: heat } })
     const puffs = (heat, seconds) => {

@@ -12,6 +12,7 @@ import * as THREE from 'three'
 // crater) of the same heat in one draw call.
 
 export const HEAT_STEPS = 20 // the world's steps of 0.05
+export const GLOWS_ABOVE = 0.1 // main.lua sky.iron.GLOWS_ABOVE: hotter, it glows and is too hot to hold; at or below, dark
 export const SCORCH_FADE = 0.65 // how much of the scorch is gone once the stone is cold
 
 const SAND = new THREE.Color().setRGB(0.64, 0.56, 0.45, THREE.SRGBColorSpace) // art/build_props.py's sand_dark
@@ -30,11 +31,12 @@ export function heatStep(attributes) {
   return Math.round(Math.min(1, Math.max(0, heat)) * HEAT_STEPS)
 }
 
-// How a crack glows at heat h (0 to 1), as hot iron does: yellow-orange, orange, dull red, then not at all. Kept
-// saturated: brighter, the tone mapping turned the hottest cracks flat white by day, stripes rather than a glow.
+// How a crack glows at heat h (0 to 1), as hot iron does: yellow-orange, orange, dull red, then not at all from
+// GLOWS_ABOVE down, where the world lets it be held. Kept saturated: brighter, the tone mapping turned the hottest
+// cracks flat white by day, stripes rather than a glow.
 export function glowAt(h, out = new THREE.Color()) {
   out.setRGB(1, 0.04 + 0.31 * h * h, 0.005 + 0.055 * h * h * h)
-  return { color: out, intensity: h > 0 ? 1.8 * h ** 0.6 : 0 }
+  return { color: out, intensity: h > GLOWS_ABOVE ? 1.8 * ((h - GLOWS_ABOVE) / (1 - GLOWS_ABOVE)) ** 0.6 : 0 }
 }
 
 // A glowing material is the stone's cracks (meteor.glb's "ember"): anything that gives off light of its own.
@@ -105,7 +107,7 @@ export function createCooling({ onMaterial } = {}) {
     m.emissive = color
     m.emissiveIntensity = intensity
     // The crack's own colour: its glowing red while hot, then dark grey metal, which catches the sun.
-    const hot = THREE.MathUtils.smoothstep(h, 0, 0.35)
+    const hot = THREE.MathUtils.smoothstep(h, GLOWS_ABOVE, 0.45)
     m.color.copy(COLD_VEIN).lerp(material.color, hot)
     m.metalness = THREE.MathUtils.lerp(0.6, material.metalness ?? 0, hot)
     m.roughness = THREE.MathUtils.lerp(0.45, material.roughness ?? 1, hot)

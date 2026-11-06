@@ -26,6 +26,8 @@ const FIRE = 3
 const TRAIL = 4
 const TRAIL_SPEED = 10 // a meteor falling faster than this (units per second) trails fire
 const TRAIL_EVERY = 0.03 // seconds between its trail's puffs, on the high tier
+const TRAIL_STEP = 1.2 // units between puffs along the way it fell since the last ones, on the high tier: a meteor
+const TRAIL_FILL = 12 // comes in at 80 a second (main.lua SKY_FALL_SPEED), so its trail is filled in along the way
 const WISP_HEAT = 0.2 // a landed stone smokes while at least this hot
 const WISP_EVERY = 0.8 // seconds between its puffs, on the high tier, white-hot (longer as it cools)
 const SMOULDER = 4 // seconds the crater smokes
@@ -498,14 +500,20 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
       const y = entity.position[1]
       const tracked = meteors.get(entity.id)
       if (!tracked) {
-        meteors.set(entity.id, { y, next: 0 })
+        meteors.set(entity.id, { y, next: 0, trailY: y })
         return
       }
       const vy = dt > 0 ? (y - tracked.y) / dt : 0
       tracked.y = y
       const heat = Number(attributes.Heat)
       if (vy < -TRAIL_SPEED && now >= tracked.next) {
-        trail(entity.position[0], y, entity.position[2], entity.size?.[1] ?? 2.5)
+        // From where the last puffs were down to here, the newest (white-hot) last, at its head.
+        const gap = Math.max(0, tracked.trailY - y)
+        const puffs = Math.min(TRAIL_FILL, Math.max(1, Math.ceil(gap / (TRAIL_STEP / detail))))
+        for (let k = puffs - 1; k >= 0; k--) {
+          trail(entity.position[0], y + (gap * k) / puffs, entity.position[2], entity.size?.[1] ?? 2.5)
+        }
+        tracked.trailY = y
         tracked.next = now + TRAIL_EVERY / detail
       } else if (Math.abs(vy) < 1 && heat >= WISP_HEAT && now >= tracked.next) { // landed, and still hot
         wisp(entity.position[0], y, entity.position[2], entity.size?.[1] ?? 2.5, Math.min(1, heat))
