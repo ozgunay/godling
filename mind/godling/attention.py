@@ -279,6 +279,15 @@ class Attention:
         if after.cold and not before.cold:
             out.append(("You have grown cold" + (": the night is chilly out here" if not after.in_rain
                                                  else ": the rain has soaked you through"), 3, [], {}))
+        if after.drowning and not before.drowning:
+            out.append(("You have slipped into the sea and cannot climb back out: the water is drowning you, and you "
+                        "will wake at the start spot in the middle of the island", 5, [], {}))
+        if after.drowned > before.drowned:
+            out.append((f"You drowned in the sea, and woke at the start spot at ({after.me[0]:.0f}, {after.me[2]:.0f}), "
+                        f"weak and half fed; what you held went down with you", 5, [], {}))
+        if after.ashore > before.ashore:
+            out.append((f"You hung on the edge of the beach over the sea, and found yourself back on the sand at "
+                        f"({after.me[0]:.0f}, {after.me[2]:.0f})", 3, [], {}))
         if after.freed > before.freed:
             out.append((f"You were caught inside a piece, too low over your head or pressed into you, and found "
                         f"yourself pushed out of it to ({after.me[0]:.0f}, {after.me[2]:.0f})", 2, [], {}))

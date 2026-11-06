@@ -177,6 +177,27 @@ def test_body_weather_and_sky_news(mem):
     assert texts.count("You are inside a house now: warm and dry, and fed you mend twice as fast") == 1
 
 
+def test_notices_the_sea(mem):
+    # main.lua THE SEA: slipping in interrupts (the body can do nothing there), and so does waking at the start spot.
+    a = Attention(mem)
+    a.on_step(snap([ground()]))
+    with pytest.raises(Interrupted):
+        a.on_step(snap([ground()], attrs={"Drowning": True}, me=(-117, -1.8, -50)))
+    assert [e["text"] for e in a.take_events()] == [
+        "You have slipped into the sea and cannot climb back out: the water is drowning you, and you will wake at the "
+        "start spot in the middle of the island"]
+    a.on_step(snap([ground()], attrs={"Drowning": True}, me=(-117, -1.8, -50)))  # still drowning: said once
+    assert a.take_events() == []
+    with pytest.raises(Interrupted):
+        a.on_step(snap([ground()], attrs={"Drowned": 1, "Faints": 1}, me=(15, 2.5, -27.5)))
+    assert [e["text"] for e in a.take_events()] == [
+        "You drowned in the sea, and woke at the start spot at (15, -28), weak and half fed; what you held went down "
+        "with you"]
+    a.on_step(snap([ground()], attrs={"Drowned": 1, "Ashore": 1}, me=(-117, 2.4, -46)))  # not salient enough to stop
+    assert [e["text"] for e in a.take_events()] == [
+        "You hung on the edge of the beach over the sea, and found yourself back on the sand at (-117, -46)"]
+
+
 def test_decide_is_the_interrupt_rule(mem):
     a = Attention(mem)
     assert a.decide({"salience": 4}) and not a.decide({"salience": 3})

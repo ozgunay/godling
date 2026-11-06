@@ -470,7 +470,7 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
       mind.feed.map((f) => [f.time, f.text, f.glance, f.about]),
       Math.floor((c.hour ?? -1) * 60), c.day, c.rain >= 0.3, c.quake,
       g && [Math.round((g.health ?? 100) / 5), Math.round((g.hunger ?? 100) / 5), g.cold, g.wet >= 30, g.bracing, g.knockedDown,
-        g.dead, g.deadFor, g.deaths]])
+        g.drowning, g.dead, g.deadFor, g.deaths]])
     if (key === drawn) return
     drawn = key
     show({ clock: m.clock, godling: m.godling, mind, now: at / 1000 })

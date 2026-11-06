@@ -34,6 +34,7 @@ function hudOf(obs) {
   if (c.GodlingHealth !== undefined) {
     out.godling = { health: c.GodlingHealth, hunger: c.GodlingHunger, wet: c.GodlingWet || 0, cold: Boolean(c.GodlingCold),
       bracing: Boolean(c.GodlingBracing), knockedDown: Boolean(c.GodlingKnockedDown),
+      drowning: Boolean(c.GodlingDrowning),
       dead: Boolean(c.GodlingDead), deadFor: c.GodlingDeadFor || 0, diedOf: c.GodlingDiedOf || '', deaths: c.GodlingDeaths || 0 }
   }
   return out

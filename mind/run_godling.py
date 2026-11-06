@@ -43,9 +43,9 @@ from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 # What a restart keeps (IslandSave; world/main.lua sky.restore puts it back): the pieces that can be carried, built
 # with or left by the sky, by their RenderRole. Felled trees (Stump) are kept as well.
 KEPT_ROLES = ("PickupObject", "Stone", "Log", "Tool", "Ladder", "Boulder", "Rock", "Coconut", "Catch", "Volleyball",
-              "Crater", "SandMark")
+              "Crater", "SandMark", "Iron")
 DECOR_ROLES = ("Crater", "SandMark")  # anchored and walked through by design
-NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch")  # name prefixes the world counts on from
+NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch", "Iron")  # name prefixes the world counts on from
 
 CONSOLE = {"decision": "THINK", "skill": "  DO", "event": "NOTICE", "sleep": "SLEEP", "llm": None, "error": "ERROR",
            "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None, "thinking": None,
