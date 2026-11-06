@@ -400,6 +400,7 @@ class Island:
             godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,
                        "cold": bool(c.get("GodlingCold")), "bracing": bool(c.get("GodlingBracing")),
                        "knockedDown": bool(c.get("GodlingKnockedDown")),
+                       "drowning": bool(c.get("GodlingDrowning")),  # in the sea (main.lua THE SEA)
                        # main.lua DEATH: dead, the seconds until it is born again, what killed it, how often it died
                        "dead": bool(c.get("GodlingDead")), "deadFor": c.get("GodlingDeadFor") or 0,
                        "diedOf": c.get("GodlingDiedOf") or "", "deaths": c.get("GodlingDeaths") or 0,

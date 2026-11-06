@@ -65,7 +65,7 @@ T.test("players join, and leave with what they held", function()
     T.eq(g:GetAttribute("BaseWalkSpeed"), 16)
     T.eq(e.humanoid(g).JumpPower, 15, "a person's hop")
     T.eq(e.hrp(g):GetAttribute("ModelUrl"), "asset://godling.glb")
-    T.near(e.hrp(g).Position.X, w.x.PLAYER_SPAWN_POSITION.X, 1e-9, "at the spawn by the raft")
+    T.near(e.hrp(g).Position.X, w.x.PLAYER_SPAWN_POSITION.X, 1e-9, "at the start spot")
     local sky = w.skyPlayer()
     T.near(e.hrp(sky).Position.Y, -40, 1e-9, "the guest panel's body is parked under the island")
     local plain = e.player("Ghost", nil, { noHumanoid = true })
@@ -129,6 +129,10 @@ T.test("the island is put back as a run left it (sky.restore)", function()
          ["color"] = {0.5, 0.3, 0.2}, ["anchored"] = false, ["collide"] = true, ["attrs"] = {["RenderRole"] = "Coconut"}},
         {["name"] = "Mark_2", ["pos"] = {7.0, 0.0, 5.0}, ["turn"] = {0.0, 0.0, 0.0}, ["size"] = {3.0, 0.06, 0.7},
          ["color"] = {0.6, 0.5, 0.4}, ["anchored"] = true, ["collide"] = false, ["attrs"] = {["RenderRole"] = "SandMark"}},
+        {["name"] = "Meteor_5", ["pos"] = {12.0, 1.25, 5.0}, ["turn"] = {0.0, 0.0, 0.0}, ["size"] = {2.5, 2.5, 2.5},
+         ["color"] = {0.25, 0.22, 0.2}, ["anchored"] = true, ["collide"] = true,
+         ["attrs"] = {["RenderRole"] = "Stone", ["SkyEvent"] = "Meteor", ["SkyId"] = 5.0, ["ModelUrl"] = "asset://meteor.glb",
+                      ["LandedAt"] = 1200.0, ["Heat"] = 0.3}},
         {["name"] = "Hammer_1", ["pos"] = {8.0, 0.2, 5.0}, ["turn"] = {0.0, 0.0, 0.0}, ["size"] = {0.4, 0.4, 1.2},
          ["color"] = {0.5, 0.4, 0.2}, ["anchored"] = false, ["collide"] = true,
          ["attrs"] = {["RenderRole"] = "Tool", ["ToolKind"] = "Hammer"}}},
@@ -148,7 +152,13 @@ T.test("the island is put back as a run left it (sky.restore)", function()
     T.eq(e.find("Rock_1"), nil)
     T.eq(e.find("Palm_1"):GetAttribute("RenderRole"), "Stump", "the felled palm is a stump again")
     T.eq(#x.sky.meteor.craters, 1)
-    T.logged(w, "ISLAND restored: 6 pieces, 1 felled trees, day 2")
+    T.logged(w, "ISLAND restored: 7 pieces, 1 felled trees, day 2")
+    -- A meteor's stone cools on where it was: it landed at 1200 s, half a day before the save's clock (2400 s).
+    T.eq(e.find("Meteor_5"):GetAttribute("ModelUrl"), "asset://meteor.glb")
+    T.eq(e.find("Crater_3"):GetAttribute("Heat"), 0, "a crater from before stones cooled is long cold")
+    T.eq(#x.sky.meteor.hot, 1)
+    e.step(x.sky.meteor.COOL_EVERY + 0.1, 0.5)
+    T.eq(e.find("Meteor_5"):GetAttribute("Heat"), 0.25, "(1 - 0.5)^2: a dull glow, as it was when the run stopped")
     local g = w.godling()
     T.near(e.hrp(g).Position.X, 1, 1e-9, "Godling stands where it stood")
     T.eq(g:GetAttribute("Health"), 60)

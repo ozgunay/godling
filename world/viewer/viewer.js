@@ -742,8 +742,9 @@ function drawBody(g) {
   const food = Array.from({ length: 10 }, (_, i) => icon(hunger >= 10 - i ? 'food' : hunger > 9 - i ? 'foodHalf' : 'foodEmpty', scale)).join('')
   // Dead (main.lua DEATH), nothing else about the body matters: what killed it, and when it comes back.
   const dead = g.dead && ['heartEmpty', `Died of ${diedOf(g.diedOf)}${g.deadFor > 0 ? ` · back in ${g.deadFor} s` : ''}`]
-  const states = (dead ? [dead] : [g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'],
-    g.scorched > 0 && ['lightning', 'Burnt'], g.cold && ['cold', 'Cold'], g.wet >= 30 && ['drop', 'Wet']]).filter(Boolean)
+  const states = (dead ? [dead] : [g.drowning && ['wave', 'Drowning'], g.knockedDown && ['quake', 'Knocked down'],
+    g.bracing && ['quake', 'Bracing'], g.scorched > 0 && ['lightning', 'Burnt'], g.cold && ['cold', 'Cold'],
+    g.wet >= 30 && ['drop', 'Wet']]).filter(Boolean)
   if (g.deaths > 0) states.push(['heartEmpty', `${g.deaths} death${g.deaths === 1 ? '' : 's'}`])
   vitals.innerHTML = `<span class="row hearts" role="img" aria-label="Health ${Math.round(health * 10)} of 100">${hearts}</span>
     <span class="states">${states.map(([i, w]) => `<span class="state">${icon(i, 2)}${w}</span>`).join('')}</span>

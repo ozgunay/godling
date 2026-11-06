@@ -9,7 +9,8 @@ import * as THREE from 'three'
 // - smoke that rises and drifts with the wind, and sand and embers thrown out in arcs,
 // - charred chunks that tumble out, bounce once and sink away, and coals that smoulder in the crater,
 // - a jolt of the camera, weaker the farther off it is (none in the server's capture, see shake.js).
-// A meteor falling fast (Meteor_<n>, before it lands) trails fire and smoke. Its crater (Crater_<n>, the same SkyId)
+// A meteor falling fast (Meteor_<n>, before it lands) trails fire and smoke; landed, while it is still hot (its Heat,
+// main.lua sky.meteor.cool; cooling.js draws its glow), a thin smoke rises off it, less as it cools. Its crater (Crater_<n>, the same SkyId)
 // tells where the ground is, for a meteor that hits the top of a building: debris and sand land on the crater's floor.
 // Puffs and embers are fixed pools of pixel billboards that move in their shaders, as the dust's: a new one takes the
 // oldest's place, each pool is one draw call, and only the few chunks move on the CPU. Fewer of everything on the
@@ -25,6 +26,10 @@ const FIRE = 3
 const TRAIL = 4
 const TRAIL_SPEED = 10 // a meteor falling faster than this (units per second) trails fire
 const TRAIL_EVERY = 0.03 // seconds between its trail's puffs, on the high tier
+const TRAIL_STEP = 1.2 // units between puffs along the way it fell since the last ones, on the high tier: a meteor
+const TRAIL_FILL = 12 // comes in at 80 a second (main.lua SKY_FALL_SPEED), so its trail is filled in along the way
+const WISP_HEAT = 0.2 // a landed stone smokes while at least this hot
+const WISP_EVERY = 0.8 // seconds between its puffs, on the high tier, white-hot (longer as it cools)
 const SMOULDER = 4 // seconds the crater smokes
 const LINGER = SMOULDER + 0.5 // seconds a blast is kept
 const GRAVITY = 26 // the chunks'
@@ -369,6 +374,12 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
     soft.add(x, y + 0.5 * s, z, now + 0.04, rand(-0.5, 0.5), rand(0.5, 1.5), rand(-0.5, 0.5), rand(1.2, 2), s * 0.5, 3, TRAIL, -1e4)
   }
 
+  function wisp(x, y, z, size, heat) { // a thin smoke off a stone still hot, rising and drifting
+    const s = Math.max(1, size)
+    soft.add(x + rand(-0.3, 0.3) * s, y + 0.35 * s, z + rand(-0.3, 0.3) * s, now, rand(-0.15, 0.15), rand(0.8, 1.6),
+      rand(-0.15, 0.15), rand(2.5, 3.5), s * rand(0.22, 0.32) * (0.5 + 0.5 * heat), 3, TRAIL, -1e4)
+  }
+
   function explode({ key, x, y, z, radius }) {
     const R = Math.min(20, Math.max(2, radius))
     const floor = floors.get(key) ?? y
@@ -489,14 +500,25 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
       const y = entity.position[1]
       const tracked = meteors.get(entity.id)
       if (!tracked) {
-        meteors.set(entity.id, { y, next: 0 })
+        meteors.set(entity.id, { y, next: 0, trailY: y })
         return
       }
       const vy = dt > 0 ? (y - tracked.y) / dt : 0
       tracked.y = y
+      const heat = Number(attributes.Heat)
       if (vy < -TRAIL_SPEED && now >= tracked.next) {
-        trail(entity.position[0], y, entity.position[2], entity.size?.[1] ?? 2.5)
+        // From where the last puffs were down to here, the newest (white-hot) last, at its head.
+        const gap = Math.max(0, tracked.trailY - y)
+        const puffs = Math.min(TRAIL_FILL, Math.max(1, Math.ceil(gap / (TRAIL_STEP / detail))))
+        for (let k = puffs - 1; k >= 0; k--) {
+          trail(entity.position[0], y + (gap * k) / puffs, entity.position[2], entity.size?.[1] ?? 2.5)
+        }
+        tracked.trailY = y
         tracked.next = now + TRAIL_EVERY / detail
+      } else if (attributes.LandedAt != null && Math.abs(vy) < 1 && heat >= WISP_HEAT && now >= tracked.next) {
+        // A paused replay or a stream's first buffered frames can hold a falling stone still too.
+        wisp(entity.position[0], y, entity.position[2], entity.size?.[1] ?? 2.5, Math.min(1, heat))
+        tracked.next = now + WISP_EVERY / detail / Math.min(1, heat)
       }
     },
     // Forget what is gone.
