@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { CSM } from 'three/addons/csm/CSM.js'
 import { createDeathLook, FADE, GLOW } from '../src/deathlook.js'
 
 // A body as the character controller hangs it under its root: a mesh whose material the model shares.
@@ -98,5 +99,64 @@ describe('deathlook: a dead body fades before it is born again, and comes back i
     look.dispose()
     expect(glows(scene)).toHaveLength(0)
     expect(look.info()).toEqual([])
+  })
+
+  it('registers its own materials for cascaded lighting, which survives rebirth', () => {
+    const scene = new THREE.Scene()
+    const csm = new CSM({ parent: scene, camera: new THREE.PerspectiveCamera(), cascades: 3 })
+    const { root, shared } = body()
+    csm.setupMaterial(shared)
+    const look = createDeathLook(scene, { onMaterial: (m) => csm.setupMaterial(m) })
+    look.update(1, root, { Dead: true, DeadFor: 2 }, [0, 2.5, 0], 0)
+    look.update(1, root, { Dead: false }, [0, 2.5, 0], 0)
+    root.traverse((node) => {
+      if (!node.isMesh) return
+      for (const material of [].concat(node.material)) {
+        expect(material.defines).toMatchObject({ USE_CSM: 1, CSM_CASCADES: 3 })
+        const shader = { uniforms: {} }
+        material.onBeforeCompile(shader)
+        expect(Object.keys(shader.uniforms)).toEqual(['CSM_cascades', 'cameraNear', 'shadowFar'])
+      }
+    })
+    look.dispose()
+    csm.dispose()
+    csm.remove()
+  })
+
+  it('restores shared materials and disposes only its own copies on replacement, pruning, reset and disposal', () => {
+    const scene = new THREE.Scene()
+    const registered = new Set()
+    const look = createDeathLook(scene, { onMaterial: (m) => {
+      registered.add(m)
+      return () => registered.delete(m)
+    } })
+    const bodies = Array.from({ length: 4 }, body)
+    const originals = bodies.map(({ shared }) => vi.spyOn(shared, 'dispose'))
+    const own = ({ root }) => root.children.flatMap((node) => [].concat(node.material)).map((m) => vi.spyOn(m, 'dispose'))
+    look.update(1, bodies[0].root, { Dead: true, DeadFor: 2 }, [0, 2.5, 0], 0)
+    const first = own(bodies[0])
+    look.update(1, bodies[1].root, { Dead: true, DeadFor: 2 }, [0, 2.5, 0], 0)
+    const second = own(bodies[1])
+    expect(first.every((dispose) => dispose.mock.calls.length === 1)).toBe(true)
+    look.prune(new Set())
+    expect(second.every((dispose) => dispose.mock.calls.length === 1)).toBe(true)
+    look.update(1, bodies[2].root, { Dead: true, DeadFor: 2 }, [0, 2.5, 0], 0)
+    const third = own(bodies[2])
+    look.update(1, bodies[2].root, {}, [0, 2.5, 0], 0)
+    look.reset()
+    expect(third.every((dispose) => dispose.mock.calls.length === 1)).toBe(true)
+    expect(glows(scene)).toHaveLength(0)
+    expect(look.info()).toEqual([])
+    look.update(1, bodies[3].root, { Dead: true, DeadFor: 2 }, [0, 2.5, 0], 0)
+    const fourth = own(bodies[3])
+    look.dispose()
+    expect(fourth.every((dispose) => dispose.mock.calls.length === 1)).toBe(true)
+    for (const { root, shared } of bodies) {
+      expect(root.children[0].material).toBe(shared)
+      expect(root.children[1].material).toEqual([shared, shared])
+      expect(shared.opacity).toBe(1)
+    }
+    expect(originals.every((dispose) => dispose.mock.calls.length === 0)).toBe(true)
+    expect(registered.size).toBe(0)
   })
 })

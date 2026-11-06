@@ -131,6 +131,18 @@ describe('characters', () => {
   const ALL = ['Idle', 'Walk', 'Climb', 'Brace', 'Jump', 'Fall', 'PickUp', 'Strike', 'Wave', 'Stagger']
   const weights = (controller) => controller.debug()[0].weights
 
+  it('reconstructs a corpse already dead when its model first arrives, and holds its fallen pose', async () => {
+    const { controller, root } = await setup(ALL)
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    for (let i = 0; i < 120; i++) {
+      controller.update(1, { dt: 1 / 60, attributes: { Gestures: 3, Gesture: 'Stagger', Dead: true } })
+    }
+    expect(controller.debug()[0]).toMatchObject({ current: 'Stagger', weights: { Stagger: 1 }, times: { Stagger: 1 } })
+    expect(root.children[0].children[0].position.x).toBeCloseTo(1) // the clip's final pose, rather than Idle
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 3, Dead: false } })
+    expect(controller.debug()[0].current).toBeNull()
+  })
+
   it('waits for its model, then idles and walks at the body\'s pace', async () => {
     const { controller, root } = await setup(ALL)
     expect(controller.upsert({ entityId: 1, root, modelUrl: '/not-yet.glb' })).toBe(false)

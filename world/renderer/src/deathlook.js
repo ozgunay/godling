@@ -7,7 +7,7 @@ import * as THREE from 'three'
 export const FADE = 3 // seconds before it is born again that the dead body fades away in
 export const GLOW = 2.5 // seconds the glow round a body born again lasts
 
-export function createDeathLook(scene) {
+export function createDeathLook(scene, { onMaterial } = {}) {
   const looks = new Map() // entity id -> { root, dead, left, opacity, materials, glow }
   const column = new THREE.CylinderGeometry(1.3, 1.3, 7, 24, 1, true).translate(0, 1, 0)
   const ring = new THREE.RingGeometry(1.1, 2.3, 32).rotateX(-Math.PI / 2)
@@ -18,11 +18,14 @@ export function createDeathLook(scene) {
   function materialsOf(look) {
     if (!look.materials) {
       look.materials = []
+      look.originals = []
       look.root.traverse((node) => {
         if (!node.isMesh) return
+        look.originals.push({ node, material: node.material })
         node.material = Array.isArray(node.material) ? node.material.map((m) => m.clone()) : node.material.clone()
         for (const m of [].concat(node.material)) {
-          look.materials.push({ m, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite })
+          const unregister = onMaterial?.(m) // clones need the renderer's lighting setup (including CSM) too
+          look.materials.push({ m, unregister, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite })
         }
       })
     }
@@ -63,6 +66,24 @@ export function createDeathLook(scene) {
     look.glow = null
   }
 
+  function releaseMaterials(look) {
+    for (const { node, material } of look.originals || []) node.material = material
+    for (const { m, unregister } of look.materials || []) {
+      if (typeof unregister === 'function') unregister()
+      m.dispose()
+    }
+    look.originals = null
+    look.materials = null
+  }
+
+  function clear() {
+    for (const look of looks.values()) {
+      endGlow(look)
+      releaseMaterials(look)
+    }
+    looks.clear()
+  }
+
   return {
     // Each frame, for each drawn body: how it looks now, from its attributes (Dead, DeadFor).
     update(id, root, attributes, position, dt) {
@@ -73,8 +94,8 @@ export function createDeathLook(scene) {
         looks.set(id, look)
       }
       if (look.root !== root) {
+        releaseMaterials(look)
         look.root = root
-        look.materials = null
         look.opacity = 1
       }
       if (look.dead && !dead) startGlow(look, position) // born again: it rises in the light
@@ -105,14 +126,15 @@ export function createDeathLook(scene) {
       for (const [id, look] of looks) {
         if (!activeIds.has(id)) {
           endGlow(look)
+          releaseMaterials(look)
           looks.delete(id)
         }
       }
     },
+    reset: clear, // a replay seek starts its death/glow state at the new moment, including backwards in time
     info: () => [...looks].map(([id, l]) => ({ id, dead: l.dead, opacity: Number(l.opacity.toFixed(3)), glow: Boolean(l.glow) })),
     dispose() {
-      for (const look of looks.values()) endGlow(look)
-      looks.clear()
+      clear()
       column.dispose()
       ring.dispose()
     },

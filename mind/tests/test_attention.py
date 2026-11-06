@@ -262,3 +262,18 @@ def test_a_death_report_with_little_to_tell(mem):
     inside = Attention(mem)
     inside.on_step(snap([ground()], attrs={"Health": 20, "InHouse": True, "Sheltered": "enclosed"}))
     assert "At the last look you stood inside your house." in inside.death_report(snap([ground()]))
+
+
+def test_a_whole_death_and_rebirth_between_looks_keeps_the_previous_life(mem):
+    a = Attention(mem)
+    a.on_step(snap([ground()], attrs={"Health": 12, "Hunger": 0, "Cold": True}))
+    reborn = snap([ground()], attrs={"Health": 100, "Hunger": 50, "Deaths": 1, "DiedOf": "Cold", "DiedAt": "3,4"})
+    with pytest.raises(Interrupted, match="already come back to life"):
+        a.on_step(reborn)
+    assert a.death_pending, "being alive again must not hide a death that still needs reflection"
+    (event,) = a.take_events()
+    assert event["death"] == "died" and event["at"] == [3, 4]
+    assert "Your health in the minutes before: 12 at the last look." in a.death_report(reborn)
+    assert "100 at the last look" not in a.death_report(reborn)
+    a.on_step(reborn)
+    assert a.death_pending and a.take_events() == [], "ordinary observations cannot consume the pending reflection"

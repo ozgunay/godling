@@ -77,14 +77,20 @@ class Attention:
         self.trail = deque()  # (time, how the body was), one every TRAIL_EVERY seconds, for a death report
         self.noticed = deque()  # (time, text) of what was noticed lately, for a death report
         self.last_life = None  # (trail, noticed) as they were when the body died: what its death report tells
+        self.death_pending = False  # a death seen by the body that the mind has not reflected on yet
 
     def on_step(self, snap):
         """Called by the skills on every observation; raises Interrupted for salient events."""
         if not snap.has_world:
             return
         now = time.time()
-        if snap.dead and not (self.prev is not None and self.prev.dead):  # the life that ended, for its death report
+        new_death = ((self.prev is None and snap.deaths > 0
+                      and snap.deaths != self.memory.state.get("last_reflected_death", 0))
+                     or (self.prev is not None and snap.deaths > self.prev.deaths)
+                     or (snap.dead and not (self.prev is not None and self.prev.dead)))
+        if new_death:  # the whole dead interval can pass during one slow model call
             self.last_life = (list(self.trail), list(self.noticed))
+            self.death_pending = True
             self.trail.clear()
             self.noticed.clear()
         if snap.health is not None and not snap.dead and (not self.trail or now - self.trail[-1][0] >= TRAIL_EVERY):
@@ -229,8 +235,10 @@ class Attention:
                             3, [e.name], {**_at(e.pos), **_sky(e, "warning")}))
         if after.deaths > before.deaths:  # main.lua DEATH: nothing matters more
             where = {"at": [round(after.died_at[0], 1), round(after.died_at[1], 1)]} if after.died_at else {}
-            out.append((f"You died of {death_cause(after.died_of)}. Your body lies where it fell; you will come back to "
-                        f"life at the start in about {after.dead_for or 30:.0f}s", 5, [], {**where, "death": "died"}))
+            what = (f"Your body lies where it fell; you will come back to life at the start in about "
+                    f"{after.dead_for or 30:.0f}s" if after.dead else
+                    "You have already come back to life at the start, whole but half fed")
+            out.append((f"You died of {death_cause(after.died_of)}. {what}", 5, [], {**where, "death": "died"}))
         elif before.dead and not after.dead:
             out.append(("You have come back to life at the start, whole but half fed. What you carried lies where you "
                         "died" + (f", at ({after.died_at[0]:.0f}, {after.died_at[1]:.0f})" if after.died_at else ""),

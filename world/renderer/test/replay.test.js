@@ -73,6 +73,24 @@ describe('the replay player', () => {
     expect(asked).toHaveLength(5)
   })
 
+  it('exposes recorded time for effects: it waits for data, pauses, runs at the chosen speed and seeks backwards', async () => {
+    const { replay, asked, step, settle } = setup()
+    expect(replay.time).toBe(T + 1000)
+    step(250)
+    expect(replay.time).toBe(T + 1000) // the chunk has not arrived
+    asked[0].answer()
+    await settle()
+    replay.command({ paused: true })
+    step(250)
+    expect(replay.time).toBe(T + 1000)
+    replay.command({ paused: false, speed: 4 })
+    step(250)
+    expect(replay.time).toBe(T + 2000)
+    replay.command({ action: 'seek', t: T + 500, paused: true })
+    step(250)
+    expect(replay.time).toBe(T + 500)
+  })
+
   it('asks for a chunk that did not come again, and lets the ones ahead come meanwhile', async () => {
     const { asked, step, settle, later } = setup()
     step()

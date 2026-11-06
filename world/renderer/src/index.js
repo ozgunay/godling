@@ -473,10 +473,19 @@ export function createRenderer(ctx) {
   }
   const litMaterials = new Set()
   const onMaterial = (material) => {
+    const added = []
     for (const m of Array.isArray(material) ? material : [material]) {
       if (!m || litMaterials.has(m) || !(m.isMeshStandardMaterial || m.isMeshPhongMaterial || m.isMeshLambertMaterial)) continue
       litMaterials.add(m)
+      added.push(m)
       csm?.setupMaterial(m)
+    }
+    // Most materials live for the renderer's lifetime; death's per-body copies release their registrations sooner.
+    return () => {
+      for (const m of added) {
+        litMaterials.delete(m)
+        csm?.shaders.delete(m)
+      }
     }
   }
 
@@ -512,7 +521,7 @@ export function createRenderer(ctx) {
   // flash light. `?bolt=4` strikes near the camera's target every 4 seconds, to look.
   const lightning = createLightning(scene, tier, { light: blasts.light })
   // Death: a dead body fades before it is born again, and comes back at the start in a glow (deathlook.js).
-  const deathLook = createDeathLook(scene)
+  const deathLook = createDeathLook(scene, { onMaterial })
   const boltEvery = Number(params.get('bolt'))
   let nextBolt = 1
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
@@ -631,9 +640,14 @@ export function createRenderer(ctx) {
   const resolveAsset = (url) => (url.startsWith('asset://') ? (assetBase === null ? null : assetBase + url.slice(8)) : url)
   // The island's past, when the screen asks for it (ADR-016): its frames go into the same buffer the live ones do, so
   // the camera follows Godling in replay as it does live.
+  let lastDeathReplayTime = null
   const replay = embedded ? createReplay({
     onFrame: (obs) => stateBuffer.push(obs),
-    onReset: () => stateBuffer.clear(),
+    onReset: () => {
+      stateBuffer.clear()
+      deathLook.reset()
+      lastDeathReplayTime = null
+    },
     tell: tellScreen,
     assetBase: () => assetBase,
     // Before any live entity has shown where the island serves models: beside this renderer (renderer-files/dist).
@@ -944,7 +958,7 @@ export function createRenderer(ctx) {
   }
 
   // Returns the sea level and the island's footprint for the sea.
-  function updateScene(obs, dt) {
+  function updateScene(obs, dt, deathDt = dt) {
     const activeIds = new Set()
     const stateByRootPartId = new Map()
     const attributesByRootPartId = new Map()
@@ -1075,7 +1089,7 @@ export function createRenderer(ctx) {
         })
         bodies.push({ id: entity.id, speed })
         bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
-        deathLook.update(entity.id, root, attributesByRootPartId.get(entity.id) || {}, position, dt) // fades, glows
+        deathLook.update(entity.id, root, attributesByRootPartId.get(entity.id) || {}, position, deathDt) // fades, glows
       }
       record.fresh = false
       if (moved) {
@@ -1246,17 +1260,20 @@ export function createRenderer(ctx) {
   // A frame of the past: drawn from the replay's frames, even before the first live state was ever drawn.
   function drawReplay() {
     replay.step()
+    const deathTime = replay.time
+    const deathDt = lastDeathReplayTime === null ? 0 : Math.max(0, (deathTime - lastDeathReplayTime) / 1000)
+    lastDeathReplayTime = deathTime
     const now = performance.now()
     const dt = Math.min((now - lastStateMs) / 1000, 0.05)
     lastStateMs = now
     const obs = stateBuffer.interpolated() || latestObs
-    if (obs) draw(obs, dt)
+    if (obs) draw(obs, dt, deathDt)
   }
 
-  function draw(obs, dt) {
+  function draw(obs, dt, deathDt = dt) {
     latestObs = obs
     elapsed += dt
-    const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt)
+    const { seaLevel, land, landKey, cameraTarget, swimming } = updateScene(obs, dt, deathDt)
     if (seaLevel != null) lastSeaLevel = seaLevel
     quakeNow += (worldQuake - quakeNow) * Math.min(1, dt * 3)
     updateSunAndLights(dt, cameraTarget)

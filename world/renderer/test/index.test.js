@@ -616,6 +616,49 @@ describe('the renderer', () => {
     r.unmount()
   })
 
+  it('keeps a paused replay corpse visible, fades at replay speed, and restores it on a backwards seek', async () => {
+    history.replaceState(null, '', '/?embed=1&quality=low')
+    const screen = { postMessage: vi.fn() }
+    vi.stubGlobal('parent', screen)
+    let now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const t = Date.UTC(2026, 10, 3, 6)
+    const state = {
+      players: [{ id: 'p1', name: 'Godling', root_part_id: 100, position: [0, 2.5, 0],
+        attributes: { Dead: true, DeadFor: 3, Gestures: 1, Gesture: 'Stagger' } }],
+      entities: [part(100, 'Body', [0, 2.5, 0], [2, 5, 2], { model_url: '/assets/godling.glb' })],
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode(JSON.stringify({
+      format: 1, t0: t, frames: [{ t, full: state }],
+    })).buffer })))
+    const { ctx } = runtime()
+    const r = createRenderer(ctx)
+    r.onState(state)
+    await flush() // its model is ready before replay begins
+    r.onFrame({ dt: 0 })
+    const command = (data) => {
+      const event = new MessageEvent('message', { data: { source: 'godling-viewer', type: 'godling-replay', ...data } })
+      Object.defineProperty(event, 'source', { value: screen })
+      dispatchEvent(event)
+    }
+    const frame = (ms) => { now += ms; r.onFrame({ dt: ms / 1000 }) }
+    const opacity = () => globalThis.__godlingRenderer.deaths()[0].opacity
+    command({ action: 'start', t: t + 1000, base: '/replay', segments: [{ start: t, end: t + 600e3 }], paused: true })
+    frame(0)
+    await flush()
+    frame(0)
+    for (let i = 0; i < 80; i++) frame(50)
+    expect(opacity()).toBe(1) // four wall seconds pass, while the recorded countdown stays at three
+    command({ paused: false, speed: 4 })
+    for (let i = 0; i < 4; i++) frame(125)
+    expect(opacity()).toBeCloseTo(1 / 3, 2) // half a wall second is two recorded seconds
+    command({ action: 'seek', t: t + 1000, paused: true })
+    frame(0)
+    expect(opacity()).toBe(1) // seeking to the same rounded countdown must reset the old extrapolation
+    expect(globalThis.__godlingRenderer.deaths()[0].glow).toBe(false)
+    r.unmount()
+  })
+
   it('works without the runtime\'s extras', () => {
     const { ctx } = runtime()
     ctx.runtime.internal = undefined
