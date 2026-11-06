@@ -124,7 +124,7 @@ def test_situation_lists_what_matters(world, tmp_path):
     text = mind.situation(island.snap(), [{"text": "A thing happened", "entities": ["Block_3"]}],
                           [{"agent_name": "Ann", "content": "hello"}], doing=[{"goal": "a wall"}])
     assert "It is 06:30, dawn." in text and "holding Log_4" in text
-    assert "You are 50% fed, with health 90 of 100; you have fainted from hunger 1 time." in text
+    assert "You are 50% fed, with health 90 of 100; you have fainted 1 time." in text
     assert "You are wet (20%)." in text and "Fires burning: Fire_1 (2.0, -2.0)." in text
     assert "Fish swimming in the shallows nearest you: Fish_1 (0.0, 20.0)." in text
     assert "Lines you drew in the sand (2, oldest first): (2, 2)-(3, 3); (0, 0)-(1, 1)." in text
@@ -140,6 +140,15 @@ def test_situation_lists_what_matters(world, tmp_path):
     for hour, part in ((2, "night"), (9, "morning"), (12, "midday"), (15, "afternoon"), (19, "evening")):
         island.clock = {"TimeOfDay": hour}
         assert f", {part}." in mind.situation(island.snap(), [], [])
+
+
+def test_situation_does_not_describe_drowning_as_hunger(world, tmp_path):
+    island, _, _ = world
+    island.attrs.update(Hunger=50, Health=30, Faints=1, Drowned=1)
+    mind = make_mind(world, tmp_path, FakeLLM())
+    text = mind.situation(island.snap(), [], [])
+    assert "you have fainted 1 time" in text
+    assert "fainted from hunger" not in text
 
 
 def test_situation_with_discovery_and_many_loose_things(world, tmp_path):

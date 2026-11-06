@@ -33,6 +33,8 @@ The user chose each of these.
      is at most 1.6 above its feet.
    - After 3 seconds there (`EDGE_SECONDS`), the world puts it on the nearest spot where the whole body stands on
      that floor and fits, as it frees a body caught inside a piece.
+   - If there is nowhere safe to stand, it drowns while the rescue retries every 3 seconds. A later safe landing
+     still gives it back to the shore and stops the drowning.
    - `Ashore` counts the times, and the log says `ASHORE`.
 3. **The step-away reflex keeps to the floor** (`skills._unstick`).
    - It steps only where the whole body stays on its own floor, all the way.
@@ -65,7 +67,8 @@ The user chose each of these.
   - deep water drowns too;
   - the guest panel's parked body never drowns;
   - a climbing body is left to the world;
-  - a lip with nowhere to stand is left alone.
+  - a lip with nowhere safe to stand still drowns the body until it faints;
+  - a failed lip rescue retries when a safe landing appears, and the drowning stops ashore.
 - **`mind/tests`:**
   - the step-away at a beach edge goes along the beach, refuses a strip too small to step on, and slips out of a gap
     on the landward side;

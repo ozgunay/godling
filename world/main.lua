@@ -4893,6 +4893,7 @@ end)()
 -- the run was restarted. Now:
 -- - a body hanging on the beach's edge (no ground under its middle, the sand's top a little above its feet) for
 --   EDGE_SECONDS is put back on the nearest sand where it fits, as a body caught inside a piece is (FREED above);
+--   if no safe landing exists, it drowns while the world keeps looking every EDGE_SECONDS;
 -- - a body in the sea (below the water's top, no ground under it or just beside its feet) drowns slowly: the sea takes
 --   a whole body's health in DROWN_SECONDS. At none it faints as a starving body does: what it holds drops, and it
 --   wakes at the start spot. `Drowning` says so meanwhile, to the mind and to viewers.
@@ -4903,6 +4904,7 @@ sky.tickSea = (function()
     local EDGE_REACH, EDGE_RISE = 1.2, 1.6 -- the lip it hangs on: this near its middle, at most this far above its feet
     local ASHORE_SEARCH, RIM = 8, 1.1 -- how far to look for sand to put it back on; the body's rim, with a margin
     local edgeSince = {}
+    local edgeFailed = {} -- no safe landing: the water keeps taking health between rescue attempts
 
     -- Where the body is: nil (on something), "edge" (hanging on a lip, and the lip's top), or "sea".
     local function whereIs(hrp)
@@ -4967,6 +4969,7 @@ sky.tickSea = (function()
                     local from = hrp.Position
                     local spot = ashoreSpot(player, from, lip)
                     if spot then
+                        edgeFailed[player] = nil
                         hrp.Position = spot
                         hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                         local humanoid = getHumanoid(player)
@@ -4976,10 +4979,16 @@ sky.tickSea = (function()
                         player:SetAttribute("Ashore", (player:GetAttribute("Ashore") or 0) + 1)
                         print(string.format("ASHORE %s hung on the edge of the sand: (%.1f, %.1f) to (%.1f, %.1f)",
                             player.Name, from.X, from.Z, spot.X, spot.Z))
+                    else
+                        edgeFailed[player] = true
                     end
+                end
+                if edgeFailed[player] then
+                    where = "sea" -- an unusable lip must not leave the body stranded forever
                 end
             else
                 edgeSince[player] = nil
+                edgeFailed[player] = nil
             end
             local s = surviving[player]
             if where == "sea" and s then

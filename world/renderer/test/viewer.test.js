@@ -176,6 +176,26 @@ describe('the viewer screen', () => {
     expect(told.at(-1)).toEqual({ source: 'godling-viewer', type: 'godling-cutaway', on: true })
   })
 
+  it('updates drowning in replay even when the clock and other vitals stay the same', async () => {
+    const answers = {
+      'api/replay/index': { body: { segments: [{ start: NOW * 1000 - 3600e3, end: NOW * 1000, live: true }] } },
+    }
+    const { $, stage, fromIsland, tick } = await boot({ answers })
+    fromIsland({ type: 'godling-ready' })
+    $('.b-rewind').click()
+    await tick(0)
+    expect(stage.classList.contains('replaying')).toBe(true)
+    const frame = { type: 'godling-replay-time', t: NOW * 1000 - 600e3, paused: true,
+      clock: panelStatus().clock, godling: { ...panelStatus().godling, drowning: false } }
+    fromIsland(frame)
+    expect($('.b-vitals .states').textContent).not.toContain('Drowning')
+    fromIsland({ ...frame, t: frame.t + 250, godling: { ...frame.godling, drowning: true } })
+    expect($('.b-vitals .states').textContent).toContain('Drowning')
+    fromIsland(frame) // seeking back must remove the badge just as promptly
+    expect($('.b-vitals .states').textContent).not.toContain('Drowning')
+    history.replaceState(null, '', '/')
+  })
+
   it('switches the camera, remembers it, and forwards the flying keys to the island', async () => {
     const { $, view, told } = await boot()
     const [follow, free] = $('.b-camera').querySelectorAll('button')

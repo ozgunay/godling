@@ -84,17 +84,56 @@ T.test("a body far under the water drowns too, the guest panel never does, and a
     T.eq(g:GetAttribute("Drowning"), false)
 end)
 
-T.test("hanging on an edge with no sand to stand on nearby: it stays, and slips or drowns in time", function()
+T.test("hanging on an edge with nowhere safe ashore: the sea still drowns the body", function()
     local w = T.boot({
         before = function(e) -- a lone post standing in the sea, too narrow for a body to stand on its top
             e.part("SeaPost", { Anchored = true, Size = V.new(2, 10, 2), Position = V.new(-160, -5.1, -40) })
         end,
     })
-    local e = w.e
+    local e, x = w.e, w.x
     local g = w.godling(V.new(-158.3, 1.68, -40)) -- hanging on its edge
     e.step(4, 0.5)
     T.eq(g:GetAttribute("Ashore"), nil, "nowhere to put it")
     T.near(e.hrp(g).Position.X, -158.3, 1e-9)
+    T.eq(g:GetAttribute("Drowning"), true, "the lip cannot keep it safe after rescue fails")
+    local s = x.surviving[g]
+    s.hunger = 0 -- no healing obscures the sea's pace
+    local before = s.health
+    e.step(6, 0.5)
+    T.near(s.health, before - 6 * (100 / 90 + 100 / x.STARVE_SECONDS), 0.01,
+        "drowning continues between attempts to find a safe landing")
+    s.health = 0.1
+    e.step(0.5, 0.5)
+    T.eq(g:GetAttribute("Drowned"), 1)
+    T.eq(g:GetAttribute("Faints"), 1)
+    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9)
+    T.near(e.hrp(g).Position.Z, x.PLAYER_SPAWN_POSITION.Z, 1e-9)
+    T.eq(g:GetAttribute("Drowning"), false)
+end)
+
+T.test("a failed lip rescue retries when a safe landing appears and stops the drowning", function()
+    local w = T.boot({
+        before = function(e)
+            e.part("SeaPost", { Anchored = true, Size = V.new(2, 10, 2), Position = V.new(-160, -5.1, -40) })
+        end,
+    })
+    local e, x = w.e, w.x
+    local g = w.godling(V.new(-158.3, 1.68, -40))
+    e.step(4, 0.5)
+    T.eq(g:GetAttribute("Drowning"), true)
+    e.part("SeaLanding", { Anchored = true, Size = V.new(8, 1, 8), Position = V.new(-160, -0.6, -40) })
+    e.step(2.5, 0.5) -- the next attempt, three seconds after the failed rescue
+    T.eq(g:GetAttribute("Ashore"), 1)
+    T.eq(g:GetAttribute("Drowning"), false)
+    T.eq(x.clockPart:GetAttribute("GodlingDrowning"), false)
+    T.near(e.hrp(g).Position.Y, -0.1 + x.BODY_ABOVE_FEET, 1e-9)
+    local s = x.surviving[g]
+    s.hunger = 20 -- neither starving nor healing
+    local ashoreHealth = s.health
+    e.step(2, 0.5)
+    T.near(s.health, ashoreHealth, 1e-9, "the failed-rescue state is cleared ashore")
+    T.eq(g:GetAttribute("Drowned"), nil)
+    T.eq(g:GetAttribute("Ashore"), 1)
 end)
 
 return T.done("test_sea")

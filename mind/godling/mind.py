@@ -513,7 +513,7 @@ thought and in that project's intention."""
             f"You are at {_fmt_pos(snap.me)}, holding {held.name if held else 'nothing'}.",
             *([self._house_line(snap)] if self.house_project and self.memory.state.get("house") else []),
             *([f"You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100"
-               + (f"; you have fainted from hunger {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
+               + (f"; you have fainted {snap.faints} time{'s' if snap.faints != 1 else ''}" if snap.faints else "")
                + "."] if snap.hunger is not None else []),
             *([_how_it_feels(snap)] if _how_it_feels(snap) else []),
             f"Others: {others}.",
