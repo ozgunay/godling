@@ -54,7 +54,7 @@ describe('meteor blasts', () => {
   })
 
   it('a landed stone smokes while it is hot, less as it cools, and not once it is cold', () => {
-    const resting = (heat) => ({ ...meteor(1, 1.25), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: heat } })
+    const resting = (heat) => ({ ...meteor(1, 1.25), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: heat, LandedAt: 0 } })
     const puffs = (heat, seconds) => {
       const blasts = createBlasts(new THREE.Scene(), HIGH)
       let most = 0
@@ -79,6 +79,22 @@ describe('meteor blasts', () => {
       old.update({ time: t, dt: 1 / 30, daylight: 1, camera: new THREE.PerspectiveCamera() })
     }
     expect(old.info().smoke).toBe(0)
+  })
+
+  it('keeps a stationary falling snapshot from starting landed smoke and delaying the fire trail', () => {
+    const blasts = createBlasts(new THREE.Scene(), HIGH)
+    const falling = (y) => ({ ...meteor(1, y), attributes: { SkyEvent: 'Meteor', SkyId: 4, Heat: 1 } })
+    const frame = (y, time) => {
+      blasts.watch(falling(y), 0.05)
+      blasts.update({ time, dt: 0.05, daylight: 1, camera: new THREE.PerspectiveCamera() })
+    }
+    frame(40, 0)
+    frame(40, 0.05) // a newly joined stream's buffer, or a replay paused before landing
+    expect(blasts.info().smoke).toBe(0)
+    frame(38, 0.1) // motion resumes: the landed-smoke timer must not hold the falling trail back
+    expect(blasts.info().glow).toBeGreaterThan(0)
+    expect(blasts.info().smoke).toBeGreaterThan(0)
+    blasts.dispose()
   })
 
   it('flares the ambient light on a tier without the flash\'s own light', () => {
