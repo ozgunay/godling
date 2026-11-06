@@ -69,6 +69,28 @@ describe('aiming a sky power', () => {
     expect(reticle.children[1].material.color.getHex()).toBe(0x63b544)
   })
 
+  it('a storm\'s strike turns red on Godling, and the spots picked so far stay marked', () => {
+    const { aim, c, calls, reticle, scene } = setup()
+    aim.start('Storm')
+    c.dispatchEvent(pointer('pointermove', { x: 50, y: 50 }))
+    expect(reticle.children[1].material.color.getHex()).toBe(0xec4b4f) // a strike on Godling hurts it
+    expect(reticle.children[1].scale.x).toBe(2.5)
+    c.dispatchEvent(pointer('pointermove', { x: 80, y: 50 }))
+    expect(reticle.children[1].material.color.getHex()).toBe(0x9cc8ff)
+    c.dispatchEvent(pointer('pointerdown', { x: 80, y: 50 }))
+    c.dispatchEvent(pointer('pointerup', { x: 80, y: 50 }))
+    expect(calls.aimed[0].y).toBeCloseTo(0) // the ground's height, for the mark
+    const before = scene.children.length
+    aim.marks([{ x: 1, y: 0, z: 2 }, { x: 3, z: 4 }, { x: 'no' }])
+    expect(aim.marked).toBe(2)
+    expect(scene.children.length).toBe(before + 2)
+    aim.marks([{ x: 1, y: 0, z: 2 }])
+    expect(aim.marked).toBe(1)
+    aim.marks()
+    expect(aim.marked).toBe(0)
+    expect(scene.children.length).toBe(before)
+  })
+
   it('misses the sky, and Escape cancels', () => {
     const { aim, c, calls, camera } = setup(null)
     camera.position.set(0, 50, 0)

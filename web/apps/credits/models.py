@@ -115,6 +115,7 @@ class PowerCall(models.Model):
     price = models.PositiveIntegerField(help_text="Credits taken (0 in test mode).")
     at_x = models.FloatField(null=True, blank=True)
     at_z = models.FloatField(null=True, blank=True)
+    spots = models.JSONField(default=list, blank=True, help_text="A storm's strikes: up to three [x, z] (ADR-023).")
     ok = models.BooleanField(default=False, help_text="The world did it.")
     refunded = models.BooleanField(default=False)
     answer = models.CharField(max_length=200, blank=True, help_text="What the world said.")

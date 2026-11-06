@@ -87,7 +87,8 @@ def test_move_renews_long_walks(make):
 def test_move_falls_into_the_sea(make):
     island, body = make(bare=True, entities=[ent("Sand", (0, -0.5, 0), (6, 1, 6), role="Ground")])
     with pytest.raises(Stuck, match="fell off the edge into the sea: you cannot climb back out, and the water is "
-                                    "drowning you; you will wake at the start spot"):
+                                    "drowning you; if it drowns you, you die, and come back to life at the start "
+                                    "spot"):
         body._move_once(10, 0, 0.6)
 
 

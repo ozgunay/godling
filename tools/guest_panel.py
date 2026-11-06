@@ -49,12 +49,14 @@ POWERS = [
     ("Stone", "Drop a stone", "A stone block drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
     ("Log", "Drop a log", "A log beam drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
     ("Regrow", "Regrow a tree", "The stump nearest your aim grows back at once.", "gift"),
-    ("Lightning", "Lightning", "Strikes the palm nearest your aim, if it stands well away from Godling and its walls, "
-     "and fells it into two logs.", "mid"),
     ("Meteor", "Meteor", "A shadow spreads where you aim; 40 s later a stone blasts there, whatever stands in it: "
      "Godling, its walls, palms. It leaves a crater.", "big"),
     ("Earthquake", "Earthquake", "The ground rumbles, then shakes for 20 s. Loose pieces near Godling can fall; fastened "
      "ones hold. Godling braces itself.", "big"),
+    # Lightning's place (ADR-023): three aimed strikes in a storm (main.lua sky.storm). The world keeps Lightning too.
+    ("Storm", "Storm", "Pick three spots: 30 s later a storm breaks and lightning strikes each, in its own time. A "
+     "strike on Godling leaves it with half a heart, burned; close by it hurts. A palm comes down as two logs; a roof "
+     "over Godling takes the strike. It never kills.", "big"),
     ("Note", "Note", "A paper glider drifts down near Godling with a short note.", "note"),
 ]
 WHY_NOT = {
@@ -67,7 +69,8 @@ WHY_NOT = {
     "NobodyHere": "Godling is not in the world.",
     "UnknownPower": "The world does not know that power (is it running an older copy of main.lua?).",
     "AlreadyShaking": "The ground is already shaking.",
-    "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after a faint.",
+    "AlreadyStorming": "A storm is already raging.",
+    "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after it died.",
     "NothingBuiltYet": "Nothing built yet: an earthquake needs at least 15 pieces standing near Godling.",
     "EmptyNote": "The note was empty.",
 }
@@ -78,6 +81,7 @@ DONE = {
     "Lightning": "struck a tree.",
     "Meteor": "a shadow spreads; the stone blasts there in 40 s.",
     "Earthquake": "the ground rumbles; the shaking starts in 8 s.",
+    "Storm": "dark clouds roll in; the storm breaks in 30 s.",
     "Note": "a paper glider drifts down near Godling.",
 }
 LOG_TAIL_BYTES = 400_000
@@ -139,6 +143,13 @@ class Sky:
             except (WorldError, KeyError):
                 self.world.session = None
                 return None
+
+
+def is_spot(at):
+    """A place a viewer aimed at: [x, z], two finite numbers on (or near) the island."""
+    return (isinstance(at, list) and len(at) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and abs(v) < 2000
+                    for v in at))
 
 
 def describe(power, result):
@@ -326,13 +337,16 @@ class Island:
                 print(f"Guest panel: could not keep a viewer's act for replays: {err}", flush=True)
         return entry
 
-    def power(self, client, name, power, at=None):
+    def power(self, client, name, power, at=None, spots=None):
         now = time.time()
         with self.lock:
             if not self.trusted and now - self.last_power.get(client, 0) < POWER_EVERY:
                 return {"ok": False, "text": "One power at a time: give the last one a moment."}
             self.last_power[client] = now
-        result = self.sky.call(power, **({"at": {"x": at[0], "z": at[1]}} if at else {}))
+        aimed = {"at": {"x": at[0], "z": at[1]}} if at else {}
+        if spots:  # a storm's strikes (main.lua sky.storm): up to three spots
+            aimed["spots"] = [{"x": x, "z": z} for x, z in spots]
+        result = self.sky.call(power, **aimed)
         ok, text = describe(power, result)
         entry = self.popup("power", name, power, text, ok)
         too_soon = re.search(r"TooSoon:(\d+)", result)
@@ -386,7 +400,11 @@ class Island:
             godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,
                        "cold": bool(c.get("GodlingCold")), "bracing": bool(c.get("GodlingBracing")),
                        "knockedDown": bool(c.get("GodlingKnockedDown")),
-                       "drowning": bool(c.get("GodlingDrowning"))}  # in the sea (main.lua THE SEA)
+                       "drowning": bool(c.get("GodlingDrowning")),  # in the sea (main.lua THE SEA)
+                       # main.lua DEATH: dead, the seconds until it is born again, what killed it, how often it died
+                       "dead": bool(c.get("GodlingDead")), "deadFor": c.get("GodlingDeadFor") or 0,
+                       "diedOf": c.get("GodlingDiedOf") or "", "deaths": c.get("GodlingDeaths") or 0,
+                       "scorched": c.get("GodlingScorched") or 0}  # seconds it stays charred (a storm's strike)
         with self.lock:
             mine = self.last_note.get(client, 0)
             notes = {"limit": NOTE_LIMIT, "every": self.note_every, "queue": len(self.notes),
@@ -494,9 +512,10 @@ def serve(world, port, run_dir=None, view=None, note_every=180, note_gap=60, key
                 if body.get("power") not in powers:
                     return self._json({"ok": False, "text": "Unknown power."}, 400)
                 at = body.get("at")  # where the viewer aimed, [x, z] on the island; none lets the world choose
-                ok_at = (isinstance(at, list) and len(at) == 2 and all(isinstance(v, (int, float)) and math.isfinite(v)
-                                                                      and abs(v) < 2000 for v in at))
-                return self._json(island.power(client, name, body["power"], [round(v, 2) for v in at] if ok_at else None))
+                spots = body.get("spots")  # a storm's strikes: up to three [x, z]; any left out, the world picks
+                spots = [[round(v, 2) for v in s] for s in spots if is_spot(s)][:3] if isinstance(spots, list) else None
+                return self._json(island.power(client, name, body["power"], [round(v, 2) for v in at] if is_spot(at)
+                                               else None, spots or None))
             if url.path == "/api/note":
                 ref = body.get("ref") if key and type(body.get("ref")) is int else None  # the site's id for the note
                 return self._json(island.note(client, name, body.get("text"), ref))

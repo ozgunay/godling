@@ -131,6 +131,18 @@ describe('characters', () => {
   const ALL = ['Idle', 'Walk', 'Climb', 'Brace', 'Jump', 'Fall', 'PickUp', 'Strike', 'Wave', 'Stagger']
   const weights = (controller) => controller.debug()[0].weights
 
+  it('reconstructs a corpse already dead when its model first arrives, and holds its fallen pose', async () => {
+    const { controller, root } = await setup(ALL)
+    controller.upsert({ entityId: 1, root, modelUrl: '/c.glb' })
+    for (let i = 0; i < 120; i++) {
+      controller.update(1, { dt: 1 / 60, attributes: { Gestures: 3, Gesture: 'Stagger', Dead: true } })
+    }
+    expect(controller.debug()[0]).toMatchObject({ current: 'Stagger', weights: { Stagger: 1 }, times: { Stagger: 1 } })
+    expect(root.children[0].children[0].position.x).toBeCloseTo(1) // the clip's final pose, rather than Idle
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 3, Dead: false } })
+    expect(controller.debug()[0].current).toBeNull()
+  })
+
   it('waits for its model, then idles and walks at the body\'s pace', async () => {
     const { controller, root } = await setup(ALL)
     expect(controller.upsert({ entityId: 1, root, modelUrl: '/not-yet.glb' })).toBe(false)
@@ -164,6 +176,17 @@ describe('characters', () => {
     expect(controller.debug()[0].current).toBe('Stagger') // held down
     controller.update(1, { dt: 0.1, attributes: { Gestures: 5, KnockedDown: false } })
     expect(controller.debug()[0].current).toBeNull()
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Gesture: 'Stagger', Dead: true } }) // it dies: it falls
+    for (let i = 0; i < 30; i++) controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Dead: true } })
+    expect(controller.debug()[0].current).toBe('Stagger') // and lies there while it is dead
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Dead: false } })
+    expect(controller.debug()[0].current).toBeNull()
+    // A body first seen before it ever gestured plays its first gesture (here it dies before it has done anything).
+    controller.upsert({ entityId: 2, root: new THREE.Group(), modelUrl: '/c.glb' })
+    controller.update(2, { dt: 0.1, attributes: {} })
+    controller.update(2, { dt: 0.1, attributes: { Gestures: 1, Gesture: 'Stagger', Dead: true } })
+    expect(controller.debug().find((d) => d.id === 2).current).toBe('Stagger')
+    controller.remove(2)
     for (let i = 0; i < 10; i++) controller.update(1, { dt: 0.2, attributes: { Climbing: true } })
     expect(weights(controller).Climb).toBeGreaterThan(0.9)
     for (let i = 0; i < 10; i++) controller.update(1, { dt: 0.2, attributes: { Bracing: true } })

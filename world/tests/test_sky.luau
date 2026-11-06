@@ -307,10 +307,12 @@ T.test("a meteor on Godling's head, with someone standing in the crater, and one
     T.eq(w.power("Meteor", aim(p, 3, 3)), "SkyFailed:GodlingIsWeak")
     x.surviving[w.g].health = 30
     T.eq(w.power("Meteor", aim(p, 3, 3)), "SkyDone:Meteor:2")
-    x.surviving[w.g].health = 20 -- the blast faints it: no knock-down on top
+    x.surviving[w.g].health = 20 -- the blast kills it: no knock-down on top
     e.step(40.1, 0.1)
     e.step(2, 0.1)
-    T.eq(w.g:GetAttribute("Faints"), 1)
+    T.eq(w.g:GetAttribute("Deaths"), 1)
+    T.eq(w.g:GetAttribute("DiedOf"), "Meteor")
+    T.eq(x.sky.quake.knocked(w.g), false, "the dead are not knocked down")
 end)
 
 T.test("a meteor aimed at the sea, or with nowhere clear to land, and the craters that are kept", function()
@@ -395,20 +397,47 @@ T.test("the earthquake: a rumble, Godling braces, the shaking wakes loose pieces
     T.starts(w.power("Earthquake"), "SkyFailed:TooSoon:")
 end)
 
-T.test("no earthquake while Godling is weak, or just after it fainted, or without a body", function()
+T.test("no earthquake while Godling is weak, lies dead, or was born again lately, or without a body", function()
     local w = sky()
     local e, x = w.e, w.x
     e.step(0.1)
     x.surviving[w.g].health = 10
     T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak")
-    x.surviving[w.g].health = 100
-    w.g:SetAttribute("Faints", 1)
-    e.step(0.1)
-    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "too soon after a faint")
+    x.death.die(w.g, x.surviving[w.g], "Hunger")
+    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "dead")
+    e.step(31, 1)
+    T.eq(x.surviving[w.g].health, 100, "born again, whole")
+    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "too soon after it died")
+    e.now = e.now + 900
+    T.ok(not x.sky.quake.weak(w.g), "fifteen minutes on, the mercy rule lets go")
     e.hrp(w.g):Destroy()
     e.now = e.now + 1000
     T.eq(w.power("Earthquake"), "SkyFailed:NobodyHere")
     T.eq(w.power("Lightning"), "SkyFailed:NoSafePalm")
+end)
+
+T.test("dying ends a brace or knock-down without releasing or getting up the corpse", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    e.step(0.1)
+    for i = 1, 16 do
+        piece(e, "Block_" .. (100 + i), w.spot + V.new(5 + (i % 4) * 2.5, -1.3, 5 + math.floor(i / 4) * 2.5))
+    end
+    T.starts(w.power("Earthquake"), "SkyDone:Earthquake:")
+    T.eq(w.act(w.g, "Brace", {}), "Braced")
+    x.hurt(w.g, 200, "Lightning")
+    T.eq(w.g:GetAttribute("Bracing"), false, "a corpse no longer braces")
+    e.step(30.1, 0.5)
+    T.eq(w.g:GetAttribute("Dead"), false)
+    T.eq(e.hrp(w.g).Anchored, false, "reborn before the shaking ends, it can still walk")
+    x.sky.quake.knockDown(w.g, e.hrp(w.g))
+    x.hurt(w.g, 200, "Meteor")
+    T.eq(w.g:GetAttribute("KnockedDown"), false)
+    e.step(5, 0.5)
+    T.eq(e.hrp(w.g).Anchored, true, "the knock-down timer does not release a corpse")
+    T.eq(w.g:GetAttribute("Gesture"), "Stagger", "it has not got up")
+    e.step(25.1, 0.5)
+    T.eq(e.hrp(w.g).Anchored, false, "the corpse releases at rebirth")
 end)
 
 T.test("notes from viewers: cleaned, capped by characters, drifting down, and gone after a while", function()
@@ -470,6 +499,181 @@ T.test("trees nearest a point, by kind", function()
     local t = x.nearestTree("Tree", V.new(0, 0, 0))
     T.ok(t and t.part, "a standing palm")
     T.eq(x.nearestTree("Stump", V.new(0, 0, 0)), nil, "no stump yet")
+end)
+
+-- The storm called down (main.lua THE STORM): the order of its strikes is the world's; a test sets it.
+local function strikesAt(x, order)
+    for _, spot in ipairs(x.sky.storm.active().spots) do
+        for _, o in ipairs(order) do
+            if math.abs(spot.x - o[1]) < 1e-6 and math.abs(spot.z - o[2]) < 1e-6 then
+                spot.at = o[3]
+            end
+        end
+    end
+end
+
+T.test("a storm: a warning, three strikes where they were aimed (Godling, a palm, the ground), and it passes", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local palm = e.find("Palm_6")
+    local p = palm.Position
+    local g = V.new(p.X + 20, 2.45, p.Z)
+    e.hrp(w.g).Position = g
+    e.step(1)
+    local s = x.surviving[w.g]
+    s.health = 80
+    local ground = { g.X, g.Z + 15 }
+    T.starts(w.power("Storm", { spots = { { x = g.X, z = g.Z }, { p.X, p.Z }, ground } }), "SkyDone:Storm:")
+    strikesAt(x, { { g.X, g.Z, 40 }, { p.X, p.Z, 60 }, { ground[1], ground[2], 80 } })
+    local clock = e.find("Clock")
+    T.eq(clock:GetAttribute("StormPhase"), "warning")
+    T.eq(#string.split(clock:GetAttribute("StormSpots"), ";"), 3)
+    T.logged(w, "SKY Storm #1 called: strikes at")
+    local markers = {}
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        if part:GetAttribute("RenderRole") == "StormSpot" then
+            table.insert(markers, part)
+            T.eq(part:GetAttribute("Charged"), false)
+        end
+    end
+    T.eq(#markers, 3, "three spots crackle on the ground")
+    T.eq(w.power("Storm"), "SkyFailed:AlreadyStorming")
+    e.step(31, 0.5)
+    T.eq(clock:GetAttribute("StormPhase"), "storm")
+    T.ok(x.tickWeather.rain() >= 0.99, "heavy rain")
+    e.step(7.6, 0.1) -- 1.5 s before the first bolt, its spot flares
+    local flaring = 0
+    for _, part in ipairs(markers) do
+        flaring = flaring + (part:GetAttribute("Charged") and 1 or 0)
+    end
+    T.eq(flaring, 1)
+    e.step(1.6, 0.1)
+    T.near(s.health, 5, 0.1, "struck: half a heart (it mends a hair since)")
+    T.eq(w.g:GetAttribute("Hurt"), "Storm")
+    T.eq(w.g:GetAttribute("Struck"), 1)
+    T.eq(w.g:GetAttribute("Scorched"), 60)
+    T.eq(w.g:GetAttribute("KnockedDown"), true)
+    T.eq(w.g:GetAttribute("Deaths"), nil, "never killed")
+    T.logged(w, "strike 1 of 3 at")
+    T.logged(w, "struck Godling, on Godling: health 5")
+    local bolt
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        if part.Name:match("^SkyBolt_") then
+            bolt = part
+        end
+    end
+    T.near(bolt:GetAttribute("StrikeY"), e.hrp(w.g).Position.Y + 2.5, 1e-6, "the bolt ends on its head")
+    e.step(20, 0.5)
+    T.eq(palm:GetAttribute("RenderRole"), "Stump", "the palm is felled")
+    local logs = 0
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        if part:GetAttribute("FromTree") == "Palm_6" then
+            logs = logs + 1
+            T.eq(part:GetAttribute("SkyEvent"), "Lightning", "the mind sees what lightning left")
+        end
+    end
+    T.eq(logs, 2, "two logs")
+    T.ok(s.health < 8, "far from Godling: only mending since")
+    e.step(20, 0.5)
+    local scorch
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        if part:GetAttribute("RenderRole") == "Scorch" then
+            scorch = part
+        end
+    end
+    T.ok(scorch, "open ground is scorched")
+    T.near(w.g:GetAttribute("Scorched"), 20, 1, "the char fades over a minute")
+    e.step(101, 0.5)
+    T.eq(clock:GetAttribute("StormPhase"), "")
+    T.eq(x.sky.storm.active(), nil)
+    T.logged(w, "SKY Storm #1 passed")
+    T.eq(w.g:GetAttribute("Scorched"), 0)
+    e.step(30, 0.5)
+    T.ok(x.tickWeather.rain() < 0.1, "the rain eases off")
+    e.step(130, 1) -- 240 s after its strike
+    T.eq(scorch.Parent, nil, "and the scorch fades")
+    T.starts(w.power("Storm"), "SkyFailed:TooSoon:", "one storm every half hour")
+    e.now = e.now + 1800
+    T.ok(s.health < 30)
+    T.eq(w.power("Storm"), "SkyFailed:GodlingIsWeak", "still weak from the strike: the mercy rule")
+    s.health = 100
+    T.starts(w.power("Storm"), "SkyDone:Storm:", "the sky picks all three")
+    local picked = 0
+    for _, spot in ipairs(x.sky.storm.active().spots) do
+        picked = picked + 1
+        local d = V.new(spot.x - g.X, 0, spot.z - g.Z).Magnitude
+        T.ok(d >= 12 and d <= 45, "the sky picks well away from Godling")
+    end
+    T.eq(picked, 3)
+end)
+
+T.test("a storm's strike close by takes 35, never below half a heart; a roof takes it; the dead are left alone", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    e.step(1)
+    local g = e.hrp(w.g).Position
+    local s = x.surviving[w.g]
+    T.eq(w.power("Storm", { spots = { { x = g.X + 100, z = g.Z } } }), "SkyFailed:TooFar")
+    s.health = 20
+    T.eq(w.power("Storm"), "SkyFailed:GodlingIsWeak")
+    s.health = 100
+    x.tickWeather.hold(1) -- a storm of the weather's own
+    e.step(25, 0.5)
+    T.eq(w.power("Storm"), "SkyFailed:AlreadyStorming")
+    x.tickWeather.hold(nil)
+    e.step(25, 0.5)
+    local near, roofed, dead = { g.X + 5, g.Z }, { g.X - 5, g.Z }, { g.X, g.Z + 5 }
+    T.starts(w.power("Storm", { spots = { near, roofed, dead } }), "SkyDone:Storm:")
+    strikesAt(x, { { near[1], near[2], 40 }, { roofed[1], roofed[2], 50 }, { dead[1], dead[2], 60 } })
+    e.step(40.1, 0.5)
+    T.near(s.health, 65, 0.1, "close by: 35")
+    T.eq(w.g:GetAttribute("KnockedDown"), true)
+    T.eq(w.g:GetAttribute("Struck"), nil, "not struck: no char")
+    T.logged(w, "close to Godling: health 65")
+    e.step(3, 0.5) -- it gets up; a roof is built over it
+    local roof = piece(e, "Block_90", V.new(g.X, g.Y + 5, g.Z))
+    e.step(1, 0.5)
+    T.eq(w.g:GetAttribute("Sheltered"), "roof")
+    e.step(6.5, 0.5)
+    T.ok(s.health > 64.9 and s.health < 66, "the roof takes it (a fed body mends a little meanwhile)")
+    T.logged(w, "a roof over Godling took it")
+    roof:Destroy()
+    x.death.die(w.g, s, "Hunger")
+    e.step(10, 0.5)
+    T.eq(w.g:GetAttribute("Hurts"), 1, "the dead are left alone")
+    T.eq(s.health, 0)
+    -- close by with little left: down to half a heart, no further
+    e.step(140, 1)
+    s.health = 30
+    e.now = e.now + 2000
+    local born = e.hrp(w.g).Position -- born again at the start spot
+    local again = { born.X + 5, born.Z }
+    T.starts(w.power("Storm", { spots = { again } }), "SkyDone:Storm:")
+    strikesAt(x, { { again[1], again[2], 31 } })
+    for _, spot in ipairs(x.sky.storm.active().spots) do
+        spot.at = spot.at == 31 and 31 or 200 -- the sky's two picks wait until it has passed
+    end
+    e.step(31.1, 0.5)
+    T.near(s.health, 5, 0.1)
+end)
+
+T.test("with no palm standing in reach, the sky picks open ground well away from Godling; no body, no storm", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    e.step(1)
+    for _, t in ipairs(x.trees) do
+        t.part:SetAttribute("RenderRole", "Stump")
+    end
+    T.starts(w.power("Storm"), "SkyDone:Storm:")
+    local g = e.hrp(w.g).Position
+    for _, spot in ipairs(x.sky.storm.active().spots) do
+        local d = V.new(spot.x - g.X, 0, spot.z - g.Z).Magnitude
+        T.ok(d >= 12 and d <= 45, "open ground, 12 to 45 away")
+    end
+    e.step(200, 1)
+    e.now = e.now + 1800
+    e.hrp(w.g):Destroy()
+    T.eq(w.power("Storm"), "SkyFailed:NobodyHere")
 end)
 
 return T.done("test_sky")

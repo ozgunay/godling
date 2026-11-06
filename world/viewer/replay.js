@@ -14,6 +14,8 @@ const MARKS = { // what a marker on the timeline means (mind/godling/replay.py m
   stone: ['stone', 'A stone from the sky'], log: ['log', 'A log from the sky'], regrow: ['sapling', 'A palm grew back'],
   note: ['glider', 'A note drifted down'], fire: ['fire', 'Godling made fire'], 'fire-out': ['drop', 'A fire went out'],
   fish: ['fish', 'Godling caught a fish'], hurt: ['heartHalf', 'Godling was hurt'], faint: ['heartEmpty', 'Godling fainted'],
+  death: ['heartEmpty', 'Godling died'], // with its cause, when the mark has one (DIED_OF)
+  storm: ['lightning', 'A storm'], struck: ['lightning', 'Lightning struck Godling'],
   wall: ['stone', 'Godling built a wall'], roof: ['stone', 'Godling built a roof'], enclosure: ['stone', 'Godling closed a room'],
 }
 const PROBLEMS = {
@@ -23,6 +25,11 @@ const PROBLEMS = {
 
 // The last item that passes `test`, or undefined (Array.prototype.findLast needs Safari 15.4; phones older than that
 // watch too).
+// What killed Godling (main.lua DEATH's DiedOf), in viewers' words.
+const DIED_OF = { Hunger: 'hunger', Cold: 'the cold', HungerAndCold: 'hunger and cold', Lightning: 'lightning',
+  Meteor: 'a meteor', Storm: 'a lightning strike', Sea: 'drowning' }
+export const diedOf = (cause) => DIED_OF[cause] || String(cause || 'something').toLowerCase()
+
 export function lastOf(items, test) {
   for (let i = items.length - 1; i >= 0; i--) if (test(items[i])) return items[i]
   return undefined
@@ -338,7 +345,8 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
     // Markers: close ones share a button, which names them all.
     let prev = null
     for (const m of marks) {
-      const [ico, words] = MARKS[m.m] || ['notice', m.m]
+      const [ico, said] = MARKS[m.m] || ['notice', m.m]
+      const words = m.m === 'death' && m.cause ? `${said} of ${diedOf(m.cause)}` : said
       const p = x(m.t)
       if (p < 0 || p > 100) continue
       if (prev && p - prev.p < 1.2) {
@@ -462,7 +470,8 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
     const key = JSON.stringify([mind.thought, mind.needs, mind.bubble, mind.now,
       mind.feed.map((f) => [f.time, f.text, f.glance, f.about]),
       Math.floor((c.hour ?? -1) * 60), c.day, c.rain >= 0.3, c.quake,
-      g && [Math.round((g.health ?? 100) / 5), Math.round((g.hunger ?? 100) / 5), g.cold, g.wet >= 30, g.bracing, g.knockedDown, g.drowning]])
+      g && [Math.round((g.health ?? 100) / 5), Math.round((g.hunger ?? 100) / 5), g.cold, g.wet >= 30, g.bracing, g.knockedDown,
+        g.drowning, g.dead, g.deadFor, g.deaths, g.scorched > 0]])
     if (key === drawn) return
     drawn = key
     show({ clock: m.clock, godling: m.godling, mind, now: at / 1000 })
