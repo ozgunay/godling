@@ -41,7 +41,8 @@ def call_power(call_id):
     call = PowerCall.objects.select_related("user").get(pk=call_id)
     at = [call.at_x, call.at_z] if call.at_x is not None and call.at_z is not None else None
     answer = island.relay("POST", "/api/power", {"client": call.user.client_id, "name": call.user.username,
-                                                 "power": call.power, "at": at})
+                                                 "power": call.power, "at": at,
+                                                 **({"spots": call.spots} if call.spots else {})})
     settle(call_id, answer, PowerCall.SENDING, PowerCall.DONE)
 
 

@@ -236,3 +236,41 @@ def test_a_death_report_with_little_to_tell(mem):
     inside = Attention(mem)
     inside.on_step(snap([ground()], attrs={"Health": 20, "InHouse": True, "Sheltered": "enclosed"}))
     assert "At the last look you stood inside your house." in inside.death_report(snap([ground()]))
+
+
+def test_a_storm_called_down_its_warning_its_breaking_a_strike_and_its_passing(mem):
+    """main.lua THE STORM: the warning names where the air crackles (and interrupts); a bolt on the body is its own,
+    most salient notice, not "hurt close by"; a strike close by is."""
+    a = Attention(mem)
+    a.on_step(snap([ground()], clock={"StormPhase": ""}, attrs={"Health": 80}))
+    with pytest.raises(Interrupted, match="a storm is coming"):
+        a.on_step(snap([ground()], clock={"StormPhase": "warning", "StormId": 7,
+                                          "StormSpots": "12.5,-3.0;40,4;bad;1,x"}, attrs={"Health": 80}))
+    (warning,) = [e for e in a.take_events() if e.get("sky") == "Storm"]
+    assert warning["text"] == ("Dark clouds are rolling in fast: a storm is coming. The air crackles at (12, -3) and "
+                               "(40, 4)")
+    assert (warning["salience"], warning["sky_id"], warning["sky_stage"]) == (5, 7, "warning")
+    with pytest.raises(Interrupted, match="Lightning struck you"):
+        a.on_step(snap([ground()], clock={"StormPhase": "storm", "StormId": 7}, attrs={
+            "Health": 5, "Struck": 1, "Scorched": 60, "Hurts": 1, "Hurt": "Storm"}))
+    texts = [e["text"] for e in a.take_events()]
+    assert "Lightning struck you: you are burned and hurt, your health is 5 of 100" in texts
+    assert "The storm breaks: rain pours down, and lightning is about to strike" in texts
+    assert not any(t.startswith("You were hurt") for t in texts), "struck, not hurt close by"
+    with pytest.raises(Interrupted, match="You were hurt by lightning striking close by"):
+        a.on_step(snap([ground()], clock={"StormPhase": "storm", "StormId": 7}, attrs={
+            "Health": 5, "Struck": 1, "Hurts": 2, "Hurt": "Storm"}))
+    assert "You were hurt by lightning striking close by: your health is 5 of 100" in [e["text"] for e in a.take_events()]
+    a.on_step(snap([ground()], clock={"StormPhase": "", "StormId": 7}, attrs={"Health": 5, "Struck": 1, "Hurts": 2}))
+    (passed,) = a.take_events()
+    assert passed["text"] == "The storm has passed" and passed["sky_stage"] == "passed"
+    one = Attention(mem)
+    one.on_step(snap([ground()], clock={}))
+    with pytest.raises(Interrupted):
+        one.on_step(snap([ground()], clock={"StormPhase": "warning", "StormSpots": "1,2"}))
+    assert one.take_events()[0]["text"].endswith("The air crackles at (1, 2)")
+    bare = Attention(mem)
+    bare.on_step(snap([ground()], clock={}))
+    with pytest.raises(Interrupted):
+        bare.on_step(snap([ground()], clock={"StormPhase": "warning"}))
+    assert bare.take_events()[0]["text"] == "Dark clouds are rolling in fast: a storm is coming"

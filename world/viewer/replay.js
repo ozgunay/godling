@@ -15,6 +15,7 @@ const MARKS = { // what a marker on the timeline means (mind/godling/replay.py m
   note: ['glider', 'A note drifted down'], fire: ['fire', 'Godling made fire'], 'fire-out': ['drop', 'A fire went out'],
   fish: ['fish', 'Godling caught a fish'], hurt: ['heartHalf', 'Godling was hurt'], faint: ['heartEmpty', 'Godling fainted'],
   death: ['heartEmpty', 'Godling died'], // with its cause, when the mark has one (DIED_OF)
+  storm: ['lightning', 'A storm'], struck: ['lightning', 'Lightning struck Godling'],
   wall: ['stone', 'Godling built a wall'], roof: ['stone', 'Godling built a roof'], enclosure: ['stone', 'Godling closed a room'],
 }
 const PROBLEMS = {

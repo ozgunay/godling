@@ -72,7 +72,7 @@ class Attention:
         self.prev = None
         self.observed_pieces = {}  # last observed geometry, including pieces currently out of sight
         self.pending = []  # events the mind has not seen yet
-        self.interrupt = None
+        self.interrupt, self.interrupt_salience = None, 0  # why the step now is interrupted, and how salient it was
         self.glances = []  # events worth turning to look at, with when they were seen
         self.trail = deque()  # (time, how the body was), one every TRAIL_EVERY seconds, for a death report
         self.noticed = deque()  # (time, text) of what was noticed lately, for a death report
@@ -108,11 +108,11 @@ class Attention:
                 self.log(kind="event", **event)
                 if salience >= GLANCE_AT and "at" in event and not extra.get("death"):  # the dead do not look about
                     self.glances.append((time.time(), event))
-                if self.decide(event):
-                    self.interrupt = text
+                if self.decide(event) and salience > self.interrupt_salience:  # the most salient names it
+                    self.interrupt, self.interrupt_salience = text, salience
         self.prev = snap
         if self.interrupt:
-            why, self.interrupt = self.interrupt, None
+            why, self.interrupt, self.interrupt_salience = self.interrupt, None, 0
             raise Interrupted(why)
 
     def decide(self, event):
@@ -235,10 +235,26 @@ class Attention:
             out.append(("You have come back to life at the start, whole but half fed. What you carried lies where you "
                         "died" + (f", at ({after.died_at[0]:.0f}, {after.died_at[1]:.0f})" if after.died_at else ""),
                         4, [], {**_at(after.me), "death": "reborn"}))
-        if after.hurts > before.hurts:  # real damage, to the body itself
-            by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
+        if after.struck > before.struck:  # main.lua THE STORM: a bolt on the body itself
+            out.append((f"Lightning struck you: you are burned and hurt, your health is {after.health:.0f} of 100",
+                        5, [], _at(after.me)))  # its own timeline mark (replay.marks_of), not the storm's
+        elif after.hurts > before.hurts:  # real damage, to the body itself
+            by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by",
+                  "Storm": "lightning striking close by"}
             out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
                         f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+        if after.storm_phase == "warning" and before.storm_phase != "warning":  # a storm called down is coming
+            spots = [f"({x:.0f}, {z:.0f})" for x, z in after.storm_spots]
+            where = (", ".join(spots[:-1]) + " and " + spots[-1]) if len(spots) > 1 else "".join(spots)
+            out.append(("Dark clouds are rolling in fast: a storm is coming"
+                        + (f". The air crackles at {where}" if where else ""), 5, [],
+                        {"sky": "Storm", "sky_id": int(after.storm_id or 0), "sky_stage": "warning"}))
+        elif after.storm_phase == "storm" and before.storm_phase != "storm":
+            out.append(("The storm breaks: rain pours down, and lightning is about to strike", 4, [],
+                        {"sky": "Storm", "sky_id": int(after.storm_id or 0), "sky_stage": "arrived"}))
+        elif before.storm_phase and not after.storm_phase:
+            out.append(("The storm has passed", 3, [], {"sky": "Storm", "sky_id": int(before.storm_id or 0),
+                                                         "sky_stage": "passed"}))
         if after.note_id and after.note_id != before.note_id and after.note_text:  # a viewer's note (main.lua sky.notes)
             out.append((f"A paper glider drifted down at ({after.note_at[0]:.0f}, {after.note_at[2]:.0f}) with a note "
                         f"from one of the strangers who watch you. It reads: \"{after.note_text}\"", 3, [],

@@ -194,6 +194,8 @@ def test_powers_keep_their_pace():
     island = gp.Island(sky, 180, 60)
     first = island.power("abcdef", "Ann", "Stone", at=[1, 2])
     assert first["ok"] and first["kind"] == "power" and sky.calls[0] == ("Stone", {"at": {"x": 1, "z": 2}})
+    assert gp.describe("Storm", "SkyDone:Storm:4") == (True, "Storm #4: dark clouds roll in; the storm breaks in 30 s.")
+    assert gp.describe("Storm", "SkyFailed:AlreadyStorming") == (False, "Storm: A storm is already raging.")
     assert not island.power("abcdef", "Ann", "Stone")["ok"]  # too soon for this viewer
     second = island.power("zzzzzz", "Bob", "Earthquake")
     assert not second["ok"] and second["wait"] == 30 and len(island.popups) == 1  # refusals go back only to the caller
@@ -342,6 +344,14 @@ def test_panel_takes_powers_and_notes(panel, world_server):
     assert sky_input["data"]["at"] == {"x": 1.23, "z": 5}
     post(base + "/api/power", {"client": "zzzzzz", "power": "Log", "at": [1, float("nan")]})
     assert "at" not in [r for r in world_server.requests if r["path"] == "/input"][-1]["body"]["data"]
+    # A storm's strikes: up to three spots, the bad ones left out (the world picks those)
+    post(base + "/api/power", {"client": "stormy", "power": "Storm",
+                               "spots": [[1.234, 5], [2, True], "x", [3, 4], [5, 6], [7, 8]]})
+    sky_input = [r for r in world_server.requests if r["path"] == "/input"][-1]["body"]["data"]
+    assert sky_input["power"] == "Storm"
+    assert sky_input["spots"] == [{"x": 1.23, "z": 5}, {"x": 3, "z": 4}, {"x": 5, "z": 6}], "three good ones at most"
+    post(base + "/api/power", {"client": "stormz", "power": "Storm", "spots": "everywhere"})
+    assert "spots" not in [r for r in world_server.requests if r["path"] == "/input"][-1]["body"]["data"]
     code, reply = post(base + "/api/note", {"client": "abcdef", "name": "Ann", "text": "hello", "ref": 3})
     assert reply["ok"] and reply["note"] == "hello"
     assert post(base + "/api/elsewhere", {"client": "abcdef"})[0] == 404

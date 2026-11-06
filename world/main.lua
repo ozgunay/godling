@@ -2643,7 +2643,7 @@ local tickWeather = (function()
     end
 
     local function tickSkies(dt, hour) -- the storm's lightning and the morning fog
-        if weather.rain >= STORM_RAIN then
+        if weather.rain >= STORM_RAIN and not weather.held then -- a storm called down strikes only where it was aimed
             weather.storm = weather.storm - dt
             if weather.storm <= 0 then
                 weather.storm = between(STORM_MIN, STORM_MAX)
@@ -2901,7 +2901,8 @@ local tickWeather = (function()
             nextWeather()
         end
         -- A wet spell swells and eases (0.6 to 1) through its days; a shower comes down hard.
-        local target = weather.raining and (weather.spell and 0.8 + 0.2 * math.sin(weather.clock / 170) or 1) or 0
+        local target = weather.held -- a storm called down (sky.storm) holds the rain where it wants it
+            or weather.raining and (weather.spell and 0.8 + 0.2 * math.sin(weather.clock / 170) or 1) or 0
         weather.rain = weather.rain + math.clamp(target - weather.rain, -dt / RAIN_FADE, dt / RAIN_FADE)
         local hour = (START_HOUR + clockSeconds / DAY_SECONDS * 24) % 24
         tickSkies(dt, hour)
@@ -2973,7 +2974,18 @@ local tickWeather = (function()
         end
     end
 
-    return tickWeather
+    -- Called each frame as before; `hold(level)` lets a storm called down (sky.storm) keep the rain at `level` (nil
+    -- lets go: the weather goes back to its own, fading as a shower does). A callable table: no new main-chunk local.
+    return setmetatable({
+        hold = function(level)
+            weather.held = level
+        end,
+        rain = function()
+            return weather.rain
+        end,
+    }, { __call = function(_, dt)
+        tickWeather(dt)
+    end })
 end)()
 
 -- The volleyball that washed up with the raft, as Wilson did. It has no name: Godling may give it one.
@@ -4658,7 +4670,7 @@ function sky.mirrorGodling()
         return
     end
     for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Dead", "DeadFor", "DiedOf",
-        "Deaths" }) do
+        "Deaths", "Scorched" }) do
         local value = godling:GetAttribute(name)
         if clockPart:GetAttribute("Godling" .. name) ~= value then
             clockPart:SetAttribute("Godling" .. name, value)
@@ -4709,6 +4721,252 @@ function sky.parkGuest()
         end
     end
 end
+
+-- THE STORM (the user's wish, 2026-11-06: it took Lightning's place on the panel; ADR-023). A viewer calls a storm
+-- down and picks three spots for its strikes (`inputData.spots`; the sky picks any left out); the world picks when, and
+-- in which order. First 30 seconds of warning: the sky darkens, a gale gets up, and the three spots crackle on the
+-- ground (StormSpot parts, which Godling sees). Then about two and a half minutes of heavy rain (it slows and soaks,
+-- and puts fires out), with the strikes 20 to 50 s apart, each spot flaring (Charged) 1.5 s before its bolt.
+-- - A palm within PALM_SNAP of a spot takes the bolt and is felled into two logs; open ground keeps a scorch a while.
+-- - It never breaks what Godling built, and a roof over Godling takes the strike (Sheltered, InHouse).
+-- - On Godling (within HIT of the spot as it strikes): it is left with half a heart (FLOOR), or what it had if less,
+--   knocked down, electrocuted for a moment (Struck counts) and charred for a minute (Scorched counts down): the
+--   renderer shows both, and the bolt ends on its head. Close by (within NEAR): 35, never below half a heart, and
+--   knocked down. It never kills. The disasters' mercy rule holds, and one storm at a time, one every 30 minutes.
+sky.storm = (function()
+    local WARN, LAST = 30, 150 -- seconds of warning; seconds of storm after it
+    local FIRST_MIN, FIRST_MAX, GAP_MIN, GAP_MAX = 15, 30, 20, 50 -- the first strike into the storm, and the gaps
+    local CHARGE = 1.5 -- seconds a spot flares before its bolt
+    local SPOTS, PALM_SNAP, HIT, NEAR, FLOOR = 3, 3, 2.5, HARM.lightningRange, 5
+    local SCORCHED, SCORCH_KEPT = 60, 240 -- seconds Godling stays charred; seconds a scorch on the ground lasts
+    local COOLDOWN, ALREADY = 1800, 0.85 -- seconds between storms called down; rain this heavy is a storm already
+    local SKY_FROM, SKY_TO = 12, 45 -- the sky's own picks: palms this far from Godling, as a storm's lightning picks
+    local active, lastStarted = nil, -math.huge
+    local scorches, charred = {}, {} -- { part, gone }; player -> seconds it stays charred
+
+    local function between(lo, hi)
+        return lo + math.random() * (hi - lo)
+    end
+
+    local function standing(t)
+        return t.part and t.part.Parent and t.part:GetAttribute("RenderRole") == "Tree"
+    end
+
+    local function palmAt(x, z) -- the standing palm nearest (x, z), within PALM_SNAP
+        local best, bestDist = nil, PALM_SNAP
+        for _, t in ipairs(trees) do
+            if standing(t) then
+                local d = Vector3.new(t.part.Position.X - x, 0, t.part.Position.Z - z).Magnitude
+                if d <= bestDist then
+                    best, bestDist = t, d
+                end
+            end
+        end
+        return best
+    end
+
+    local function skyPick(hrp, taken) -- a standing palm 12 to 45 from Godling not yet picked, else open ground there
+        local near = {}
+        for _, t in ipairs(trees) do
+            local d = standing(t) and not taken[t]
+                and Vector3.new(t.part.Position.X - hrp.Position.X, 0, t.part.Position.Z - hrp.Position.Z).Magnitude
+            if d and d >= SKY_FROM and d <= SKY_TO then
+                table.insert(near, t)
+            end
+        end
+        if #near > 0 then
+            local t = near[math.random(1, #near)]
+            taken[t] = true
+            return { x = t.part.Position.X, z = t.part.Position.Z }
+        end
+        local angle, r = math.random() * 2 * math.pi, between(SKY_FROM, SKY_TO)
+        return { x = hrp.Position.X + math.cos(angle) * r, z = hrp.Position.Z + math.sin(angle) * r }
+    end
+
+    local function strike(n, spot, k)
+        skyCounter = skyCounter + 1
+        local id = skyCounter
+        local godling = godlingPlayer()
+        local hrp = godling and getHumanoidRootPart(godling)
+        local x, z = spot.x, spot.z
+        local alive = hrp and not death.is(godling)
+        local roofed = alive and ((godling:GetAttribute("Sheltered") or "") ~= ""
+            or godling:GetAttribute("InHouse") == true)
+        -- On Godling first, then a palm beside the spot, else the ground (or the roof, or what was built: unbroken).
+        local hit = alive and not roofed and Vector3.new(hrp.Position.X - x, 0, hrp.Position.Z - z).Magnitude <= HIT
+        local palm = not hit and palmAt(x, z)
+        local y
+        if hit then -- the bolt ends on its head (the body is 5 tall about its middle)
+            x, z, y = hrp.Position.X, hrp.Position.Z, hrp.Position.Y + 2.5
+        elseif palm then
+            x, z, y = palm.part.Position.X, palm.part.Position.Z, palm.part.Position.Y - palm.part.Size.Y / 2
+        else
+            y = surfaceTopAt(x, z, -20, 60)
+        end
+        local d = alive and Vector3.new(hrp.Position.X - x, 0, hrp.Position.Z - z).Magnitude
+        local near = not hit and not roofed and d and d <= NEAR
+        local bolt = skyMarker("SkyBolt_" .. id, Vector3.new(0.35, 30, 0.35), Vector3.new(x, 15, z),
+            Color3.fromRGB(255, 244, 170), "SkyFlash")
+        bolt:SetAttribute("SkyId", id)
+        bolt:SetAttribute("StrikeX", x)
+        bolt:SetAttribute("StrikeY", y or 0)
+        bolt:SetAttribute("StrikeZ", z)
+        table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+        local what
+        if palm then -- the palm comes down as two logs (as Lightning fells one)
+            local mark = skyMark("Lightning", id)
+            local names = fellTree(palm.part, hrp and hrp.Position or Vector3.new(x, 0, z + 1), function(log)
+                mark(log)
+                log:SetAttribute("FromTree", palm.name)
+            end)
+            what = string.format("felled %s into %s", palm.name, table.concat(names, ","))
+        elseif not hit and y then -- a scorch on the ground (or on what stands there: nothing built is broken)
+            local scorch = skyMarker("Scorch_" .. id, Vector3.new(3, 0.04, 3), Vector3.new(x, y + 0.03, z),
+                Color3.fromRGB(30, 26, 22), "Scorch")
+            table.insert(scorches, { part = scorch, gone = os.clock() + SCORCH_KEPT })
+            what = "scorched the ground"
+        else
+            what = hit and "struck Godling" or "struck the sea"
+        end
+        local s = (hit or near) and surviving[godling]
+        if s then
+            local take = math.max(0, s.health - FLOOR) -- never below half a heart
+            if near then
+                take = math.min(HARM.lightning, take)
+            end
+            if take > 0 then
+                hurt(godling, take, "Storm")
+            end
+            if hit then
+                godling:SetAttribute("Struck", (godling:GetAttribute("Struck") or 0) + 1)
+                godling:SetAttribute("Scorched", SCORCHED)
+                charred[godling] = SCORCHED
+            end
+            if not climbers[godling] and not sky.quake.knocked(godling) then
+                sky.quake.knockDown(godling, hrp)
+            end
+            what = what .. string.format(", %s Godling: health %.0f", hit and "on" or "close to", s.health)
+        elseif roofed and d and d <= NEAR then
+            what = what .. ", a roof over Godling took it"
+        end
+        print(string.format("SKY Storm #%d strike %d of %d at (%.1f, %.1f): %s", n, k, SPOTS, x, z, what))
+    end
+
+    local function start(godling, inputData)
+        if active or tickWeather.rain() >= ALREADY then
+            return nil, "AlreadyStorming"
+        end
+        local wait = COOLDOWN - (os.clock() - lastStarted)
+        if wait > 0 then
+            return nil, "TooSoon:" .. math.ceil(wait)
+        end
+        if sky.quake.weak(godling) then
+            return nil, "GodlingIsWeak"
+        end
+        local hrp = getHumanoidRootPart(godling)
+        if not hrp then
+            return nil, "NobodyHere"
+        end
+        local spots, taken = {}, {}
+        local given = inputData and inputData.spots
+        for i = 1, type(given) == "table" and math.min(#given, SPOTS) or 0 do
+            local at = given[i]
+            local x, z, why = sky.aim.read(godling, { at = type(at) == "table" and { x = at.x or at[1], z = at.z or at[2] } })
+            if why then
+                return nil, why
+            end
+            if x then
+                table.insert(spots, { x = x, z = z })
+                local palm = palmAt(x, z)
+                if palm then
+                    taken[palm] = true
+                end
+            end
+        end
+        while #spots < SPOTS do
+            table.insert(spots, skyPick(hrp, taken))
+        end
+        skyCounter = skyCounter + 1
+        local n = skyCounter
+        for k, spot in ipairs(spots) do
+            local top = surfaceTopAt(spot.x, spot.z, -20, 60) or OCEAN_TOP_Y
+            spot.marker = skyMarker(string.format("StormSpot_%d_%d", n, k), Vector3.new(4, 0.06, 4),
+                Vector3.new(spot.x, top + 0.05, spot.z), Color3.fromRGB(150, 190, 255), "StormSpot")
+            spot.marker:SetAttribute("StormId", n)
+            spot.marker:SetAttribute("Charged", false)
+        end
+        for i = #spots, 2, -1 do -- the order the world strikes them in
+            local j = math.random(1, i)
+            spots[i], spots[j] = spots[j], spots[i]
+        end
+        local at = WARN + between(FIRST_MIN, FIRST_MAX)
+        for _, spot in ipairs(spots) do
+            spot.at = at
+            at = at + between(GAP_MIN, GAP_MAX)
+        end
+        active = { n = n, spots = spots, age = 0, struck = 0 }
+        lastStarted = os.clock()
+        tickWeather.hold(1) -- the sky darkens and the rain comes down hard
+        clockPart:SetAttribute("StormId", n)
+        clockPart:SetAttribute("StormPhase", "warning")
+        local where = {}
+        for _, spot in ipairs(spots) do
+            table.insert(where, string.format("%.1f,%.1f", spot.x, spot.z))
+        end
+        clockPart:SetAttribute("StormSpots", table.concat(where, ";"))
+        print(string.format("SKY Storm #%d called: strikes at (%s), the first in %.0fs", n,
+            table.concat(where, "), ("), spots[1].at))
+        return n
+    end
+
+    local function tick(dt)
+        for player, left in pairs(charred) do -- the char fades from a body struck a minute ago
+            left = left - dt
+            charred[player] = left > 0 and left or nil
+            local seconds = math.max(0, math.ceil(left))
+            if player:GetAttribute("Scorched") ~= seconds then
+                player:SetAttribute("Scorched", seconds)
+            end
+        end
+        local i = 1
+        while i <= #scorches do
+            if os.clock() >= scorches[i].gone then
+                scorches[i].part:Destroy()
+                table.remove(scorches, i)
+            else
+                i = i + 1
+            end
+        end
+        if not active then
+            return
+        end
+        active.age = active.age + dt
+        if active.age >= WARN and clockPart:GetAttribute("StormPhase") == "warning" then
+            clockPart:SetAttribute("StormPhase", "storm")
+        end
+        for _, spot in ipairs(active.spots) do
+            if spot.marker and active.age >= spot.at - CHARGE then
+                spot.marker:SetAttribute("Charged", true) -- it flares: the bolt comes
+            end
+            if spot.marker and active.age >= spot.at then
+                spot.marker:Destroy()
+                spot.marker = nil
+                active.struck = active.struck + 1
+                strike(active.n, spot, active.struck)
+            end
+        end
+        if active.age >= WARN + LAST then
+            tickWeather.hold(nil) -- the rain eases off, as a shower ends
+            clockPart:SetAttribute("StormPhase", "")
+            clockPart:SetAttribute("StormSpots", "")
+            print(string.format("SKY Storm #%d passed", active.n))
+            active = nil
+        end
+    end
+
+    return { start = start, tick = tick, active = function() return active end,
+        WARN = WARN, LAST = LAST, CHARGE = CHARGE, FLOOR = FLOOR, SCORCHED = SCORCHED, COOLDOWN = COOLDOWN }
+end)()
 
 -- What the guest panel can do. Viewers choose what, and where (`inputData.at`, see sky.aim): only the meteor lands
 -- where it was aimed whatever is there. Unaimed, the world chooses: near Godling, in view, clear of what it built.
@@ -4774,6 +5032,9 @@ local SKY_POWERS = {
     end,
     Earthquake = function(godling)
         return sky.quake.start(godling)
+    end,
+    Storm = function(godling, inputData)
+        return sky.storm.start(godling, inputData)
     end,
     Note = function(godling, inputData)
         local text = tostring(inputData and inputData.text or ""):gsub("[%c]", " "):gsub("%s+", " ")
@@ -5013,6 +5274,7 @@ RunService.Heartbeat:Connect(function(dt)
     end
     advanceSkyFalls(dt)
     sky.quake.tick(dt) -- an earthquake shakes what is loose
+    sky.storm.tick(dt) -- a storm called down strikes where it was aimed
     sky.tickNotes(dt) -- notes from viewers drift down
     tickDriftwood(dt) -- now and then the sea leaves a log on the beach
     tickShip(dt) -- and a ship passes far out

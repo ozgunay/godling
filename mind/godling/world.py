@@ -229,6 +229,19 @@ class Snapshot:
         self.meteor_at = (a.get("MeteorX") or 0, 0, a.get("MeteorZ") or 0)
         self.meteor_did = {k: int(a.get("Meteor" + k) or 0) for k in ("Smashed", "Thrown", "Unfastened", "Felled", "Hurt")}
         self.bracing, self.knocked_down = bool(attrs.get("Bracing")), bool(attrs.get("KnockedDown"))
+        # A storm called down (main.lua THE STORM): its phase ("warning", "storm", or "" when there is none), its
+        # number, and the spots where the air crackles; on the body, how often a strike hit it and how long it stays
+        # charred.
+        self.storm_phase, self.storm_id = str(a.get("StormPhase") or ""), a.get("StormId")
+        self.storm_spots = []
+        for spot in str(a.get("StormSpots") or "").split(";"):
+            xz = spot.split(",")
+            if len(xz) == 2:
+                try:
+                    self.storm_spots.append((float(xz[0]), float(xz[1])))
+                except ValueError:
+                    pass
+        self.struck, self.scorched = attrs.get("Struck") or 0, attrs.get("Scorched") or 0
         self._held, self._held_known = None, False
 
     @property

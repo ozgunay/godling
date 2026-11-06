@@ -149,6 +149,25 @@ class ScreenTests(TestCase):
         self.assertEqual((call.power, call.price, call.at_x, call.at_z, call.ok, call.refunded, call.status),
                          ("Meteor", 300, 1.5, -2.0, True, False, PowerCall.DONE))
 
+    def test_a_storm_takes_lightnings_place_and_carries_its_spots_to_the_island(self):
+        """ADR-023: the Storm at 400, a disaster that can harm; Lightning switched off. Up to three good spots go on; the
+        world picks any left out."""
+        storm = Power.objects.get(key="Storm")
+        self.assertEqual((storm.price, storm.kind, storm.harms, storm.enabled), (400, "Disaster", True, True))
+        self.assertEqual(storm.sort, Power.objects.get(key="Lightning").sort, "in Lightning's slot")
+        self.assertFalse(Power.objects.get(key="Lightning").enabled)
+        status = self.client.get("/api/status").json()
+        self.assertEqual(status["prices"]["Storm"], 400)
+        self.assertNotIn("Lightning", status["powers"])
+        user = self.viewer(credit=500)
+        spots = [[1.234, 5], ["x", 1], [3, float("inf")], [3, 4], [5, 6], [7, 8]]
+        answer = self.post("/api/power", {"power": "Storm", "spots": spots}).json()
+        self.assertTrue(answer["ok"])
+        self.assertEqual(answer["credits"], 100)
+        self.assertEqual(self.calls[-1][2]["spots"], [[1.23, 5.0], [3.0, 4.0], [5.0, 6.0]])
+        self.assertEqual(PowerCall.objects.get().spots, [[1.23, 5.0], [3.0, 4.0], [5.0, 6.0]])
+        # (A call without spots carries none: the meteor's call above goes to the panel without the key.)
+
     def test_a_queued_power_is_asked_after_and_given_up_when_the_island_never_answers(self):
         """With the worker on its own (Redis), a call is queued; the screen asks after it until it is settled."""
         user = self.viewer(credit=50)
@@ -243,11 +262,11 @@ class ScreenTests(TestCase):
         self.assertEqual(self.calls, [])
 
     def test_the_credits_come_back_when_the_world_refuses(self):
-        user = self.viewer(credit=40)
-        self.panel = {"ok": False, "text": "No clear spot near Godling right now."}
-        answer = self.post("/api/power", {"power": "Lightning"}).json()
+        user = self.viewer(credit=400)
+        self.panel = {"ok": False, "text": "A storm is already raging."}
+        answer = self.post("/api/power", {"power": "Storm"}).json()
         self.assertFalse(answer["ok"])
-        self.assertEqual(answer["credits"], 40)
+        self.assertEqual(answer["credits"], 400)
         self.assertEqual(list(Entry.objects.filter(user=user).values_list("kind", flat=True)),
                          ["refund", "power", "grant"])
         self.assertTrue(PowerCall.objects.get().refunded)
