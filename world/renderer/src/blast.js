@@ -515,7 +515,8 @@ export function createBlasts(scene, tier, { onMaterial } = {}) {
         }
         tracked.trailY = y
         tracked.next = now + TRAIL_EVERY / detail
-      } else if (Math.abs(vy) < 1 && heat >= WISP_HEAT && now >= tracked.next) { // landed, and still hot
+      } else if (attributes.LandedAt != null && Math.abs(vy) < 1 && heat >= WISP_HEAT && now >= tracked.next) {
+        // A paused replay or a stream's first buffered frames can hold a falling stone still too.
         wisp(entity.position[0], y, entity.position[2], entity.size?.[1] ?? 2.5, Math.min(1, heat))
         tracked.next = now + WISP_EVERY / detail / Math.min(1, heat)
       }
