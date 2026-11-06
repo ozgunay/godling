@@ -296,11 +296,10 @@ class Attention:
             out.append(("You have grown cold" + (": the night is chilly out here" if not after.in_rain
                                                  else ": the rain has soaked you through"), 3, [], {}))
         if after.drowning and not before.drowning:
-            out.append(("You have slipped into the sea and cannot climb back out: the water is drowning you, and you "
-                        "will wake at the start spot in the middle of the island", 5, [], {}))
-        if after.drowned > before.drowned:
-            out.append((f"You drowned in the sea, and woke at the start spot at ({after.me[0]:.0f}, {after.me[2]:.0f}), "
-                        f"weak and half fed; what you held went down with you", 5, [], {}))
+            out.append(("You have slipped into the sea and cannot climb back out: the water is drowning you. If it "
+                        "drowns you, you die, and come back to life at the start spot in the middle of the island",
+                        5, [], {}))
+        # Drowned counts up as the body dies of the sea (main.lua DEATH): the death notice above says so.
         if after.ashore > before.ashore:
             out.append((f"You hung on the edge of the beach over the sea, and found yourself back on the sand at "
                         f"({after.me[0]:.0f}, {after.me[2]:.0f})", 3, [], {}))
