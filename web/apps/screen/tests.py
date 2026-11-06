@@ -168,6 +168,19 @@ class ScreenTests(TestCase):
         self.assertEqual(PowerCall.objects.get().spots, [[1.23, 5.0], [3.0, 4.0], [5.0, 6.0]])
         # (A call without spots carries none: the meteor's call above goes to the panel without the key.)
 
+    def test_a_storm_ignores_huge_json_coordinates_and_keeps_its_valid_spots(self):
+        self.viewer(credit=500)
+        self.client.raise_request_exception = False
+        response = self.post("/api/power", {"power": "Storm", "spots": [
+            [10 ** 400, 1], [3.25, -4], [1, -(10 ** 400)],
+        ]})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(response.json()["credits"], 100)
+        self.assertEqual(self.calls[-1][2]["spots"], [[3.25, -4.0]])
+        call = PowerCall.objects.get()
+        self.assertEqual((call.spots, call.price, call.ok, call.refunded), ([[3.25, -4.0]], 400, True, False))
+
     def test_a_queued_power_is_asked_after_and_given_up_when_the_island_never_answers(self):
         """With the worker on its own (Redis), a call is queued; the screen asks after it until it is settled."""
         user = self.viewer(credit=50)

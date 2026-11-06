@@ -37,7 +37,7 @@ const POWERS = [
     rule: 'One every 30 minutes · never while Godling is weak' },
   { id: 'Meteor', name: 'Meteor', icon: 'meteor', price: 300, kind: 'Disaster', harm: true, aim: true, did: 'called a meteor',
     after: 'it blasts in 40 s', does: 'A shadow spreads where you aim; 40 s later a stone blasts there, whatever stands in it: Godling, its walls, palms. It leaves a crater.',
-    rule: 'The only power that can hit Godling or its walls · one a minute · never while Godling is weak' },
+    rule: 'Can hit Godling and its walls · one a minute · never while Godling is weak' },
   { id: 'Earthquake', name: 'Earthquake', icon: 'quake', price: 500, kind: 'Disaster', harm: true, did: 'shook the island',
     after: 'the ground rumbles', does: 'The ground rumbles, then shakes for 20 s. Loose pieces fall, fastened ones hold. Godling braces; it is never hurt.',
     rule: 'One every 10 minutes, never while Godling is weak' },
@@ -610,6 +610,7 @@ function toggleAim(p) {
   if (aiming?.id === p.id) return endAim()
   if (inThePast()) return
   if (cooling[p.id] > Date.now()) return tell(`${p.name} is not ready yet: ${minutesText((cooling[p.id] - Date.now()) / 1000)} to go.`)
+  if (aiming) endAim() // changing powers also clears any storm spots already marked on the island
   toggleNote(false)
   bottle?.close({ focus: false })
   unpick() // the slot's focus opened its tip before the click; the aim bar takes that place

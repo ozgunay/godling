@@ -4485,6 +4485,7 @@ sky.quake = (function()
     end
 
     return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
+        MERCY_AFTER_DEATH = MERCY_AFTER_DEATH,
         knocked = function(player) return knocked[player] ~= nil end, releaseBody = releaseBody }
 end)()
 
@@ -4993,7 +4994,8 @@ sky.storm = (function()
         local godling = godlingPlayer()
         local hrp = godling and getHumanoidRootPart(godling)
         local x, z = spot.x, spot.z
-        local alive = hrp and not death.is(godling)
+        -- A storm lasts long enough for a death and rebirth between its warning and its later strikes.
+        local alive = hrp and not death.is(godling) and death.since(godling) >= sky.quake.MERCY_AFTER_DEATH
         local roofed = alive and ((godling:GetAttribute("Sheltered") or "") ~= ""
             or godling:GetAttribute("InHouse") == true)
         -- On Godling first, then a palm beside the spot, else the ground (or the roof, or what was built: unbroken).

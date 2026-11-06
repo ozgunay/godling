@@ -148,7 +148,7 @@ class Sky:
 def is_spot(at):
     """A place a viewer aimed at: [x, z], two finite numbers on (or near) the island."""
     return (isinstance(at, list) and len(at) == 2
-            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and abs(v) < 2000
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) < 2000 and math.isfinite(v)
                     for v in at))
 
 

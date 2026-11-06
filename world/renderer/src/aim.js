@@ -1,6 +1,6 @@
 // Aiming a sky power from the viewer screen (world/viewer, the user's wish): while a power is picked, a ring follows
 // the pointer over the island, on whatever is there, and a click (or tap) reports the spot. The world decides what
-// lands there (main.lua sky.aim): only the meteor lands on Godling or on what it built; the ring says as much. A storm
+// lands there (main.lua sky.aim): a meteor or storm can hit Godling; a meteor can also break what it built. A storm
 // (main.lua sky.storm) takes three spots: the screen aims again after each, and the spots picked so far stay marked.
 
 const LOOKS = { // ring radius (the meteor's: its blast), colour, and an inner disk (the meteor's: what it smashes)

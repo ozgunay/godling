@@ -372,6 +372,16 @@ def test_panel_with_a_key(panel):
     assert s["mind"] == {} and s["view"].endswith("/")
 
 
+def test_storm_spots_ignore_huge_json_integers(panel, world_server):
+    base = panel()
+    code, reply = post(base + "/api/power", {"client": "stormhuge", "power": "Storm",
+                                           "spots": [[10 ** 400, 1], [3.25, -4], [1, -(10 ** 400)]]})
+    assert code == 200 and reply["ok"]
+    sky_input = [r for r in world_server.requests if r["path"] == "/input"][-1]["body"]["data"]
+    assert sky_input["power"] == "Storm"
+    assert sky_input["spots"] == [{"x": 3.25, "z": -4}]
+
+
 def test_panel_survives_bad_looks(panel, capsys):
     panel(fail_ticks=True)
     for _ in range(50):
