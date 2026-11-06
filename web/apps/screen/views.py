@@ -223,11 +223,14 @@ def api_power(request):
         return JsonResponse({"ok": False, "text": "One power at a time: give the last one a moment."})
     charged = 0 if rules.free_powers else power.price
     x, z = spot(body.get("at"))
+    # A storm's strikes (ADR-023): up to three good spots; the world picks any left out.
+    spots = [list(s) for s in map(spot, body.get("spots") if isinstance(body.get("spots"), list) else [])
+             if s[0] is not None][:3]
     try:
         with transaction.atomic():  # the credits go and the call is kept together, or neither
             if charged:
                 credits.spend(user, charged, power.key)
-            call = PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z,
+            call = PowerCall.objects.create(user=user, power=power.key, price=charged, at_x=x, at_z=z, spots=spots,
                                             status=PowerCall.QUEUED)
     except credits.NotEnough as short:
         give_back(user, turn)

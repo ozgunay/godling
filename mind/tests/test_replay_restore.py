@@ -113,3 +113,11 @@ def test_a_death_is_marked_on_the_timeline_with_its_cause(tmp_path):
     p.seen_frame(6000, {}, {}, seg)  # a frame without players changes nothing
     assert p.marks == [{"t": 3000, "m": "death", "cause": "Cold"}, {"t": 5000, "m": "death"}]
     assert seg.deaths == 2
+
+
+def test_a_storm_and_a_strike_on_godling_are_marked():
+    storm = {"kind": "event", "sky": "Storm", "sky_stage": "warning", "sky_id": 4}
+    assert replay.marks_of(storm, {}) == []  # marked when it breaks, as a meteor when it lands
+    assert replay.marks_of({**storm, "sky_stage": "arrived"}, {}) == [("storm", "storm:4")]
+    struck = {"kind": "event", "text": "Lightning struck you: you are burned and hurt, your health is 5 of 100"}
+    assert replay.marks_of(struck, {}) == [("struck", None)]

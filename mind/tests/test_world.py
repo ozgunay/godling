@@ -79,7 +79,7 @@ def test_snapshot_reads_the_body_and_the_clock():
     clock = {"TimeOfDay": 13.5, "Rain": 0.4, "Fog": 0.2, "WindX": 0.3, "WindZ": 0.4, "Quake": 0.5,
              "QuakePhase": "shaking", "QuakeId": 3, "QuakeFell": 2, "NoteId": 7, "NoteText": ' hi  "you" ',
              "NoteX": 4, "NoteZ": 5, "MeteorId": 2, "MeteorX": 1, "MeteorZ": -1, "MeteorSmashed": 3,
-             "MeteorThrown": 1.0}
+             "MeteorThrown": 1.0, "StormPhase": "storm", "StormId": 9, "StormSpots": "1.5,2;3,4"}
     attrs = {"LastActionResult": "ok", "Hunger": 80, "Health": 90, "Deaths": 1, "Dead": True, "DiedOf": "Cold",
              "DeadFor": 12, "DiedAt": "4.5,-6.0", "Hurts": 2, "Hurt": "Meteor",
              "Freed": 1, "Wet": 60, "Cold": True, "InRain": 1, "Sheltered": "roof", "WalkSpeed": 12,
@@ -99,6 +99,7 @@ def test_snapshot_reads_the_body_and_the_clock():
     assert s.meteor_id == 2 and s.meteor_at == (1, 0, -1)
     assert s.meteor_did == {"Smashed": 3, "Thrown": 1, "Unfastened": 0, "Felled": 0, "Hurt": 0}
     assert s.bracing and not s.knocked_down
+    assert (s.storm_phase, s.storm_id, s.storm_spots) == ("storm", 9, [(1.5, 2.0), (3.0, 4.0)])
     assert (s.drowning, s.drowned, s.ashore) == (True, 2, 1)
     assert snap([ground()]).drowning is False and (snap([ground()]).drowned, snap([ground()]).ashore) == (0, 0)
 
@@ -110,6 +111,7 @@ def test_snapshot_without_a_clock_or_world():
     assert s.quake == 0 and s.quake_phase == "" and s.quake_id is None and s.note_text == ""
     assert s.note_at == (0, 0, 0) and s.meteor_id is None
     assert (s.dead, s.deaths, s.died_of, s.died_at) == (False, 0, "", None)
+    assert (s.storm_phase, s.storm_id, s.storm_spots, s.struck, s.scorched) == ("", None, [], 0, 0)
     assert s.ground_top(0, 0) is None
     assert s.surface(0, 0) == (None, None)
     assert s.column("Nothing") == []

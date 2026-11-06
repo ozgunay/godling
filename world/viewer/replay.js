@@ -15,6 +15,7 @@ const MARKS = { // what a marker on the timeline means (mind/godling/replay.py m
   note: ['glider', 'A note drifted down'], fire: ['fire', 'Godling made fire'], 'fire-out': ['drop', 'A fire went out'],
   fish: ['fish', 'Godling caught a fish'], hurt: ['heartHalf', 'Godling was hurt'], faint: ['heartEmpty', 'Godling fainted'],
   death: ['heartEmpty', 'Godling died'], // with its cause, when the mark has one (DIED_OF)
+  storm: ['lightning', 'A storm'], struck: ['lightning', 'Lightning struck Godling'],
   wall: ['stone', 'Godling built a wall'], roof: ['stone', 'Godling built a roof'], enclosure: ['stone', 'Godling closed a room'],
 }
 const PROBLEMS = {
@@ -470,7 +471,7 @@ export function createReplayUI({ stage, dock, rewindIn, el, text, icon, tellView
       mind.feed.map((f) => [f.time, f.text, f.glance, f.about]),
       Math.floor((c.hour ?? -1) * 60), c.day, c.rain >= 0.3, c.quake,
       g && [Math.round((g.health ?? 100) / 5), Math.round((g.hunger ?? 100) / 5), g.cold, g.wet >= 30, g.bracing, g.knockedDown,
-        g.drowning, g.dead, g.deadFor, g.deaths]])
+        g.drowning, g.dead, g.deadFor, g.deaths, g.scorched > 0]])
     if (key === drawn) return
     drawn = key
     show({ clock: m.clock, godling: m.godling, mind, now: at / 1000 })

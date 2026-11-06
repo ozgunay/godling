@@ -642,7 +642,7 @@ describe('the renderer', () => {
       dispatchEvent(event)
     }
     const frame = (ms) => { now += ms; r.onFrame({ dt: ms / 1000 }) }
-    const opacity = () => globalThis.__godlingRenderer.deaths()[0].opacity
+    const opacity = () => globalThis.__godlingRenderer.bodies()[0].opacity
     command({ action: 'start', t: t + 1000, base: '/replay', segments: [{ start: t, end: t + 600e3 }], paused: true })
     frame(0)
     await flush()
@@ -655,7 +655,7 @@ describe('the renderer', () => {
     command({ action: 'seek', t: t + 1000, paused: true })
     frame(0)
     expect(opacity()).toBe(1) // seeking to the same rounded countdown must reset the old extrapolation
-    expect(globalThis.__godlingRenderer.deaths()[0].glow).toBe(false)
+    expect(globalThis.__godlingRenderer.bodies()[0].glow).toBe(false)
     r.unmount()
   })
 

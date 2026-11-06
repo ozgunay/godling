@@ -628,7 +628,8 @@ def marks_of(entry, best):
                 return [(mark, f"{mark}:{entry['sky_id']}" if entry.get("sky_id") is not None else None)]
             return []
         for start, mark in (("It has started to rain", "rain"), ("Fog has rolled in", "fog"),
-                            ("A ship is passing", "ship"), ("You were hurt", "hurt")):
+                            ("A ship is passing", "ship"), ("You were hurt", "hurt"),
+                            ("Lightning struck you", "struck")):
             if text.startswith(start):
                 return [(mark, None)]
         if " has gone out" in text:

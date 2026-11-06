@@ -35,7 +35,8 @@ function hudOf(obs) {
     out.godling = { health: c.GodlingHealth, hunger: c.GodlingHunger, wet: c.GodlingWet || 0, cold: Boolean(c.GodlingCold),
       bracing: Boolean(c.GodlingBracing), knockedDown: Boolean(c.GodlingKnockedDown),
       drowning: Boolean(c.GodlingDrowning),
-      dead: Boolean(c.GodlingDead), deadFor: c.GodlingDeadFor || 0, diedOf: c.GodlingDiedOf || '', deaths: c.GodlingDeaths || 0 }
+      dead: Boolean(c.GodlingDead), deadFor: c.GodlingDeadFor || 0, diedOf: c.GodlingDiedOf || '', deaths: c.GodlingDeaths || 0,
+      scorched: c.GodlingScorched || 0 }
   }
   return out
 }
