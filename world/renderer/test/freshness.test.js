@@ -16,7 +16,7 @@ function island(served) {
       if (served === 404) return { ok: false, json: async () => ({}) }
       return { ok: true, json: async () => ({ build: served }) }
     }
-    return { ok: true }
+    return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }
   })
   return { fetch, calls }
 }
@@ -28,6 +28,12 @@ function memoryStorage() {
 
 // No timers of its own: the tests call check() themselves.
 const noTimers = { setTimeout: () => 0, clearTimeout: () => {} }
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
 
 function watch(served, extra = {}) {
   const net = island(served)
@@ -64,6 +70,55 @@ describe('freshness: a page reloads when the island serves another renderer', ()
     expect(reload).not.toHaveBeenCalled()
     aiming = false
     expect(await w.check()).toBe('reloading')
+  })
+
+  it('finishes downloading the bundle before reloading so navigation cannot abort cache priming', async () => {
+    const body = deferred()
+    const arrayBuffer = vi.fn(() => body.promise)
+    const net = island('bbbb')
+    const fetch = (url, init) => String(url) === BUNDLE
+      ? Promise.resolve({ ok: true, arrayBuffer }) : net.fetch(url, init)
+    const { w, reload, storage } = watch('bbbb', { fetch })
+    const checking = w.check()
+    await vi.waitFor(() => expect(arrayBuffer).toHaveBeenCalledTimes(1))
+    expect(reload).not.toHaveBeenCalled()
+    expect(storage.data.size).toBe(0)
+    body.resolve(new ArrayBuffer(0))
+    expect(await checking).toBe('reloading')
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers a reload if the viewer starts aiming while the bundle is downloading', async () => {
+    const bundle = deferred()
+    const net = island('bbbb')
+    let aiming = false
+    const fetch = vi.fn((url, init) => String(url) === BUNDLE ? bundle.promise : net.fetch(url, init))
+    const { w, reload, storage } = watch('bbbb', { fetch, busy: () => aiming })
+    const checking = w.check()
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith(BUNDLE, { cache: 'reload' }))
+    aiming = true
+    bundle.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })
+    expect(await checking).toBe('busy')
+    expect(reload).not.toHaveBeenCalled()
+    expect(storage.data.size).toBe(0)
+    aiming = false
+    expect(await w.check()).toBe('reloading')
+  })
+
+  it('does not consume the reload guard when disposed during a bundle download', async () => {
+    const bundle = deferred()
+    const net = island('bbbb')
+    const fetch = vi.fn((url, init) => String(url) === BUNDLE ? bundle.promise : net.fetch(url, init))
+    const storage = memoryStorage()
+    const { w, reload } = watch('bbbb', { fetch, storage })
+    const checking = w.check()
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith(BUNDLE, { cache: 'reload' }))
+    w.dispose()
+    bundle.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })
+    expect(await checking).toBe('off')
+    expect(reload).not.toHaveBeenCalled()
+    const replacement = watch('bbbb', { storage })
+    expect(await replacement.w.check()).toBe('reloading')
   })
 
   it('never reloads twice for the same build: a page still stale after a reload stays as it is', async () => {

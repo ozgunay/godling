@@ -20,7 +20,7 @@ const SPARK = new THREE.Color(0xbfe0ff) // the electrocution's blue-white
 const ARCS = 4 // arcs crawling over a body being electrocuted
 const ARC_STEPS = 6 // kinks in each
 
-export function createBodyLook(scene, { random = Math.random } = {}) {
+export function createBodyLook(scene, { random = Math.random, onMaterial } = {}) {
   const looks = new Map() // entity id -> state
   const column = new THREE.CylinderGeometry(1.3, 1.3, 7, 24, 1, true).translate(0, 1, 0)
   const ring = new THREE.RingGeometry(1.1, 2.3, 32).rotateX(-Math.PI / 2)
@@ -32,11 +32,14 @@ export function createBodyLook(scene, { random = Math.random } = {}) {
   function materialsOf(look) {
     if (!look.materials) {
       look.materials = []
+      look.originals = []
       look.root.traverse((node) => {
         if (!node.isMesh) return
+        look.originals.push({ node, material: node.material })
         node.material = Array.isArray(node.material) ? node.material.map((m) => m.clone()) : node.material.clone()
         for (const m of [].concat(node.material)) {
-          look.materials.push({ m, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite,
+          const unregister = onMaterial?.(m) // clones need the renderer's lighting setup (including CSM) too
+          look.materials.push({ m, unregister, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite,
             color: m.color?.clone() ?? null, emissive: m.emissive?.clone() ?? null, emissiveIntensity: m.emissiveIntensity })
         }
       })
@@ -170,6 +173,26 @@ export function createBodyLook(scene, { random = Math.random } = {}) {
     look.smoke = null
   }
 
+  function releaseMaterials(look) {
+    for (const { node, material } of look.originals || []) node.material = material
+    for (const { m, unregister } of look.materials || []) {
+      if (typeof unregister === 'function') unregister()
+      m.dispose()
+    }
+    look.originals = null
+    look.materials = null
+  }
+
+  function clear() {
+    for (const look of looks.values()) {
+      endGlow(look)
+      endArcs(look)
+      endSmoke(look)
+      releaseMaterials(look)
+    }
+    looks.clear()
+  }
+
   // A countdown the world steps in whole seconds, run on between its steps.
   function countdown(clock, told, dt) {
     if (Number.isFinite(told) && told > 0 && told !== clock.seen) {
@@ -196,8 +219,8 @@ export function createBodyLook(scene, { random = Math.random } = {}) {
         looks.set(id, look) // first sight: nothing plays that happened before it was seen
       }
       if (look.root !== root) {
+        releaseMaterials(look)
         look.root = root
-        look.materials = null
         look.fade = 1
         look.char = 0
         look.shock = 0
@@ -249,19 +272,16 @@ export function createBodyLook(scene, { random = Math.random } = {}) {
           endGlow(look)
           endArcs(look)
           endSmoke(look)
+          releaseMaterials(look)
           looks.delete(id)
         }
       }
     },
+    reset: clear, // a replay seek starts the body's effects at the new moment, including backwards in time
     info: () => [...looks].map(([id, l]) => ({ id, dead: l.dead, opacity: Number(l.fade.toFixed(3)),
       char: Number(l.char.toFixed(3)), shock: l.shockLeft > 0, glow: Boolean(l.glow), smoke: l.smoke?.puffs.length ?? 0 })),
     dispose() {
-      for (const look of looks.values()) {
-        endGlow(look)
-        endArcs(look)
-        endSmoke(look)
-      }
-      looks.clear()
+      clear()
       column.dispose()
       ring.dispose()
       puff.dispose()

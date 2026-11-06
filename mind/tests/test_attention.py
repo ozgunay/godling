@@ -300,3 +300,18 @@ def test_a_storm_called_down_its_warning_its_breaking_a_strike_and_its_passing(m
     with pytest.raises(Interrupted):
         bare.on_step(snap([ground()], clock={"StormPhase": "warning"}))
     assert bare.take_events()[0]["text"] == "Dark clouds are rolling in fast: a storm is coming"
+
+
+def test_a_whole_death_and_rebirth_between_looks_keeps_the_previous_life(mem):
+    a = Attention(mem)
+    a.on_step(snap([ground()], attrs={"Health": 12, "Hunger": 0, "Cold": True}))
+    reborn = snap([ground()], attrs={"Health": 100, "Hunger": 50, "Deaths": 1, "DiedOf": "Cold", "DiedAt": "3,4"})
+    with pytest.raises(Interrupted, match="already come back to life"):
+        a.on_step(reborn)
+    assert a.death_pending, "being alive again must not hide a death that still needs reflection"
+    (event,) = a.take_events()
+    assert event["death"] == "died" and event["at"] == [3, 4]
+    assert "Your health in the minutes before: 12 at the last look." in a.death_report(reborn)
+    assert "100 at the last look" not in a.death_report(reborn)
+    a.on_step(reborn)
+    assert a.death_pending and a.take_events() == [], "ordinary observations cannot consume the pending reflection"

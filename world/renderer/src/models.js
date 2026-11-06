@@ -240,6 +240,15 @@ export function createCharacterController(models) {
         shot.count = count
       }
     }
+    // Joining while the body is already dead (or loading its model after it died) must show the held corpse pose.
+    // Ordinary first-sight gestures stay suppressed: only this persistent body state needs reconstructing.
+    if (attributes.Dead === true && state.current !== state.gestures.get('stagger')) {
+      const fall = gesture(state, 'Stagger')
+      if (fall) {
+        start(state, fall, 0, 1)
+        fall.action.time = fall.action.getClip().duration
+      }
+    }
     if (state.current) {
       state.current.left -= dt
       // Knocked down (an earthquake), the body stays on the ground in Stagger's last pose until it gets up (WakeUp);

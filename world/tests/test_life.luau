@@ -1,4 +1,4 @@
--- Living on the island: hunger, hurt and fainting, coconuts, the weather over many days (showers, wet spells,
+-- Living on the island: hunger, hurt, death and rebirth, coconuts, the weather over many days (showers, wet spells,
 -- storms, fog, wind, shelter and cold), driftwood, a passing ship, and the old supply drops.
 local T = load_plain(readfile("world/tests/lib.luau"), "world/tests/lib.luau")()
 local V = T.Vector3
@@ -116,6 +116,57 @@ T.test("hurt: from what struck close by; enough of it kills the body", function(
     w.skyPlayer()
     e.player("Spirit", nil, { noCharacter = true })
     x.hurtNear(10, 10, 500, 1, "Lightning") -- neither has a body to hurt
+end)
+
+T.test("death stops a climb and a turn already in progress; rebirth releases the body", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    e.part("Wall", { Size = V.new(7.5, 7.5, 7.5), Position = V.new(45, 3.75, -20), Anchored = true })
+    local ladder = e.part("Ladder_9", { Size = V.new(1.5, 7.5, 0.4), Anchored = true,
+        attrs = { RenderRole = "Ladder", IsPickupObject = true } })
+    ladder.CFrame = T.CFrame.new(V.new(40.8, 3.77, -20)) * T.CFrame.fromOrientation(0, math.rad(90), 0)
+    local g = w.godling(V.new(39, 2.55, -20))
+    e.step(0.1)
+    T.starts(w.act(g, "Climb", { name = "Ladder_9" }), "ClimbStarted:up:")
+    e.step(0.5, 0.1)
+    e.hrp(g).AssemblyLinearVelocity, e.hrp(g).AssemblyAngularVelocity = V.new(1, 2, 3), V.new(3, 2, 1)
+    x.hurt(g, 200, "Lightning")
+    local fell = e.hrp(g).Position
+    T.eq(g:GetAttribute("Climbing"), false)
+    T.eq(e.hrp(g).Anchored, true, "the corpse cannot slide or be pushed")
+    T.eq(e.hrp(g).AssemblyLinearVelocity, V.new())
+    T.eq(e.hrp(g).AssemblyAngularVelocity, V.new())
+    e.step(3, 0.1)
+    T.eq(e.hrp(g).Position, fell, "the dead body does not finish its climb")
+    e.step(27.1, 0.1)
+    T.eq(g:GetAttribute("Dead"), false)
+    T.eq(e.hrp(g).Anchored, false, "the reborn body can walk")
+    T.eq(w.act(g, "Climb", { name = "Ladder_9" }), "ClimbFailed:TooFar", "no unfinished climb holds it busy")
+    w.act(g, "Face", { position = { e.hrp(g).Position.X + 10, 2.55, e.hrp(g).Position.Z } })
+    x.hurt(g, 200, "Meteor")
+    local look = e.hrp(g).CFrame.LookVector
+    e.step(0.2, 0.1)
+    T.eq(e.hrp(g).CFrame.LookVector, look, "the dead body does not finish its turn")
+end)
+
+T.test("a corpse stays put when trapped or out of bounds until its rebirth", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local g = w.godling(V.new(40, 2.55, -80))
+    e.step(0.1)
+    x.hurt(g, 200, "Meteor")
+    local fell = e.hrp(g).Position
+    e.part("Beam", { Size = V.new(2.5, 2.5, 2.5), Position = V.new(40, 4, -80), Anchored = true })
+    e.step(1.1, 0.5)
+    T.eq(e.hrp(g).Position, fell, "the live-body escape does not move a corpse")
+    T.eq(g:GetAttribute("Freed"), nil)
+    local below = V.new(40, x.OUT_OF_BOUNDS_Y - 1, -80)
+    e.hrp(g).Position = below
+    e.step(1, 0.5)
+    T.eq(e.hrp(g).Position, below, "the boundary reset does not move a corpse")
+    e.step(28, 0.5)
+    T.eq(g:GetAttribute("Dead"), false)
+    T.eq(e.hrp(g).Position, x.PLAYER_SPAWN_POSITION, "rebirth still moves it to the start")
 end)
 
 T.test("shaking a palm: a ripe coconut drops between the palm and the shaker, once in five minutes", function()

@@ -2079,6 +2079,8 @@ local FISH_COUNT, FISH_SPEED, FISH_Y, FISH_SIZE = 12, 1.6, OCEAN_TOP_Y + 0.15, V
 local CATCH_CHANCE, FISH_RESPAWN = 0.6, 60
 local survivalCounters = { coconuts = 0, spears = 0, fish = 0, catches = 0 }
 local surviving = {} -- player -> { hunger, health, beat }
+-- Body controllers are declared here so death can stop every motion already in progress, including a ladder or step.
+local climbers = {} -- player -> { path = {Vector3...}, times = {seconds per leg}, leg, t }
 
 local function setVitals(player, s)
     player:SetAttribute("Hunger", math.floor(s.hunger * 10 + 0.5) / 10)
@@ -2112,10 +2114,18 @@ local death = (function()
         if humanoid then
             humanoid:CancelMoveTo()
         end
+        climbers[player], sky.turners[player] = nil, nil
+        player:SetAttribute("Climbing", false)
+        sky.quake.releaseBody(player)
         s.health = 0
         dead[player] = { left = DEAD_SECONDS, cause = cause }
         diedAt[player] = os.clock()
         local hrp = getHumanoidRootPart(player)
+        if hrp then
+            hrp.Anchored = true -- the corpse stays where it fell, even on a slope or during a quake
+            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
         player:SetAttribute("Dead", true)
         player:SetAttribute("DeadFor", DEAD_SECONDS)
         player:SetAttribute("DiedOf", cause)
@@ -2130,6 +2140,10 @@ local death = (function()
     local function rise(player, s)
         dead[player] = nil
         resetPlayerToSpawn(player)
+        local hrp = getHumanoidRootPart(player)
+        if hrp then
+            hrp.Anchored = false
+        end
         s.health, s.hunger = REBORN_HEALTH, REBORN_HUNGER
         player:SetAttribute("Dead", false)
         player:SetAttribute("DeadFor", 0)
@@ -3385,8 +3399,6 @@ local function fasten(player, inputData)
     player:SetAttribute("LastActionResult", "FastenSuccess:fixed")
 end
 
-local climbers = {} -- player -> { path = {Vector3...}, times = {seconds per leg}, leg, t }
-
 -- Is there room for a standing body at `spot` with its feet at `feetY`? Nothing solid but the ladder in the way.
 local function bodyFits(player, spot, feetY, ladder)
     local params = OverlapParams.new()
@@ -4466,8 +4478,14 @@ sky.quake = (function()
         return (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH
     end
 
+    local function releaseBody(player) -- death ends a living body's brace or knock-down without getting it up
+        braced[player], knocked[player] = nil, nil
+        player:SetAttribute("Bracing", false)
+        player:SetAttribute("KnockedDown", false)
+    end
+
     return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
-        knocked = function(player) return knocked[player] ~= nil end }
+        knocked = function(player) return knocked[player] ~= nil end, releaseBody = releaseBody }
 end)()
 
 -- AIMED POWERS (the user's rule, 2026-11-02): viewers choose where a power lands, and only the meteor may land on
@@ -5293,7 +5311,7 @@ local freeTrappedBodies = (function()
 
     local function freeTrappedBodies()
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and getHumanoidRootPart(player)
             if hrp and not player:GetAttribute("Climbing") and #piecesInBody(player, hrp.Position) > 0 then
                 insideLooks[player] = (insideLooks[player] or 0) + 1
             else
@@ -5458,7 +5476,8 @@ sky.tickSea = (function()
 
     return function(dt)
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and not player:GetAttribute("Climbing") and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and not player:GetAttribute("Climbing")
+                and getHumanoidRootPart(player)
             local where, lip = nil, nil
             if hrp then
                 where, lip = whereIs(hrp)
@@ -5516,7 +5535,7 @@ end)()
 RunService.Heartbeat:Connect(function(dt)
     for _, player in ipairs(Players:GetPlayers()) do
         local hrp = getHumanoidRootPart(player)
-        if hrp and hrp.Position.Y < OUT_OF_BOUNDS_Y then
+        if hrp and not death.is(player) and hrp.Position.Y < OUT_OF_BOUNDS_Y then
             resetPlayerToSpawn(player)
         end
     end
@@ -5747,6 +5766,11 @@ function sky.restoreBody(player) -- Godling's body, where it stood and as it was
     player:SetAttribute("Health", body.health)
     player:SetAttribute("Hunger", body.hunger)
     player:SetAttribute("Wet", body.wet)
+    for key, attribute in pairs({ deaths = "Deaths", died_of = "DiedOf", died_at = "DiedAt" }) do
+        if body[key] ~= nil then
+            player:SetAttribute(attribute, body[key])
+        end
+    end
     surviving[player] = { hunger = body.hunger, health = body.health, beat = 0 }
 end
 

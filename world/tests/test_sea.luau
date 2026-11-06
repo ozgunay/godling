@@ -142,4 +142,20 @@ T.test("a failed lip rescue retries when a safe landing appears and stops the dr
     T.eq(g:GetAttribute("Ashore"), 1)
 end)
 
+T.test("a dead body hanging on the lip stays there until rebirth, without a shore rescue", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local at = V.new(-119.76, 1.68, -44.8)
+    local g = w.godling(at)
+    e.step(0.5, 0.5)
+    x.death.die(g, x.surviving[g], "Cold")
+    e.step(4, 0.5)
+    T.eq(g:GetAttribute("Dead"), true)
+    T.eq(g:GetAttribute("Ashore"), nil, "the dead body is not rescued from the lip")
+    T.near((e.hrp(g).Position - at).Magnitude, 0, 1e-9, "it lies where it died")
+    e.step(26, 0.5)
+    T.eq(g:GetAttribute("Dead"), false)
+    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9)
+end)
+
 return T.done("test_sea")

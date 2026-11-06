@@ -87,6 +87,10 @@ class Bubble:
             self.fresh = False
             thoughts, doing, happened = "".join(self.thoughts).strip(), self.doing, list(self.happened)
         snap = self.world.observe()
+        if snap.dead:
+            with self.lock:
+                self.fresh = True  # wait to read the news until it is alive again
+            return None
         body = []
         if snap.hunger is not None:
             body.append(f"{snap.hunger:.0f}% fed, health {snap.health:.0f} of 100")
@@ -109,6 +113,11 @@ class Bubble:
         if thing not in THINGS or feeling not in FEELINGS:
             self.log(kind="bubble", ok=False, reply=str(reply)[:120])
             return None
+        now = self.world.observe()
+        if now.dead or now.deaths != snap.deaths:
+            with self.lock:
+                self.fresh = True
+            return None  # a reading that began in the previous life belongs to that life
         try:
             self.world.act("Think", {"thing": thing, "feeling": feeling})
         except WorldError:

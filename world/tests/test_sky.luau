@@ -416,6 +416,30 @@ T.test("no earthquake while Godling is weak, lies dead, or was born again lately
     T.eq(w.power("Lightning"), "SkyFailed:NoSafePalm")
 end)
 
+T.test("dying ends a brace or knock-down without releasing or getting up the corpse", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    e.step(0.1)
+    for i = 1, 16 do
+        piece(e, "Block_" .. (100 + i), w.spot + V.new(5 + (i % 4) * 2.5, -1.3, 5 + math.floor(i / 4) * 2.5))
+    end
+    T.starts(w.power("Earthquake"), "SkyDone:Earthquake:")
+    T.eq(w.act(w.g, "Brace", {}), "Braced")
+    x.hurt(w.g, 200, "Lightning")
+    T.eq(w.g:GetAttribute("Bracing"), false, "a corpse no longer braces")
+    e.step(30.1, 0.5)
+    T.eq(w.g:GetAttribute("Dead"), false)
+    T.eq(e.hrp(w.g).Anchored, false, "reborn before the shaking ends, it can still walk")
+    x.sky.quake.knockDown(w.g, e.hrp(w.g))
+    x.hurt(w.g, 200, "Meteor")
+    T.eq(w.g:GetAttribute("KnockedDown"), false)
+    e.step(5, 0.5)
+    T.eq(e.hrp(w.g).Anchored, true, "the knock-down timer does not release a corpse")
+    T.eq(w.g:GetAttribute("Gesture"), "Stagger", "it has not got up")
+    e.step(25.1, 0.5)
+    T.eq(e.hrp(w.g).Anchored, false, "the corpse releases at rebirth")
+end)
+
 T.test("notes from viewers: cleaned, capped by characters, drifting down, and gone after a while", function()
     local w = sky()
     local e, x = w.e, w.x

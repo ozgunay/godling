@@ -215,6 +215,7 @@ export function createReplay({ onFrame, onReset, tell, assetBase, defaultAssetBa
 
   return {
     get active() { return active },
+    get time() { return playhead }, // effects use recorded time too: paused, sped up, or waiting for a chunk
     step,
     // From the screen: { action: 'start' | 'seek' | 'segments' | 'live', … }, and speed, paused, base, remote and
     // remoteUntil whatever the action.
