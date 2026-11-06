@@ -15,6 +15,7 @@ import { createCameraShake } from './shake.js'
 import { createDust } from './dust.js'
 import { createBlasts } from './blast.js'
 import { createLightning } from './lightning.js'
+import { createDeathLook } from './deathlook.js'
 import { createWind, swayMaterial } from './wind.js'
 import { createFreeCamera } from './freecam.js'
 import { createFollowCamera } from './followcam.js'
@@ -508,6 +509,8 @@ export function createRenderer(ctx) {
   // Lightning: a strike where a SkyBolt_<n> marker appears (lightning.js), lighting the ground with the meteor's
   // flash light. `?bolt=4` strikes near the camera's target every 4 seconds, to look.
   const lightning = createLightning(scene, tier, { light: blasts.light })
+  // Death: a dead body fades before it is born again, and comes back at the start in a glow (deathlook.js).
+  const deathLook = createDeathLook(scene)
   const boltEvery = Number(params.get('bolt'))
   let nextBolt = 1
   const forcedQuake = params.has('quake') ? Number(params.get('quake')) : NaN
@@ -1056,6 +1059,7 @@ export function createRenderer(ctx) {
         })
         bodies.push({ id: entity.id, speed })
         bubbles.update(entity.id, position, attributesByRootPartId.get(entity.id) || {}, entity.id === hiddenBodyId, dt)
+        deathLook.update(entity.id, root, attributesByRootPartId.get(entity.id) || {}, position, dt) // fades, glows
       }
       record.fresh = false
       if (moved) {
@@ -1101,6 +1105,7 @@ export function createRenderer(ctx) {
     dust.prune(activeIds)
     blasts.prune(activeIds)
     lightning.prune(activeIds)
+    deathLook.prune(activeIds)
     for (const [id, obj] of colliderDebugObjects.entries()) {
       if (!activeIds.has(id)) {
         scene.remove(obj)
@@ -1279,6 +1284,7 @@ export function createRenderer(ctx) {
     quake: () => ({ quake: Number(quakeNow.toFixed(3)), phase: quakePhase, dust: dust.info() }),
     blasts: () => blasts.info(),
     lightning: () => lightning.info(),
+    deaths: () => deathLook.info(), // bodies lying dead or coming back: how faded, and whether they glow
     bubbles: () => ({ assetBase, shown: bubbles.info() }),
     bubbleSheet: () => bubbleSheet(models, resolveAsset), // call twice: the first call starts the model loads
   }
@@ -1364,6 +1370,7 @@ export function createRenderer(ctx) {
       dust.dispose()
       blasts.dispose()
       lightning.dispose()
+      deathLook.dispose()
       buildWatch?.dispose()
       csm?.remove()
       csm?.dispose()

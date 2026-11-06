@@ -157,6 +157,21 @@ describe('the viewer screen', () => {
     expect($('.b-note .get').textContent).toMatch(/^Next note in 0:/)
   })
 
+  it('says when Godling lies dead, what killed it, when it comes back, and how often it has died', async () => {
+    const dead = panelStatus({ godling: { health: 0, hunger: 10, wet: 0, cold: true, bracing: false, knockedDown: true,
+      dead: true, deadFor: 23, diedOf: 'HungerAndCold', deaths: 2 } })
+    const back = panelStatus({ godling: { health: 100, hunger: 50, wet: 0, dead: false, deaths: 2, diedOf: 'HungerAndCold' } })
+    const odd = panelStatus({ godling: { health: 0, dead: true, deadFor: 0, diedOf: 'Quicksand', deaths: 1 } })
+    const { $, tick } = await boot({ statuses: [dead, back, odd] })
+    const states = () => [...document.querySelectorAll('.b-vitals .state')].map((s) => s.textContent)
+    expect(states()).toEqual(['Died of hunger and cold · back in 23 s', '2 deaths'], 'dead: nothing else about the body')
+    await tick(1500)
+    expect(states()).toEqual(['2 deaths'])
+    await tick(1500)
+    expect(states()).toEqual(['Died of quicksand', '1 death'])
+    expect($('.b-vitals .hearts').getAttribute('aria-label')).toBe('Health 0 of 100')
+  })
+
   it('switches the walls mode with one small button, cutaway or walls up, and remembers it', async () => {
     const { $, view, told } = await boot()
     const walls = $('.b-camera .walls')

@@ -233,10 +233,12 @@ T.test("a meteor on Godling's head, with someone standing in the crater, and one
     T.eq(w.power("Meteor", aim(p, 3, 3)), "SkyFailed:GodlingIsWeak")
     x.surviving[w.g].health = 30
     T.eq(w.power("Meteor", aim(p, 3, 3)), "SkyDone:Meteor:2")
-    x.surviving[w.g].health = 20 -- the blast faints it: no knock-down on top
+    x.surviving[w.g].health = 20 -- the blast kills it: no knock-down on top
     e.step(40.1, 0.1)
     e.step(2, 0.1)
-    T.eq(w.g:GetAttribute("Faints"), 1)
+    T.eq(w.g:GetAttribute("Deaths"), 1)
+    T.eq(w.g:GetAttribute("DiedOf"), "Meteor")
+    T.eq(x.sky.quake.knocked(w.g), false, "the dead are not knocked down")
 end)
 
 T.test("a meteor aimed at the sea, or with nowhere clear to land, and the craters that are kept", function()
@@ -321,16 +323,19 @@ T.test("the earthquake: a rumble, Godling braces, the shaking wakes loose pieces
     T.starts(w.power("Earthquake"), "SkyFailed:TooSoon:")
 end)
 
-T.test("no earthquake while Godling is weak, or just after it fainted, or without a body", function()
+T.test("no earthquake while Godling is weak, lies dead, or was born again lately, or without a body", function()
     local w = sky()
     local e, x = w.e, w.x
     e.step(0.1)
     x.surviving[w.g].health = 10
     T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak")
-    x.surviving[w.g].health = 100
-    w.g:SetAttribute("Faints", 1)
-    e.step(0.1)
-    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "too soon after a faint")
+    x.death.die(w.g, x.surviving[w.g], "Hunger")
+    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "dead")
+    e.step(31, 1)
+    T.eq(x.surviving[w.g].health, 100, "born again, whole")
+    T.eq(w.power("Earthquake"), "SkyFailed:GodlingIsWeak", "too soon after it died")
+    e.now = e.now + 900
+    T.ok(not x.sky.quake.weak(w.g), "fifteen minutes on, the mercy rule lets go")
     e.hrp(w.g):Destroy()
     e.now = e.now + 1000
     T.eq(w.power("Earthquake"), "SkyFailed:NobodyHere")

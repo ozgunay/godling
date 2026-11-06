@@ -67,7 +67,7 @@ WHY_NOT = {
     "NobodyHere": "Godling is not in the world.",
     "UnknownPower": "The world does not know that power (is it running an older copy of main.lua?).",
     "AlreadyShaking": "The ground is already shaking.",
-    "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after a faint.",
+    "GodlingIsWeak": "Godling is weak: no disasters while its health is under 30, or for 15 minutes after it died.",
     "NothingBuiltYet": "Nothing built yet: an earthquake needs at least 15 pieces standing near Godling.",
     "EmptyNote": "The note was empty.",
 }
@@ -385,7 +385,10 @@ class Island:
         if c.get("GodlingHealth") is not None:
             godling = {"health": c.get("GodlingHealth"), "hunger": c.get("GodlingHunger"), "wet": c.get("GodlingWet") or 0,
                        "cold": bool(c.get("GodlingCold")), "bracing": bool(c.get("GodlingBracing")),
-                       "knockedDown": bool(c.get("GodlingKnockedDown"))}
+                       "knockedDown": bool(c.get("GodlingKnockedDown")),
+                       # main.lua DEATH: dead, the seconds until it is born again, what killed it, how often it died
+                       "dead": bool(c.get("GodlingDead")), "deadFor": c.get("GodlingDeadFor") or 0,
+                       "diedOf": c.get("GodlingDiedOf") or "", "deaths": c.get("GodlingDeaths") or 0}
         with self.lock:
             mine = self.last_note.get(client, 0)
             notes = {"limit": NOTE_LIMIT, "every": self.note_every, "queue": len(self.notes),

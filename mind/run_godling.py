@@ -48,7 +48,8 @@ DECOR_ROLES = ("Crater", "SandMark")  # anchored and walked through by design
 NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch")  # name prefixes the world counts on from
 
 CONSOLE = {"decision": "THINK", "skill": "  DO", "event": "NOTICE", "sleep": "SLEEP", "llm": None, "error": "ERROR",
-           "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None, "thinking": None}
+           "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None, "thinking": None,
+           "dead": "DIED", "death": "REBORN"}
 
 
 def main():
@@ -331,8 +332,12 @@ def island_of(snapshot):
         hrp = p.get("humanoid_root_part") or {}
         if p.get("name") != SKY_PLAYER and hrp.get("position"):
             a = {k: v.get("value") for k, v in (p.get("attributes") or {}).items()}
-            body = {"pos": hrp["position"], "health": a.get("Health") or 100, "hunger": a.get("Hunger") or 100,
-                    "wet": a.get("Wet") or 0}
+            got = lambda name, default: default if a.get(name) is None else a[name]  # noqa: E731 (0 is a value)
+            if a.get("Dead"):  # stopped while it lay dead: it comes back born again, at the start spot (main.lua DEATH)
+                body = {"pos": None, "health": 100, "hunger": 50, "wet": 0}
+            else:
+                body = {"pos": hrp["position"], "health": got("Health", 100), "hunger": got("Hunger", 100),
+                        "wet": got("Wet", 0)}
     return {"pieces": pieces, "felled": felled, "roles": list(KEPT_ROLES), "counters": counters,
             # main.lua tickClock: Day and TimeOfDay come from the seconds since the first morning (DAY 2400 s, 7 am)
             "clock": max(0.0, (day - 1) * 2400 + hour / 24 * 2400 - 7 / 24 * 2400), "body": body, "saved": time.time()}
@@ -419,12 +424,23 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         state["future"] = pool.submit(mind.think, prepared, lambda text: thinking.write(plan, text))
         state["future_warned"] = False
 
+    def died():
+        """The body has died: what was planned for it is dropped, and the mind waits out the death (DEATH)."""
+        state["agenda"].clear()
+        if state["future"] is not None:
+            state["future"] = None  # let it finish unseen: it was thought for a living body
+            stats["plans_discarded"] += 1
+            log(kind="plan_discarded", reason="Godling died")
+        live_through_death(world, attention, mind, log, state.get("doing", ""))
+
     def cycle():
         snap = world.observe()
         try:
             attention.on_step(snap)
         except Interrupted:
             pass
+        if snap.dead:
+            return died()
         maybe_sleep(mind, memory, snap, args, log)
         structures.maybe(snap)
         if not state["agenda"]:
@@ -440,7 +456,10 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
             stats["waited_for_mind_s"] += gap
             log(kind="wait_for_mind", seconds=round(gap, 2))
             state["last_think"] = thought["seconds"]
-            decision = mind.adopt(thought, world.observe())
+            now = world.observe()
+            if now.dead:  # it died while its mind was thinking: the plan was for a living body
+                return died()
+            decision = mind.adopt(thought, now)
             state["agenda"].extend(p for p in decision["projects"] if p["steps"])
             if not state["agenda"]:
                 skills.run("wait", {"seconds": 5})
@@ -449,6 +468,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
             # Think about what comes after this whole agenda while the body works through it.
             plan_in_background(world.observe(), doing=list(state["agenda"]))
         project = state["agenda"].popleft()
+        state["doing"] = project["goal"]
         if project["intention"] and not args.no_narration:
             world.say(project["intention"])
         log(kind="project", phase="start", goal=project["goal"], intention=project["intention"], steps=len(project["steps"]))
@@ -573,6 +593,9 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
             attention.on_step(snap)
         except Interrupted:
             pass
+        if snap.dead:
+            live_through_death(world, attention, mind, log, state.get("doing", ""))
+            return
         maybe_sleep(mind, memory, snap, args, log)
         structures.maybe(snap)
         msgs = [m for m in world.chat_since(state["chat_after"]) if m.get("agent_name") != args.name]
@@ -582,6 +605,7 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
         decision = mind.decide(snap, attention.take_events(), msgs)
         stats["waited_for_mind_s"] += time.time() - waited
         for project in decision["projects"][:1]:
+            state["doing"] = project["goal"]
             if project["intention"] and not args.no_narration:
                 world.say(project["intention"])
             results = []
@@ -597,6 +621,29 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
 
     while not args.minutes or time.time() - started < args.minutes * 60:
         survive(cycle)
+
+
+DEAD_LOOK = 1.0  # seconds between looks while the body lies dead
+
+
+def live_through_death(world, attention, mind, log, doing=""):
+    """The body has died (main.lua DEATH) and lies dead until it is born again at the start. The mind does not think
+    meanwhile (there is nothing it could do: no DeepSeek calls); once born again it is told what happened, facts only,
+    and draws its own lessons (Mind.reflect_on_death) before it plans again."""
+    snap = world.observe()
+    log(kind="dead", cause=snap.died_of, deaths=snap.deaths, doing=doing)
+    while snap.dead:
+        time.sleep(DEAD_LOOK)
+        snap = world.observe()
+        try:
+            attention.on_step(snap)
+        except Interrupted:
+            pass  # being born again is news, but there is nothing to interrupt
+    try:
+        mind.reflect_on_death(snap, attention.death_report(snap, doing))
+    except Exception as err:  # noqa: BLE001 (a failed reflection must not stop the life that goes on)
+        log(kind="error", message=f"death: {err!r}"[:300])
+    return snap
 
 
 def maybe_sleep(mind, memory, snap, args, log):

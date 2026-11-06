@@ -164,6 +164,17 @@ describe('characters', () => {
     expect(controller.debug()[0].current).toBe('Stagger') // held down
     controller.update(1, { dt: 0.1, attributes: { Gestures: 5, KnockedDown: false } })
     expect(controller.debug()[0].current).toBeNull()
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Gesture: 'Stagger', Dead: true } }) // it dies: it falls
+    for (let i = 0; i < 30; i++) controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Dead: true } })
+    expect(controller.debug()[0].current).toBe('Stagger') // and lies there while it is dead
+    controller.update(1, { dt: 0.1, attributes: { Gestures: 6, Dead: false } })
+    expect(controller.debug()[0].current).toBeNull()
+    // A body first seen before it ever gestured plays its first gesture (here it dies before it has done anything).
+    controller.upsert({ entityId: 2, root: new THREE.Group(), modelUrl: '/c.glb' })
+    controller.update(2, { dt: 0.1, attributes: {} })
+    controller.update(2, { dt: 0.1, attributes: { Gestures: 1, Gesture: 'Stagger', Dead: true } })
+    expect(controller.debug().find((d) => d.id === 2).current).toBe('Stagger')
+    controller.remove(2)
     for (let i = 0; i < 10; i++) controller.update(1, { dt: 0.2, attributes: { Climbing: true } })
     expect(weights(controller).Climb).toBeGreaterThan(0.9)
     for (let i = 0; i < 10; i++) controller.update(1, { dt: 0.2, attributes: { Bracing: true } })

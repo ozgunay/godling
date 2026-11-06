@@ -2013,11 +2013,10 @@ end
 -- SURVIVAL (the user's wish, after Cast Away; ADR-007): hunger, coconuts, a carved spear, fish, and a volleyball
 --------------------------------------------------------------------------------
 
--- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling faints, drops what it
--- holds, and wakes by the raft half fed and weak. A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
+-- Hunger empties in about an hour. Then health drains over about half an hour; at none, Godling dies (DEATH, below).
+-- A coconut fills 15, a raw fish 20, a fish cooked over a fire 50.
 local HUNGER_EMPTY_SECONDS, STARVE_SECONDS = 3600, 1800
 local FOOD = { Coconut = 15, Catch = 20, CookedCatch = 50 }
-local FAINT_HUNGER, FAINT_HEALTH = 50, 30
 -- Hurt and healing: lightning striking close by, or a stone from the sky landing close by, takes health. Fed at
 -- least half full, the body mends: from none to whole in about half an hour.
 local HARM = {
@@ -2040,26 +2039,87 @@ local function setVitals(player, s)
     player:SetAttribute("Health", math.floor(s.health * 10 + 0.5) / 10)
     local humanoid = getHumanoid(player)
     if humanoid then
-        humanoid.Health = math.max(1, s.health) -- the viewers' HP; fainting, not the engine's death, handles none
+        humanoid.Health = math.max(1, s.health) -- the viewers' HP; the world's death (DEATH), not the engine's, handles none
     end
 end
 
-local function faint(player, s)
-    local held = releaseHeldBlock(player)
-    if held then -- it drops where Godling fell
-        held.Anchored = false
-        held.CanCollide = true
+-- DEATH (the user's wish, 2026-11-06; it replaced fainting). At no health Godling dies: what it holds drops where it
+-- fell, and the body lies there DEAD_SECONDS, taking nothing in (no inputs, no hurt, no hunger). Then it is born again
+-- at the start spot, whole but half fed: dying is never a meal. The body carries Dead, DeadFor (seconds left), DiedOf
+-- (the cause), DiedAt ("x,z") and Deaths (how often), for the renderer (it falls and lies, fades, and comes back
+-- glowing), for viewers, and for the mind, which is told what killed it and learns from it.
+local death = (function()
+    local DEAD_SECONDS, REBORN_HEALTH, REBORN_HUNGER = 30, 100, 50
+    local dead = {} -- player -> { left = seconds, cause }
+    local diedAt = {} -- player -> os.clock() of its last death (the disasters' mercy rule)
+
+    local function die(player, s, cause)
+        if dead[player] then
+            return
+        end
+        local held = releaseHeldBlock(player)
+        if held then -- it drops where Godling fell, and lies there for it to come back for
+            held.Anchored = false
+            held.CanCollide = true
+        end
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:CancelMoveTo()
+        end
+        s.health = 0
+        dead[player] = { left = DEAD_SECONDS, cause = cause }
+        diedAt[player] = os.clock()
+        local hrp = getHumanoidRootPart(player)
+        player:SetAttribute("Dead", true)
+        player:SetAttribute("DeadFor", DEAD_SECONDS)
+        player:SetAttribute("DiedOf", cause)
+        player:SetAttribute("DiedAt", hrp and string.format("%.1f,%.1f", hrp.Position.X, hrp.Position.Z) or "")
+        player:SetAttribute("Deaths", (player:GetAttribute("Deaths") or 0) + 1)
+        setVitals(player, s)
+        gesture(player, "Stagger") -- it falls; the renderer keeps it down while Dead
+        print(string.format("DIED %s of %s%s", player.Name, cause,
+            hrp and string.format(" at (%.1f, %.1f)", hrp.Position.X, hrp.Position.Z) or ""))
     end
-    resetPlayerToSpawn(player)
-    s.hunger, s.health = FAINT_HUNGER, FAINT_HEALTH
-    player:SetAttribute("Faints", (player:GetAttribute("Faints") or 0) + 1)
-    setVitals(player, s)
-    gesture(player, "WakeUp") -- getting up off its back by the raft
-end
+
+    local function rise(player, s)
+        dead[player] = nil
+        resetPlayerToSpawn(player)
+        s.health, s.hunger = REBORN_HEALTH, REBORN_HUNGER
+        player:SetAttribute("Dead", false)
+        player:SetAttribute("DeadFor", 0)
+        setVitals(player, s)
+        gesture(player, "WakeUp") -- getting up off its back at the start spot
+        print(string.format("REBORN %s at the start spot", player.Name))
+    end
+
+    -- Each frame, for a body with vitals: true while it lies dead (nothing else of SURVIVAL happens to it then).
+    local function tick(player, s, dt)
+        local d = dead[player]
+        if not d then
+            return false
+        end
+        d.left = d.left - dt
+        if d.left <= 0 then
+            rise(player, s)
+        else
+            local left = math.ceil(d.left)
+            if player:GetAttribute("DeadFor") ~= left then
+                player:SetAttribute("DeadFor", left)
+            end
+        end
+        return true
+    end
+
+    return { die = die, tick = tick, SECONDS = DEAD_SECONDS, REBORN_HUNGER = REBORN_HUNGER,
+        is = function(player) return dead[player] ~= nil end,
+        since = function(player) -- seconds since it last died; forever if it never has (since the world started)
+            return diedAt[player] and os.clock() - diedAt[player] or math.huge
+        end }
+end)()
 
 local function hurt(player, amount, cause)
     local s = surviving[player]
-    if not s then
+    if not s or death.is(player) then
         return
     end
     s.health = math.max(0, s.health - amount)
@@ -2067,7 +2127,7 @@ local function hurt(player, amount, cause)
     player:SetAttribute("Hurts", (player:GetAttribute("Hurts") or 0) + 1)
     print(string.format("HURT %s by %s: health %.0f", player.Name, cause, s.health))
     if s.health <= 0 then
-        faint(player, s)
+        death.die(player, s, cause)
     else
         setVitals(player, s)
     end
@@ -2095,7 +2155,7 @@ local function tickSurvival(dt)
             s = { hunger = player:GetAttribute("Hunger") or 100, health = player:GetAttribute("Health") or 100, beat = 0 }
             surviving[player] = s
         end
-        if s then
+        if s and not death.tick(player, s, dt) then
             if s.hunger > 0 then
                 s.hunger = math.max(0, s.hunger - dt * 100 / HUNGER_EMPTY_SECONDS)
             else
@@ -2107,8 +2167,8 @@ local function tickSurvival(dt)
                 s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and HARM.houseHeals or 1))
             end
             s.beat = s.beat + dt
-            if s.health <= 0 then
-                faint(player, s)
+            if s.health <= 0 then -- what wore it down: the mind is told
+                death.die(player, s, s.hunger <= 0 and s.cold and "HungerAndCold" or s.hunger <= 0 and "Hunger" or "Cold")
             elseif s.beat >= 1 then -- attributes once a second, not every frame
                 s.beat = 0
                 setVitals(player, s)
@@ -3432,6 +3492,10 @@ if AgentInputService then
     AgentInputService.InputReceived:Connect(function(player, inputType, inputData)
         local humanoid = getHumanoid(player)
         if not humanoid then return end
+        if death.is(player) then -- a dead body does nothing until it is born again (DEATH)
+            player:SetAttribute("LastActionResult", "Dead")
+            return
+        end
 
         if inputType == "MoveTo" and inputData and inputData.position then
             local targetPosition = parsePosition(inputData.position)
@@ -3961,21 +4025,20 @@ sky.quake = (function()
     local REACH, MAX_WOKEN = 60, 200 -- pieces within this of Godling are shaken loose, nearest first
     local MIN_PIECES = 15 -- something worth testing must stand within reach
     local COOLDOWN = 600 -- seconds between disasters in test mode; the paid stream will allow one a day (phase 3)
-    local MERCY_HEALTH, MERCY_AFTER_FAINT = 30, 900 -- no disaster while Godling is this weak, or this soon after a faint
+    local MERCY_HEALTH, MERCY_AFTER_DEATH = 30, 900 -- no disaster while Godling is this weak, or this soon after it died
     local KNOCKDOWN, LET_GO = 2.5, 1.5 -- seconds knocked down; seconds a braced body holds on after the shaking
     local active, lastEnded = nil, -math.huge
     local braced, knocked = {}, {} -- player -> true; player -> when it gets up
-    local faints = {} -- player -> { count, at }: when it last fainted, for the mercy rule
 
     local function shakeable(part) -- blocks, stones and logs (boulders hold where they lie, ADR-009)
         return part:IsA("BasePart") and SNAPPED_ROLES[part:GetAttribute("RenderRole")] and not isCarried(part)
             and not isPlacing(part)
     end
 
-    local function bodies()
+    local function bodies() -- the living: a dead body lies still through a quake (DEATH)
         local out = {}
         for _, player in ipairs(Players:GetPlayers()) do
-            local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+            local hrp = player.Name ~= SKY_PLAYER and not death.is(player) and getHumanoidRootPart(player)
             if hrp then
                 out[player] = hrp
             end
@@ -4118,7 +4181,9 @@ sky.quake = (function()
                 if hrp and not climbers[player] and not braced[player] then
                     hrp.Anchored = false
                 end
-                gesture(player, "GetUp") -- from sitting, where Stagger leaves it (WakeUp starts from standing)
+                if not death.is(player) then -- one that died meanwhile gets up only when it is born again
+                    gesture(player, "GetUp") -- from sitting, where Stagger leaves it (WakeUp starts from standing)
+                end
             end
         end
     end
@@ -4141,16 +4206,6 @@ sky.quake = (function()
         return moved, fell
     end
 
-    local function watchFaints()
-        for player in pairs(bodies()) do
-            local n = player:GetAttribute("Faints") or 0
-            local seen = faints[player]
-            if not seen or n > seen.count then
-                faints[player] = { count = n, at = seen and os.clock() or -math.huge }
-            end
-        end
-    end
-
     local function start(godling)
         if active then
             return nil, "AlreadyShaking"
@@ -4159,8 +4214,8 @@ sky.quake = (function()
         if wait > 0 then
             return nil, "TooSoon:" .. math.ceil(wait)
         end
-        local s, f = surviving[godling], faints[godling]
-        if (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) then
+        local s = surviving[godling]
+        if (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH then
             return nil, "GodlingIsWeak"
         end
         local hrp = getHumanoidRootPart(godling)
@@ -4191,7 +4246,6 @@ sky.quake = (function()
     end
 
     local function tick(dt)
-        watchFaints()
         getUp()
         if not active then
             return
@@ -4267,8 +4321,8 @@ sky.quake = (function()
     end
 
     local function weak(godling) -- the mercy rule, for every disaster
-        local s, f = surviving[godling], faints[godling]
-        return (s and s.health < MERCY_HEALTH) or (f and os.clock() - f.at < MERCY_AFTER_FAINT) or false
+        local s = surviving[godling]
+        return (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH
     end
 
     return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
@@ -4531,10 +4585,9 @@ function sky.meteor.blast(fall, top)
         local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
         if hrp and Vector3.new(hrp.Position.X - c.X, 0, hrp.Position.Z - c.Z).Magnitude <= HARM.meteorRange
             and math.abs(hrp.Position.Y - c.Y) <= HARM.meteorRange then
-            local faints = player:GetAttribute("Faints") or 0
             hurt(player, HARM.meteor, "Meteor")
             hurtCount = hurtCount + 1
-            if (player:GetAttribute("Faints") or 0) == faints and not climbers[player] and not sky.quake.knocked(player) then
+            if not death.is(player) and not climbers[player] and not sky.quake.knocked(player) then
                 sky.quake.knockDown(player, hrp) -- staggers, sits, and gets up 2.5 s later
             end
         end
@@ -4604,7 +4657,8 @@ function sky.mirrorGodling()
     if not godling then
         return
     end
-    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown" }) do
+    for _, name in ipairs({ "Health", "Hunger", "Wet", "Cold", "Bracing", "KnockedDown", "Dead", "DeadFor", "DiedOf",
+        "Deaths" }) do
         local value = godling:GetAttribute(name)
         if clockPart:GetAttribute("Godling" .. name) ~= value then
             clockPart:SetAttribute("Godling" .. name, value)
@@ -5106,7 +5160,9 @@ function sky.restoreBody(player) -- Godling's body, where it stood and as it was
         return
     end
     sky.body = nil
-    hrp.CFrame = CFrame.new(body.pos[1], body.pos[2], body.pos[3])
+    if body.pos then -- none when the island stopped while Godling lay dead: it is born again at the start spot
+        hrp.CFrame = CFrame.new(body.pos[1], body.pos[2], body.pos[3])
+    end
     player:SetAttribute("Health", body.health)
     player:SetAttribute("Hunger", body.hunger)
     player:SetAttribute("Wet", body.wet)

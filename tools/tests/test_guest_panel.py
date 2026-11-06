@@ -240,8 +240,13 @@ def test_status_with_godling():
     s = island.status("")
     assert s["clock"] == {"hour": 12, "day": 3, "rain": 0.5, "fog": 0, "wind": 5.0, "quake": "rumble",
                           "at": 1_793_700_000.5}
-    assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False}
+    assert s["godling"] == {"health": 90, "hunger": 40, "wet": 0, "cold": True, "bracing": True, "knockedDown": False,
+                            "dead": False, "deadFor": 0, "diedOf": "", "deaths": 0}
     assert s["notes"]["wait"] == 0
+    # Dead (main.lua DEATH): what killed it, when it comes back, how often it has died
+    island.clock.update(GodlingHealth=0, GodlingDead=True, GodlingDeadFor=12, GodlingDiedOf="Cold", GodlingDeaths=3)
+    g = island.status("")["godling"]
+    assert (g["dead"], g["deadFor"], g["diedOf"], g["deaths"]) == (True, 12, "Cold", 3)
 
 
 # ---- the panel over HTTP ---------------------------------------------------------------------------------------------

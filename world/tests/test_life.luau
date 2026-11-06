@@ -8,7 +8,7 @@ local function at(part)
     return { p.X, p.Y, p.Z }
 end
 
-T.test("hunger empties, then health; well fed it mends; at none, Godling faints by the raft", function()
+T.test("hunger empties, then health; well fed it mends; at none, Godling dies, lies dead, and is born again", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling(V.new(10, 2.55, 10))
@@ -30,30 +30,74 @@ T.test("hunger empties, then health; well fed it mends; at none, Godling faints 
     e.step(10, 1)
     T.eq(g:GetAttribute("Cold"), true, "nights are cold")
     T.ok(s.health < before, "cold wears it down")
-    -- Godling holds a block when it faints: the block drops
+    -- Godling holds a block when it dies, starving on a cold night: the block drops where it fell
     local block = e.find("Block_1")
-    e.hrp(g).Position = block.Position + V.new(-2.5, 1.3, 0)
+    local fell = block.Position + V.new(-2.5, 1.3, 0)
+    e.hrp(g).Position = fell
     w.act(g, "Pickup", { position = at(block) })
     s.hunger, s.health = 0, 0.01
     e.step(1)
-    T.eq(g:GetAttribute("Faints"), 1)
+    T.eq(g:GetAttribute("Dead"), true)
+    T.eq(g:GetAttribute("Deaths"), 1)
+    T.eq(g:GetAttribute("DiedOf"), "HungerAndCold")
+    T.eq(g:GetAttribute("DiedAt"), string.format("%.1f,%.1f", fell.X, fell.Z))
+    T.eq(g:GetAttribute("DeadFor"), 30)
+    T.eq(g:GetAttribute("Gesture"), "Stagger", "it falls where it died")
+    T.eq(g:GetAttribute("Health"), 0)
+    T.eq(block.CanCollide, true, "dropped where it died")
+    T.logged(w, "DIED Godling of HungerAndCold at")
+    -- Dead, it takes nothing in: no inputs, no hunger, no hurt, and no second death
+    e.step(10, 1)
+    T.eq(g:GetAttribute("DeadFor"), 20, "counts down")
+    w.act(g, "MoveTo", { position = { 0, 2.5, 0 } })
+    T.eq(g:GetAttribute("LastActionResult"), "Dead")
+    T.eq(s.hunger, 0, "no hunger while dead")
+    x.hurt(g, 50, "Lightning")
+    T.eq(g:GetAttribute("Hurts"), nil, "the dead are not hurt")
+    T.near(e.hrp(g).Position.X, fell.X, 1e-9, "it lies where it fell")
+    T.eq(g:GetAttribute("Deaths"), 1)
+    -- Thirty seconds on it is born again at the start spot: whole, but half fed
+    e.step(21, 1)
+    T.eq(g:GetAttribute("Dead"), false)
+    T.eq(g:GetAttribute("DeadFor"), 0)
     T.eq(g:GetAttribute("Gesture"), "WakeUp")
-    T.eq(s.hunger, 50)
-    T.eq(s.health, 30)
-    T.eq(block.CanCollide, true, "dropped where it fainted")
-    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "wakes by the raft")
-    T.eq(e.humanoid(g).Health, 30)
-    -- a bodiless player and the guest panel are not fed; a body without a character faints all the same
+    T.near(s.health, 100, 0.1, "whole (the cold night has taken a little since)")
+    T.near(s.hunger, 50, 0.1)
+    T.near(e.hrp(g).Position.X, x.PLAYER_SPAWN_POSITION.X, 1e-9, "born again at the start spot")
+    T.near(e.humanoid(g).Health, 100, 0.1)
+    T.logged(w, "REBORN Godling at the start spot")
+    T.ok(x.death.since(g) >= 30 and x.death.since(g) < 40)
+    -- fed but out in the cold night: the cold alone
+    s.health = 0.001
+    e.step(1)
+    T.eq(g:GetAttribute("DiedOf"), "Cold")
+    T.eq(g:GetAttribute("Deaths"), 2)
+    e.step(31, 1)
+    -- a bodiless player and the guest panel are not fed; a body without a character dies all the same
     local sky = w.skyPlayer()
     local ghost = e.player("Ghost", nil, { noCharacter = true })
     e.step(1)
     T.eq(x.surviving[sky], nil)
     x.surviving[ghost].hunger, x.surviving[ghost].health = 0, 0.001
     e.step(1)
-    T.eq(ghost:GetAttribute("Faints"), 1)
+    T.eq(ghost:GetAttribute("Deaths"), 1)
+    T.eq(ghost:GetAttribute("DiedAt"), "")
+    e.step(31, 1)
+    T.eq(ghost:GetAttribute("Dead"), false, "and is born again")
+    T.eq(x.death.since(sky), math.huge, "never died")
 end)
 
-T.test("hurt: from what struck close by; enough of it faints the body", function()
+T.test("starving by day, warm and dry, it dies of hunger alone", function()
+    local w = T.boot()
+    local g = w.godling(V.new(10, 2.55, 10))
+    w.e.step(1)
+    local s = w.x.surviving[g]
+    s.hunger, s.health = 0, 0.001
+    w.e.step(1)
+    T.eq(g:GetAttribute("DiedOf"), "Hunger")
+end)
+
+T.test("hurt: from what struck close by; enough of it kills the body", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling(V.new(10, 2.55, 10))
@@ -67,7 +111,8 @@ T.test("hurt: from what struck close by; enough of it faints the body", function
     x.hurtNear(100, 100, 5, 30, "Meteor") -- too far to be hurt
     T.eq(g:GetAttribute("Hurts"), 1)
     x.hurt(g, 200, "Meteor")
-    T.eq(g:GetAttribute("Faints"), 1)
+    T.eq(g:GetAttribute("Deaths"), 1)
+    T.eq(g:GetAttribute("DiedOf"), "Meteor")
     w.skyPlayer()
     e.player("Spirit", nil, { noCharacter = true })
     x.hurtNear(10, 10, 500, 1, "Lightning") -- neither has a body to hurt
@@ -417,13 +462,15 @@ T.test("moving several pieces into place at once, and one of them lost on the wa
     T.eq(#x.placingBlocks, 1, "only the lost one is dropped")
 end)
 
-T.test("a fainted body with nothing in its hands, and a body with no character to reset", function()
+T.test("a dead body with nothing in its hands, and a body with no character to reset", function()
     local w = T.boot()
     local x = w.x
     local g = w.godling()
     local s = { hunger = 0, health = 0, beat = 0 }
-    x.faint(g, s)
-    T.eq(g:GetAttribute("Faints"), 1)
+    x.death.die(g, s, "Hunger")
+    T.eq(g:GetAttribute("Deaths"), 1)
+    x.death.die(g, s, "Hunger") -- already dead: nothing more
+    T.eq(g:GetAttribute("Deaths"), 1)
     local ghost = w.e.player("Ghost", nil, { noCharacter = true })
     x.resetPlayerToSpawn(ghost)
     T.eq(x.getHumanoid(ghost), nil)

@@ -218,9 +218,11 @@ export function createCharacterController(models) {
   function update(entityId, { dt = 1 / 60, speed = 0, humanoidState = null, attributes = {}, carrying = false } = {}) {
     const state = states.get(entityId)
     if (!state?.ready) return
-    // A new action: its gesture clip, else (an older model) the older counter's clip. Not on first sight.
+    // A new action: its gesture clip, else (an older model) the older counter's clip. Not on first sight; but a body
+    // first seen before it ever gestured (no count yet) plays its first one (a fall when it dies, main.lua DEATH).
     let gestured = false
     const gestures = attributes.Gestures
+    if (state.gestureCount === null && gestures === undefined) state.gestureCount = 0
     if (gestures !== undefined && gestures !== state.gestureCount) {
       const shot = state.gestureCount !== null ? gesture(state, attributes.Gesture) : null
       if (shot) {
@@ -240,8 +242,10 @@ export function createCharacterController(models) {
     }
     if (state.current) {
       state.current.left -= dt
-      // Knocked down (an earthquake), the body stays on the ground in Stagger's last pose until it gets up (WakeUp).
-      const down = attributes.KnockedDown === true && state.current === state.gestures.get('stagger')
+      // Knocked down (an earthquake), the body stays on the ground in Stagger's last pose until it gets up (WakeUp);
+      // dead (main.lua DEATH), until it is born again.
+      const held = attributes.KnockedDown === true || attributes.Dead === true
+      const down = held && state.current === state.gestures.get('stagger')
       if (state.current.left <= 0 && !down) state.current = null
     }
     const playing = state.current

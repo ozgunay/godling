@@ -10,15 +10,20 @@ steps, which never changes the plan (research report "God games lessons for Godl
 """
 import math
 import time
+from collections import deque
 
 from .skills import Interrupted
-from .world import CUBE, hdist
+from .world import CUBE, death_cause, hdist
 
 INTERRUPT_AT = 4  # salience 1-5
 GLANCE_AT = 3  # events at least this salient, and somewhere, get a glance
 GLANCES_KEPT = 3  # several things at once get a look each, the most salient first
 GLANCE_STALE = 30  # seconds: an older event is no longer worth turning to
 KNOCKED_AWAY = 0.8 * CUBE  # a kept block pushed this far sideways counts as damage, like one that fell
+# For a death report (main.lua DEATH): how the body was, once every TRAIL_EVERY seconds, and what was noticed, over the
+# last TRAIL_SECONDS, so the mind can work out for itself what led to it.
+TRAIL_EVERY, TRAIL_SECONDS = 10, 600
+NOTICED_KEPT = 8  # the latest things noticed before a death that the report names
 
 
 def _at(pos):
@@ -29,6 +34,11 @@ def _sky(e, stage):
     """Sky events carry their kind, number and stage (warning, arrived), so a run's analysis can follow one."""
     sky_id = e.attrs.get("SkyId")
     return {"sky": e.attrs["SkyEvent"], "sky_id": int(sky_id) if sky_id is not None else None, "sky_stage": stage}
+
+
+def _night(hour):
+    """main.lua WEATHER's night: 21:00 to 05:00, when it is cold."""
+    return hour is not None and (hour >= 21 or hour < 5)
 
 
 def _xz(e):
@@ -64,11 +74,27 @@ class Attention:
         self.pending = []  # events the mind has not seen yet
         self.interrupt = None
         self.glances = []  # events worth turning to look at, with when they were seen
+        self.trail = deque()  # (time, how the body was), one every TRAIL_EVERY seconds, for a death report
+        self.noticed = deque()  # (time, text) of what was noticed lately, for a death report
+        self.last_life = None  # (trail, noticed) as they were when the body died: what its death report tells
 
     def on_step(self, snap):
         """Called by the skills on every observation; raises Interrupted for salient events."""
         if not snap.has_world:
             return
+        now = time.time()
+        if snap.dead and not (self.prev is not None and self.prev.dead):  # the life that ended, for its death report
+            self.last_life = (list(self.trail), list(self.noticed))
+            self.trail.clear()
+            self.noticed.clear()
+        if snap.health is not None and not snap.dead and (not self.trail or now - self.trail[-1][0] >= TRAIL_EVERY):
+            self.trail.append((now, {"health": snap.health, "hunger": snap.hunger, "cold": snap.cold, "wet": snap.wet,
+                                     "in_rain": snap.in_rain, "sheltered": snap.sheltered, "in_house": snap.in_house,
+                                     "by_fire": snap.by_fire, "night": _night(snap.time_of_day)}))
+        while self.trail and now - self.trail[0][0] > TRAIL_SECONDS:
+            self.trail.popleft()
+        while self.noticed and now - self.noticed[0][0] > TRAIL_SECONDS:
+            self.noticed.popleft()
         if self.discovery is not None:
             self.discovery.see(snap)
             if self.prev is None:
@@ -77,8 +103,10 @@ class Attention:
             for text, salience, entities, extra in self._diff(self.prev, snap):
                 event = {"text": text, "salience": salience, "entities": entities, "tick": snap.tick, **extra}
                 self.pending.append(event)
+                if not extra.get("death"):
+                    self.noticed.append((now, text))
                 self.log(kind="event", **event)
-                if salience >= GLANCE_AT and "at" in event:
+                if salience >= GLANCE_AT and "at" in event and not extra.get("death"):  # the dead do not look about
                     self.glances.append((time.time(), event))
                 if self.decide(event):
                     self.interrupt = text
@@ -94,6 +122,42 @@ class Attention:
     def take_events(self):
         events, self.pending = self.pending, []
         return events
+
+    def death_report(self, snap, doing=None):
+        """What the mind is told once it is born again: what killed it, how its body was over the minutes before,
+        what it was doing and what it noticed. Facts only: the lesson is the mind's own to draw (run_godling.py)."""
+        lines = [f"You died of {death_cause(snap.died_of)}"
+                 + (f" at ({snap.died_at[0]:.0f}, {snap.died_at[1]:.0f})" if snap.died_at else "") + "."]
+        trail, noticed = self.last_life or (list(self.trail), list(self.noticed))
+        if trail:
+            last_t, last = trail[-1]
+            picks = [trail[round(i * (len(trail) - 1) / 4)] for i in range(5)] if len(trail) >= 5 else trail
+            ago = lambda t: f"{max(0, (last_t - t) / 60):.0f} min before"  # noqa: E731
+            lines.append("Your health in the minutes before: " + ", ".join(
+                f"{b['health']:.0f} ({ago(t)})" if t != last_t else f"{b['health']:.0f} at the last look"
+                for t, b in picks) + ".")
+            if last.get("hunger") is not None:
+                lines.append(f"You were {last['hunger']:.0f}% fed at the last look"
+                             + (f", {trail[0][1]['hunger']:.0f}% about {(last_t - trail[0][0]) / 60:.0f} min before"
+                                if len(trail) > 1 and trail[0][1].get("hunger") is not None else "") + ".")
+            how = [w for w, on in (("it was night", last.get("night")), ("you were cold", last.get("cold")),
+                                   ("you were out in the rain", last.get("in_rain")),
+                                   (f"you were soaked ({last.get('wet', 0):.0f}%)", (last.get("wet") or 0) >= 50),
+                                   ("you stood inside your house", last.get("in_house")),
+                                   ("you had a roof over you", last.get("sheltered") and not last.get("in_house")),
+                                   ("a fire burned beside you", last.get("by_fire"))) if on]
+            if not last.get("sheltered"):
+                how.append("nothing was over you")
+            lines.append("At the last look " + ", ".join(how) + ".")
+        if doing:
+            lines.append(f"You were busy with: {doing}.")
+        noticed = noticed[-NOTICED_KEPT:]
+        if noticed:
+            end = trail[-1][0] if trail else time.time()
+            lines.append("What you noticed in those minutes, oldest first:")
+            lines += [f"- {text} ({max(0, (end - t) / 60):.0f} min before)" for t, text in noticed]
+        lines.append(f"You have died {snap.deaths} time{'s' * (snap.deaths != 1)} in all.")
+        return "\n".join(lines)
 
     def take_glance(self):
         fresh = [g for g in self.glances if time.time() - g[0] < GLANCE_STALE]
@@ -163,6 +227,14 @@ class Attention:
                 out.append((f"A dark shadow spreads on the ground at {_xz(e)}: something is falling from the sky "
                             "there" + (f", landing in about {lands:.0f}s" if lands else ""),
                             3, [e.name], {**_at(e.pos), **_sky(e, "warning")}))
+        if after.deaths > before.deaths:  # main.lua DEATH: nothing matters more
+            where = {"at": [round(after.died_at[0], 1), round(after.died_at[1], 1)]} if after.died_at else {}
+            out.append((f"You died of {death_cause(after.died_of)}. Your body lies where it fell; you will come back to "
+                        f"life at the start in about {after.dead_for or 30:.0f}s", 5, [], {**where, "death": "died"}))
+        elif before.dead and not after.dead:
+            out.append(("You have come back to life at the start, whole but half fed. What you carried lies where you "
+                        "died" + (f", at ({after.died_at[0]:.0f}, {after.died_at[1]:.0f})" if after.died_at else ""),
+                        4, [], {**_at(after.me), "death": "reborn"}))
         if after.hurts > before.hurts:  # real damage, to the body itself
             by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by"}
             out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "

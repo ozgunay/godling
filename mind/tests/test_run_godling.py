@@ -62,8 +62,14 @@ def test_island_of_keeps_what_a_restart_needs():
     assert [f["name"] for f in island["felled"]] == ["Stump_4"] and "FelledAt" not in island["felled"][0]["attrs"]
     assert island["counters"] == {"Sky": 9, "Block": 12, "Stone": 3, "Meteor": 2} or island["counters"]["Block"] == 12
     assert island["clock"] == pytest.approx(2400 + 13 / 24 * 2400 - 7 / 24 * 2400)
-    assert island["body"] == {"pos": [1, 2.55, 3], "health": 80, "hunger": 100, "wet": 0}
+    # A starving body is kept starving: an empty belly (0) is a value, not a missing one.
+    assert island["body"] == {"pos": [1, 2.55, 3], "health": 80, "hunger": 0, "wet": 0}
     assert island["roles"] == list(rg.KEPT_ROLES)
+    # Stopped while Godling lay dead (main.lua DEATH): it comes back born again, at the start spot.
+    dead = snapshot()
+    dead["instance"]["players"][2]["attributes"] = {"Health": {"value": 0}, "Hunger": {"value": 0},
+                                                   "Dead": {"value": True}}
+    assert rg.island_of(dead)["body"] == {"pos": None, "health": 100, "hunger": 50, "wet": 0}
     empty = rg.island_of({"instance": {"workspace_children": [], "players": []}})
     assert empty["body"] is None and empty["clock"] == 0.0
 
@@ -420,6 +426,8 @@ class ScriptLLM:
         self.users.append(user)
         if purpose == "sleep":
             return {"digest": "slept"}
+        if purpose == "death":
+            return {"lessons": [{"about": "cold", "text": "At nightfall, be under a roof"}], "feeling": "Back, and wiser"}
         self.left -= 1
         if self.left < 0:
             raise KeyboardInterrupt
@@ -546,6 +554,77 @@ def test_loops_carry_on_when_attention_interrupts(monkeypatch, tmp_path):
         with pytest.raises(KeyboardInterrupt):
             loop(*loop_args)
         assert stats["projects"] >= 1
+
+
+def dies_for(island, looks):
+    """The fake body lies dead for this many looks, then is born again (main.lua DEATH)."""
+    real = island.observe
+    left = {"n": looks}
+
+    def observe():
+        if island.attrs.get("Dead"):
+            left["n"] -= 1
+            if left["n"] < 0:
+                island.attrs.update(Dead=False, Health=100, Hunger=50)
+        return real()
+    island.observe = observe
+
+
+def test_loops_live_through_a_death(monkeypatch, tmp_path):
+    """Dead, the body does nothing and the mind thinks nothing; born again, the mind draws its own lessons from the
+    death report before it plans again, and the next plan hears of the death."""
+    monkeypatch.setattr(rg, "DEAD_LOOK", 0)
+    for loop, agenda, plan in ((rg.agenda_loop, True, {"agenda": [project("hop", ("jump", {}))]}),
+                               (rg.single_loop, False, {"intention": "", "project": {"goal": "hop", "steps": []}})):
+        island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path / loop.__name__, [plan], calls=2, agenda=agenda)
+        island.attrs.update(Dead=True, Deaths=1, DiedOf="Cold", DiedAt="3,4", Health=0)
+        dies_for(island, 3)
+        with pytest.raises(KeyboardInterrupt):
+            loop(*loop_args)
+        mind, memory = loop_args[3], loop_args[2]
+        death = next(l for l in logs if l["kind"] == "death")
+        assert death["lessons"] == [{"about": "cold", "text": "At nightfall, be under a roof"}]
+        assert death["feeling"] == "Back, and wiser" and death["cause"] == "Cold"
+        assert [l["kind"] for l in logs].index("dead") < [l["kind"] for l in logs].index("death")
+        report = next(u for u in mind.llm.users if u.startswith("You died"))
+        assert "You died of the cold at (3, 4)." in report and "You have died 1 time in all." in report
+        lesson = next(e for e in memory.episodes if e["text"] == "At nightfall, be under a roof")
+        assert lesson["importance"] == 5 and lesson["kind"] == "lesson"
+        assert any("You died of the cold and came back to life" in u for u in mind.llm.users[1:]), "the plan hears"
+
+
+def test_agenda_loop_drops_a_plan_made_while_the_body_died(monkeypatch, tmp_path):
+    monkeypatch.setattr(rg, "DEAD_LOOK", 0)
+    plans = [{"thought": "go", "agenda": [project("hop", ("jump", {}))]}]
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, plans, calls=3, no_narration=True)
+    llm = loop_args[3].llm
+    script = llm.complete_json
+
+    def deadly(system, user, purpose="decide", on_reasoning=None):
+        reply = script(system, user, purpose, on_reasoning)
+        if purpose == "decide" and llm.calls == 1:  # lightning strikes while the first plan is being thought
+            island.attrs.update(Dead=True, Deaths=1, DiedOf="Storm", Health=0)
+        return reply
+    llm.complete_json = deadly
+    dies_for(island, 2)
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args)
+    kinds = [l["kind"] for l in logs]
+    assert kinds.index("dead") < kinds.index("death")
+    first_project = kinds.index("project") if "project" in kinds else len(kinds)
+    assert kinds.index("death") < first_project, "the plan thought for the living body was never carried out"
+
+
+def test_a_failed_reflection_does_not_stop_the_life_that_goes_on(monkeypatch, tmp_path):
+    monkeypatch.setattr(rg, "DEAD_LOOK", 0)
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [{"agenda": []}], calls=1)
+    island.attrs.update(Dead=True, Deaths=2, DiedOf="Hunger")
+    dies_for(island, 1)
+    mind = loop_args[3]
+    mind.reflect_on_death = lambda snap, report: (_ for _ in ()).throw(RuntimeError("no answer"))
+    snap = rg.live_through_death(island, loop_args[1], mind, lambda **k: logs.append(k), "fishing")
+    assert not snap.dead
+    assert any(l["kind"] == "error" and "no answer" in l["message"] for l in logs)
 
 
 def test_single_loop_ends_on_time(monkeypatch, tmp_path):

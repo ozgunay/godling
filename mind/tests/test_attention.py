@@ -180,3 +180,59 @@ def test_body_weather_and_sky_news(mem):
 def test_decide_is_the_interrupt_rule(mem):
     a = Attention(mem)
     assert a.decide({"salience": 4}) and not a.decide({"salience": 3})
+
+
+def test_death_interrupts_and_the_report_holds_what_led_to_it(mem, monkeypatch):
+    """main.lua DEATH: dying is the most salient thing there is; being born again is news; and the death report gives
+    the mind the facts (cause, health over the last minutes, conditions, what it was doing and noticed), not a lesson."""
+    clock = [1000.0]
+    monkeypatch.setattr(att.time, "time", lambda: clock[0])
+    a = Attention(mem)
+    night = {"TimeOfDay": 23.0, "Rain": 0.0}
+    health = 60
+    a.on_step(snap([ground()], clock=night, attrs={"Health": health, "Hunger": 10}))
+    for minute in range(1, 6):  # five minutes of a cold, soaked night out in the open
+        clock[0] += 60
+        health -= 12
+        a.on_step(snap([ground()], clock={**night, "Rain": 0.9 if minute > 2 else 0.0},
+                       attrs={"Health": health, "Hunger": 0, "Cold": True, "Wet": 80, "InRain": minute > 2}))
+    a.take_events()
+    clock[0] += 5
+    with pytest.raises(Interrupted, match="You died of hunger and the cold together"):
+        a.on_step(snap([ground()], clock=night, attrs={"Health": 0, "Hunger": 0, "Dead": True, "Deaths": 1,
+                                                       "DiedOf": "HungerAndCold", "DeadFor": 30, "DiedAt": "12.5,-7"}))
+    died = next(e for e in a.take_events() if e.get("death"))
+    assert died["salience"] == 5 and died["death"] == "died" and died["at"] == [12.5, -7.0]
+    assert not a.glances, "the dead do not look about"
+    clock[0] += 30
+    with pytest.raises(Interrupted):
+        a.on_step(snap([ground()], clock=night, attrs={"Health": 100, "Hunger": 50, "Deaths": 1,
+                                                       "DiedOf": "HungerAndCold", "DiedAt": "12.5,-7"}))
+    (reborn,) = a.take_events()
+    assert reborn["text"] == ("You have come back to life at the start, whole but half fed. What you carried lies "
+                              "where you died, at (12, -7)") and reborn["death"] == "reborn"
+    born = snap([ground()], attrs={"Health": 100, "Deaths": 1, "DiedOf": "HungerAndCold", "DiedAt": "12.5,-7"})
+    report = a.death_report(born, doing="a roof over the south room")
+    assert report.splitlines()[0] == "You died of hunger and the cold together at (12, -7)."
+    assert "Your health in the minutes before: 60 (5 min before)" in report and "at the last look" in report
+    assert "You were 0% fed at the last look, 10% about 5 min before." in report
+    assert ("At the last look it was night, you were cold, you were out in the rain, you were soaked (80%), nothing "
+            "was over you.") in report
+    assert "You were busy with: a roof over the south room." in report
+    assert "- It has started to rain (2 min before)" in report
+    assert "You have died 1 time in all." in report
+    assert "come back to life" not in report, "what was noticed about the death itself is not in the report"
+
+
+def test_a_death_report_with_little_to_tell(mem):
+    a = Attention(mem)
+    assert (a.death_report(snap([ground()], attrs={"Deaths": 2, "DiedOf": "Storm"}))
+            == "You died of lightning in a storm.\nYou have died 2 times in all.")
+    a.on_step(snap([ground()], attrs={"Health": 40, "Hunger": 70, "Sheltered": "roof", "ByFire": True}))
+    report = a.death_report(snap([ground()], attrs={"Deaths": 3, "DiedOf": "Vanished"}))
+    assert report.startswith("You died of vanished.\nYour health in the minutes before: 40 at the last look.\n")
+    assert "You were 70% fed at the last look." in report
+    assert "At the last look you had a roof over you, a fire burned beside you." in report
+    inside = Attention(mem)
+    inside.on_step(snap([ground()], attrs={"Health": 20, "InHouse": True, "Sheltered": "enclosed"}))
+    assert "At the last look you stood inside your house." in inside.death_report(snap([ground()]))

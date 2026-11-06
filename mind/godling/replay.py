@@ -70,8 +70,8 @@ DISK_WARN = 0.8  # warn when the disk is this full
 ROWS_AT_ONCE = 1800  # recording rows read per step: about 30 s of the world
 TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"),
            "project": ("phase", "goal", "intention", "ok"), "thinking": (), "plan_discarded": (),
-           "learn": ("name", "does"), "sleep": ("dream",), "event": ("text", "sky", "sky_stage", "sky_id"),
-           "glance": ("text", "degrees", "turned")}
+           "learn": ("name", "does"), "sleep": ("dream",), "death": ("cause", "feeling"),
+           "event": ("text", "sky", "sky_stage", "sky_id"), "glance": ("text", "degrees", "turned")}
 CHUNK_REL = re.compile(r"chunks/\d{4}-\d\d-\d\d/\d\d/\d{13}\.json\.gz")
 ASSET_URL = re.compile(r"^(?:[^?#]*/)?assets/([^/?#]+)$")  # /assets/x.glb, /island/assets/x.glb, …
 # A viewer's words the world keeps on the Clock for the mind (the latest note's text, main.lua). Never in a chunk: a
@@ -356,7 +356,7 @@ class _Segment:
         self.memo = {}  # entity id -> (the state's dict, its slim copy): unchanged entities are not copied again
         self.window_t0, self.frames, self.prev = None, [], None
         self.clock_id = None
-        self.faints = None  # the most faints seen this world start (a missing count is none yet)
+        self.deaths = None  # the most deaths seen this world start (a missing count is none yet)
         self.last_wall = None
         self.bad_rows = 0
         resume = info.get("window")  # the window being gathered when the packer last stopped: gather it again
@@ -780,14 +780,20 @@ class Packer:
             self._append_new(self.root / f"sky/{day}.jsonl", [{"t": t, "hour": a.get("TimeOfDay"), "day": a.get("Day"),
                                                                 "rain": a.get("Rain") or 0, "fog": a.get("Fog") or 0}])
             self.state["sky_next"] = t - t % SKY_EVERY_MS + SKY_EVERY_MS
-        # Faints: the world counts them on Godling (none until the first). The players' order is not fixed, and the
-        # guest panel's bodiless Sky is one of them: the most faints any player has.
+        # Deaths (main.lua DEATH): the world counts them on Godling (none until the first). The players' order is not
+        # fixed, and the guest panel's bodiless Sky is one of them: the most deaths any player has. The mark carries
+        # what killed it. (Older recordings counted faints instead; their marks, "faint", stay as they were packed.)
         players = top.get("players") or []
-        faints = max(((p.get("attributes") or {}).get("Faints") or 0 for p in players), default=None)
-        if isinstance(faints, (int, float)):
-            if seg.faints is not None and faints > seg.faints:
-                self.marks.append({"t": t, "m": "faint"})
-            seg.faints = faints
+        deaths, cause = (0, "") if players else (None, "")  # a missing count is none yet: the first death is marked
+        for p in players:
+            a = p.get("attributes") or {}
+            n = a.get("Deaths") or 0
+            if isinstance(n, (int, float)) and n > deaths:
+                deaths, cause = n, str(a.get("DiedOf") or "")
+        if deaths is not None:
+            if seg.deaths is not None and deaths > seg.deaths:
+                self.marks.append({"t": t, "m": "death", **({"cause": cause} if cause else {})})
+            seg.deaths = deaths
 
     def _tracks(self):
         """New lines of the mind's log: the ones the screen shows go to the tracks, and markers to the timeline."""

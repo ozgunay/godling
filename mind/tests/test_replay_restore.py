@@ -100,3 +100,16 @@ def test_memory_files_are_written_whole_and_a_cut_short_episode_is_left_out(tmp_
     with mem.episodes_path.open("a") as f:
         f.write('{"id": 2, "text": "cut sho')  # a backup copied it mid-write
     assert [e["text"] for e in NativeMemory(tmp_path / "m").episodes] == ["A full one"]
+
+
+def test_a_death_is_marked_on_the_timeline_with_its_cause(tmp_path):
+    """main.lua DEATH: the world counts deaths on Godling only from the first; the guest panel's Sky has none."""
+    p = packer(tmp_path)
+    seg = SimpleNamespace(clock_id=None, deaths=None)
+    sky = {"name": "Sky", "attributes": {}}
+    for t, godling in ((1000, {}), (2000, {"Health": 50}), (3000, {"Deaths": 1, "DiedOf": "Cold", "Dead": True}),
+                       (4000, {"Deaths": 1, "DiedOf": "Cold"}), (5000, {"Deaths": 2})):
+        p.seen_frame(t, {}, {"players": [sky, {"name": "Godling", "attributes": godling}]}, seg)
+    p.seen_frame(6000, {}, {}, seg)  # a frame without players changes nothing
+    assert p.marks == [{"t": 3000, "m": "death", "cause": "Cold"}, {"t": 5000, "m": "death"}]
+    assert seg.deaths == 2

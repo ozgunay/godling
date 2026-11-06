@@ -3,7 +3,7 @@
 // site (web/, ADR-012) does, in front of the panel: then powers and notes need a signed-in account, and the status
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.
 import { icon } from './icons.js'
-import { createReplayUI, isThought, keepLines, lastOf } from './replay.js'
+import { createReplayUI, diedOf, isThought, keepLines, lastOf } from './replay.js'
 import { browserOf, createFeedback, systemOf } from './feedback.js'
 
 const DAY_SECONDS = 2400 // main.lua DAY_SECONDS: one island day
@@ -716,8 +716,11 @@ function drawBody(g) {
   const scale = PHONE() ? 2 : 3
   const hearts = Array.from({ length: 10 }, (_, i) => icon(health >= i + 1 ? 'heart' : health > i ? 'heartHalf' : 'heartEmpty', scale)).join('')
   const food = Array.from({ length: 10 }, (_, i) => icon(hunger >= 10 - i ? 'food' : hunger > 9 - i ? 'foodHalf' : 'foodEmpty', scale)).join('')
-  const states = [g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'], g.cold && ['cold', 'Cold'],
-    g.wet >= 30 && ['drop', 'Wet']].filter(Boolean)
+  // Dead (main.lua DEATH), nothing else about the body matters: what killed it, and when it comes back.
+  const dead = g.dead && ['heartEmpty', `Died of ${diedOf(g.diedOf)}${g.deadFor > 0 ? ` · back in ${g.deadFor} s` : ''}`]
+  const states = (dead ? [dead] : [g.knockedDown && ['quake', 'Knocked down'], g.bracing && ['quake', 'Bracing'],
+    g.cold && ['cold', 'Cold'], g.wet >= 30 && ['drop', 'Wet']]).filter(Boolean)
+  if (g.deaths > 0) states.push(['heartEmpty', `${g.deaths} death${g.deaths === 1 ? '' : 's'}`])
   vitals.innerHTML = `<span class="row hearts" role="img" aria-label="Health ${Math.round(health * 10)} of 100">${hearts}</span>
     <span class="states">${states.map(([i, w]) => `<span class="state">${icon(i, 2)}${w}</span>`).join('')}</span>
     <span class="row food" role="img" aria-label="Fed ${Math.round(hunger * 10)} of 100">${food}</span>`
