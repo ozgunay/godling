@@ -122,12 +122,14 @@ The `backup` service (ADR-018) takes encrypted, deduplicated [restic](https://re
 - **Once before going live,** do the new-server restore on a staging copy, from the real bucket but with a token that may only read it, and with `GODLING_BACKUP_FROM=<the real domain>` in staging's `.env` (staging's own domain names its own snapshots). Start staging with `docker compose up -d --build --scale backup=0`, so it takes no backups of its own ([`security-review.md`](security-review.md), going live).
 
 ## Day to day
+- **The runbook,** [`RUNBOOK.md`](RUNBOOK.md): starting the servers, stopping and starting Godling, updating, a fresh run, what to check before a stream, and what to do when something is wrong.
 - **Logs:** `docker compose logs -f site worker mailer island relay`, or the admin's Logs page: the world's, the mind's, the panel's and the replay packer's (`world.log`, `console.log`, `panel.log` and `replay.log` in the run folder). The relay's are in `docker compose logs relay`; how many watch, in its `/relay/status` (inside Compose's network: `docker compose exec site python -c "import urllib.request; print(urllib.request.urlopen('http://relay:8082/island/relay/status').read().decode())"`).
 - **Replays and disk** (ADR-016): the world records about 5 GB a day. The packer keeps raw recordings `GODLING_REPLAY_RAW_DAYS` days (3): older recordings are deleted once packed, and the one being written is trimmed of its older rows once an hour. It writes a warning to `replay.log` when the disk is 80% full. Replay chunks take about 0.2 GB a day; with a bucket set, they go there too (it needs a CORS rule allowing GET and HEAD from any origin, which the packer sets if its key may), and a day stays on the server until it is all uploaded and two days old.
 - **Updates and the renderer:** a run keeps its frozen copy of the world script, but each start copies in today's renderer and models, so the island's page always has the current replay player.
 - **Prices, credit packs, viewers, notes and reports:** in the admin.
-- **Updates:** `git pull && docker compose up -d --build`. The site migrates its database on start.
+- **Updates:** `git pull && docker compose up -d --build`. The site migrates its database on start. `up -d --build` also restarts the island, and starts a stopped one: to leave Godling as it is, name the services (`RUNBOOK.md`, Updating the code).
   - A run keeps the copy of the world script it started with (`/runs/live/world`). For a new world script, remove that copy before restarting: `docker compose exec island rm -rf /runs/live/world`. The island save is kept beside it, so the new script puts the same island back.
+  - A changed `.env` is read only by a recreated service (`docker compose up -d --no-deps <service>`), not by `restart`.
 - **Backups:** `docker compose logs backup` for what it did, `docker compose exec backup backup snapshots` for what the bucket holds, and `docker compose exec backup backup db` (or `run`, `prune`, `check`) to run one now; it exits non-zero if it failed. Restoring is above.
 
 ## Tested so far
