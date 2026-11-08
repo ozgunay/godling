@@ -70,6 +70,9 @@ BODY_RADIUS = 1.0  # the engine's capsule is two units wide
 STAND_MARGIN = 0.2  # kept between the body and a loose piece beside it, beyond its radius
 WALL_CLEARANCE = 1.6  # kept from rock: the character controller snags when it slides along a wall it touches
 STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block high (ADR-010)
+LADDER_FOOT = 2.45  # out from a standing ladder's middle, the room its foot needs: climbing down, the world steps the
+#                     body off 1.5 out and wants room for it there, 1.9 wide (main.lua climb, bodyFits)
+LADDER_KEPT_CLEAR = "anything there closes the way up it. Set it a cell further off, or move the ladder first"
 RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
 RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
 TINDER_RANGE = 3.0  # main.lua TINDER_RANGE: tinder this close to the log catches from it
@@ -818,6 +821,62 @@ class Skills:
                 depth = max(depth or 0.0, e.top - bottom)
         return depth
 
+    # ---- a standing ladder: the way up, kept clear (ADR-025) ----------------------------------------------------
+    # A set-up ladder stands fixed, so the world lets a piece rest on its top, and the hands checked only that nothing
+    # overlapped. On 2026-11-08 Godling set a stone on top of the ladder it was raising its walls with, and could not
+    # build on there. A builder keeps a ladder's top and foot free, as games keep the spot an object is used from free
+    # (RimWorld's interaction spot): the hands set nothing on a standing ladder or just over its top, nor at its foot
+    # on the side it is climbed from, and say why. What it stands against may rise past its top: a wall goes higher,
+    # and a roof is laid there.
+    @staticmethod
+    def _standing_ladders(snap):
+        held = snap.held()
+        return [e for e in snap.movables() if e.name.startswith("Ladder_") and e is not held and e.size[1] >= 5]
+
+    @staticmethod
+    def _ladder_feet(snap, ladder):
+        """Where the body stands to climb a standing ladder, as boxes (x, z, half x, half z): out from its rungs on the
+        low side, away from what it reaches the top of (main.lua climb). None for a ladder that reaches nothing: []."""
+        fx, fz = ladder.facing
+        bottom, top = ladder.pos[1] - ladder.size[1] / 2, ladder.top
+
+        def highest(side, out):
+            return snap.surface(ladder.pos[0] + fx * side * out, ladder.pos[2] + fz * side * out, below=top + 0.5)[0]
+        feet = []
+        for side in (1, -1):
+            leans = any(t is not None and t >= bottom + 0.9 for t in (highest(-side, 1.5), highest(-side, 2.2)))
+            floor = highest(side, 1.5)
+            if leans and floor is not None and floor < bottom + 0.9:
+                out, across = LADDER_FOOT / 2, max(ladder.size[0], ladder.size[2], 2 * BODY_RADIUS) / 2
+                x, z = ladder.pos[0] + fx * side * out, ladder.pos[2] + fz * side * out
+                feet.append((x, z, out, across) if abs(fx) >= abs(fz) else (x, z, across, out))
+        return feet
+
+    def _crowds_a_ladder(self, snap, centre, size):
+        """Where a piece set at `centre`, its world-aligned box `size`, would close the way up a standing ladder, in
+        words ("on top of Ladder_1"), or "". Things lower than a step, which the legs step over, do not."""
+        cx, cy, cz = centre
+        hx, hy, hz = size[0] / 2, size[1] / 2, size[2] / 2
+        for ladder in self._standing_ladders(snap):
+            lx, lz = ladder.pos[0], ladder.pos[2]
+            bottom, top = ladder.pos[1] - ladder.size[1] / 2, ladder.top
+            if cy + hy <= bottom + STEP:
+                continue
+            if (abs(cx - lx) < hx + ladder.size[0] / 2 - 0.05 and abs(cz - lz) < hz + ladder.size[2] / 2 - 0.05
+                    and cy - hy < top + CUBE - 0.05):  # on it, or over its top where the climber's head goes
+                return f"on top of {ladder.name}" if cy - hy > top - 0.3 else f"where {ladder.name} stands"
+            if cy - hy < bottom + BODY_HEIGHT and any(abs(cx - x) < hx + half_x - 0.05 and abs(cz - z) < hz + half_z - 0.05
+                                                      for x, z, half_x, half_z in self._ladder_feet(snap, ladder)):
+                return f"at the foot of {ladder.name}, where you stand to climb it"
+        return ""
+
+    def _ladder_under(self, snap, obj):
+        """The standing ladder `obj` lies on top of, or None."""
+        bottom = obj.pos[1] - obj.size[1] / 2
+        return next((e for e in self._standing_ladders(snap) if e is not obj and abs(e.top - bottom) < 0.3
+                     and abs(obj.pos[0] - e.pos[0]) < (obj.size[0] + e.size[0]) / 2 - 0.05
+                     and abs(obj.pos[2] - e.pos[2]) < (obj.size[2] + e.size[2]) / 2 - 0.05), None)
+
     def _describe(self, snap, name):
         obj = snap.entities.get(name)
         if obj is None:
@@ -1313,9 +1372,10 @@ class Skills:
         stand, snap = self._approach(snap, obj.pos, PICKUP_RANGE, 1.6 + min(obj.size[0], obj.size[2]) / 2,
                                      ignore={object}, avoid=obj)
         if stand is None:
+            on = self._ladder_under(snap, obj)  # set there before the hands kept ladders clear (ADR-025)
+            up = (f"it lies on top of {on.name}: pick up the ladder and it falls" if on else "it may be up on something")
             return Result(False, "pick_up", self._out_of_reach(
-                snap, obj.pos, object, f"no clear spot to reach {object} from {self._here(snap)} "
-                                       f"(it may be up on something)") + note)
+                snap, obj.pos, object, f"no clear spot to reach {object} from {self._here(snap)} ({up})") + note)
         self._move(*stand, ignore={object})
         for attempt in range(2):
             snap = self._observe()
@@ -1414,6 +1474,9 @@ class Skills:
                         and e.top > floor + 0.05 and e.pos[1] - e.size[1] / 2 < floor + 3):
                     return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is occupied by {e.name}")
         target = (x, floor + size[1] / 2 + (0.02 if ladder else 0.12), z)
+        crowds = "" if ladder or self._lifting else self._crowds_a_ladder(snap, target, size)
+        if crowds:
+            return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is {crowds}: {LADDER_KEPT_CLEAR}")
         stand, snap = self._approach(snap, target, PLACE_RANGE, 1.0 + min(hx, hz) + 0.5, ignore={held.name},
                                      avoid=_Box(target, size))
         if stand is None:
@@ -1532,6 +1595,10 @@ class Skills:
         snapped = ""
         if beam:  # a log up off the ground: onto the supports its ends are aimed at, within a cell or a quarter turn
             target, turn, size, snapped = self._beam_on_supports(snap, held, target, turn, size)
+        crowds = "" if self._lifting else self._crowds_a_ladder(snap, target, size)  # the lift puts back what it took
+        if crowds:
+            where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
+            return Result(False, "place_at", f"{where} is {crowds}: {LADDER_KEPT_CLEAR}", {"object": held.name})
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
         stepped, floor = "", None

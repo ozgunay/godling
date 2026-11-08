@@ -452,6 +452,21 @@ T.test("climbing a ladder: up onto the wall it stands against, and back down", f
     T.eq(w.act(g, "Climb", { name = "Ladder_9" }), "ClimbFailed:NotAtAnEnd")
 end)
 
+T.test("lifting a set-up ladder lets a stone resting on its top fall (ADR-025)", function()
+    local w = T.boot()
+    local e = w.e
+    local _, ladder = wall(w)
+    -- Set there as on 2026-11-08: in the cell in front of the wall, on the ladder's top, settled and held still.
+    local stone = e.part("Stone_9", { Size = V.new(2.5, 2.5, 2.5), Position = V.new(40, 7.52 + 1.25, -20),
+        Anchored = true, attrs = { RenderRole = "Stone", IsPickupObject = true, Settled = true } })
+    local g = w.godling(V.new(37.5, 2.55, -20))
+    holding(w, g, "Ladder_9")
+    T.eq(w.act(g, "Climb", { name = "Ladder_9" }), "ClimbFailed:NotSetUp", "in the hands")
+    T.eq(stone.Anchored, false, "nothing holds it up now")
+    T.eq(stone:GetAttribute("Settled"), false)
+    T.ok(ladder.Parent, "the ladder is carried, not gone")
+end)
+
 T.test("a ladder that reaches nothing, or stands where there is no floor", function()
     local w = T.boot()
     local e = w.e
