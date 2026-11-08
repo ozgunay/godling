@@ -3,6 +3,7 @@ Stripe's refunds and disputes taken back exactly, whatever order and however oft
 waiting for an outside security review."""
 import hashlib
 import hmac
+import importlib
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import stripe
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.core import mail
 from django.core.cache import cache
@@ -23,7 +25,7 @@ from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase, o
 from django.urls import reverse
 
 from apps.credits import services
-from apps.credits.models import CreditPack, Entry, Payment, StripeEvent, Welcome
+from apps.credits.models import CreditPack, Entry, Payment, Power, StripeEvent, Welcome
 from apps.users.models import User
 
 PASSWORD = "an-island-test-pass-4127"
@@ -545,6 +547,23 @@ class MigrationTests(TransactionTestCase):
         self.assertTrue(Welcome.objects.filter(email_key="oldtimer@gmail.com", user_id=user.pk).exists())
         self.assertFalse(services.credit_payment("cs_old", "pi_old", 500, "eur"))  # reported again: nothing moves
         self.assertFalse(Entry.objects.filter(user_id=user.pk, kind=Entry.PURCHASE).exists())
+
+
+class MeteorRuleTests(TestCase):
+    """The Storm can hit Godling too (ADR-023): the Meteor's seeded rule, which the screen shows, no longer says it is
+    the only power that can, and a rule written in the admin is left as it is."""
+    migration = importlib.import_module("apps.credits.migrations.0009_meteor_rule_with_the_storm")
+
+    def test_the_seeded_rule_no_longer_says_only_the_meteor(self):
+        self.assertEqual(services.powers()["Meteor"]["rule"], self.migration.NEW)
+
+    def test_a_rule_written_in_the_admin_stays_and_the_seeded_one_goes_back(self):
+        Power.objects.filter(key="Meteor").update(rule="Mine")
+        self.migration.forward(django_apps, None)
+        self.assertEqual(Power.objects.get(key="Meteor").rule, "Mine")
+        Power.objects.filter(key="Meteor").update(rule=self.migration.NEW)
+        self.migration.backward(django_apps, None)
+        self.assertEqual(Power.objects.get(key="Meteor").rule, self.migration.OLD)
 
 
 class StripeErrorTests(TestCase):

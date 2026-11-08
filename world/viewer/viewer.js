@@ -20,9 +20,9 @@ const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Arro
   'ShiftLeft', 'ShiftRight', 'Space'])
 
 // What a viewer can call, in hotbar order. `id` is the world's name for it (main.lua SKY_POWERS).
-// Viewers aim every power but the earthquake and the note. Only the meteor lands on Godling or on what it built
-// (main.lua sky.aim, the user's rule); the rest go to the nearest clear spot, and a gift aimed at Godling lands at its
-// feet. The meteor is priced as the disaster it is.
+// Viewers aim every power but the earthquake and the note. The meteor and a storm's strikes can land on Godling; only
+// the meteor breaks what it built (main.lua sky.aim, the user's rule). The rest go to the nearest clear spot, and a gift
+// aimed at Godling lands at its feet. Both are priced as the disasters they are.
 const POWERS = [
   { id: 'Stone', name: 'Stone', icon: 'stone', price: 4, kind: 'Gift', aim: true, did: 'dropped a stone', after: 'from the sky',
     does: 'A stone block drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },

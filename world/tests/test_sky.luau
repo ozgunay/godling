@@ -700,4 +700,23 @@ T.test("a storm already called down leaves a newly reborn body under the death m
     T.logged(w, "SKY Storm #1 strike 3 of 3")
 end)
 
+T.test("a meteor already called down when Godling dies still blasts, and spares the body born again under it", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local spawn = x.PLAYER_SPAWN_POSITION
+    e.hrp(w.g).Position = spawn
+    e.step(1)
+    T.eq(w.power("Meteor", { at = { x = spawn.X, z = spawn.Z } }), "SkyDone:Meteor:1")
+    x.death.die(w.g, x.surviving[w.g], "Hunger")
+    e.step(31, 0.5) -- dead 30 s, of the stone's 40 s of warning
+    T.eq(w.g:GetAttribute("Dead"), false, "born again at the start spot, under the shadow")
+    e.step(12, 0.1)
+    T.logged(w, "SKY Meteor #1 blasted at .*hurt 0")
+    T.ok(e.find("Crater_1"), "the stone still blasts and leaves its crater")
+    T.ok(x.surviving[w.g].health > 95, "the reborn body is not hurt")
+    T.eq(w.g:GetAttribute("Hurts"), nil)
+    T.eq(x.sky.quake.knocked(w.g), false, "nor knocked down")
+    T.eq(e.find("Clock"):GetAttribute("MeteorHurt"), 0)
+end)
+
 return T.done("test_sky")

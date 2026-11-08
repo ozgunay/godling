@@ -44,7 +44,8 @@ from godling import replay  # noqa: E402
 from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 
 # name in main.lua's SKY_POWERS, button label, what it does, tier in the plan's price list. Viewers may aim each but
-# the earthquake and the note (main.lua sky.aim): only the meteor lands on Godling or on what it built.
+# the earthquake and the note (main.lua sky.aim): the meteor and a storm's strikes can land on Godling; only the meteor
+# breaks what it built.
 POWERS = [
     ("Stone", "Drop a stone", "A stone block drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
     ("Log", "Drop a log", "A log beam drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
