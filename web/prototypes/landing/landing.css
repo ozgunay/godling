@@ -1,0 +1,161 @@
+/* Landing page drafts: the Block HUD (DESIGN.md) carried onto a page that scrolls. Shared by every draft; each draft
+   adds its own composition. Island stone, moss lip, ink border at bevel width, white Tiny5 with the pixel shadow,
+   gold for viewers and the sky, teal for what Godling noticed, red for life and harm, paper only for viewer words. */
+
+:root {
+  --ink: #15191b;
+  --white: #ffffff;
+  --mist: #dfe6e8;
+  --fog: #b9c5c9;
+  --gold: #f6c945;
+  --gold-deep: #c9951c;
+  --gold-ink: #2a1d00;
+  --teal: #45d6cf;
+  --heart: #ec4b4f;
+  --heart-deep: #a52a2f;
+  --paper: #f6f3e8;
+  --paper-ink: #2d2a22;
+  --paper-shade: #d9d3bf;
+  --stone: #50585b;
+  --stone-panel: rgba(44, 49, 51, 0.94);
+  --stone-solid: #2c3133;
+  --glass: rgba(14, 17, 18, 0.62);
+  --moss: #63b544;
+  --moss-deep: #3f8a2c;
+  --pip-empty: #5c6366;
+  --night-well: #0b0e10;
+  --term: #a8b6ba;
+  --bevel: 0.1875rem;
+  --pixel-shadow: 0.1rem 0.1rem 0 rgba(21, 25, 27, 0.9);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --speckle: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'><rect x='1' y='1' width='1' height='1' fill='%23fff' fill-opacity='.08'/><rect x='5' y='2' width='1' height='1' fill='%23000' fill-opacity='.14'/><rect x='3' y='5' width='1' height='1' fill='%23fff' fill-opacity='.06'/><rect x='6' y='6' width='1' height='1' fill='%23000' fill-opacity='.12'/><rect x='0' y='4' width='1' height='1' fill='%23000' fill-opacity='.1'/></svg>");
+  --gutter: clamp(1rem, 4vw, 3rem);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { font-size: 16px; scrollbar-color: var(--stone) var(--night-well); -webkit-text-size-adjust: 100%; }
+@media (min-width: 1100px) { html { font-size: 17px; } }
+body {
+  margin: 0; background: var(--night-well); color: var(--white);
+  font: 400 1.12rem/1.4 'Tiny5', sans-serif; letter-spacing: 0.02em; text-shadow: var(--pixel-shadow);
+}
+::selection { background: var(--gold); color: var(--ink); text-shadow: none; }
+img { display: block; max-width: 100%; }
+a { color: var(--teal); text-underline-offset: 0.22em; text-decoration-thickness: 0.12em; }
+a:hover { color: #7ff0ea; }
+:focus-visible { outline: 0.25rem solid var(--white); outline-offset: 0.125rem; }
+h1, h2, h3, p { margin: 0; font-weight: 400; }
+h1, h2, h3 { text-wrap: balance; }
+p { text-wrap: pretty; }
+.px { display: block; image-rendering: pixelated; flex: none; }
+[data-icon] { display: inline-flex; flex: none; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.label { font: 400 0.68rem/1.2 'Silkscreen', monospace; letter-spacing: 0.06em; color: var(--fog); }
+.gold { color: var(--gold); }
+.teal { color: var(--teal); }
+.red { color: var(--heart); }
+.mist { color: var(--mist); }
+.fog { color: var(--fog); }
+
+/* Island materials */
+.slab {
+  background: var(--speckle) 0 0 / 1.5rem, var(--stone-panel);
+  border: var(--bevel) solid var(--ink);
+  box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.08), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.32);
+}
+.block {
+  background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.375rem, var(--moss-deep) 0.375rem 0.5625rem, var(--stone) 0.5625rem);
+  border: var(--bevel) solid var(--ink);
+  box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3);
+}
+.mossy {
+  background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.45rem, var(--moss-deep) 0.45rem 0.65rem, var(--stone-panel) 0.65rem);
+}
+.band { background: rgba(14, 17, 18, 0.78); }
+
+/* Buttons */
+.get, .btn {
+  display: inline-flex; align-items: center; gap: 0.55rem; padding: 0.7rem 1.05rem 0.62rem;
+  border: var(--bevel) solid var(--ink); font: 400 1.15rem/1 'Tiny5', sans-serif; letter-spacing: 0.02em;
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.get {
+  background: var(--gold); color: var(--gold-ink); text-shadow: none;
+  box-shadow: inset var(--bevel) var(--bevel) 0 rgba(255, 255, 255, 0.45), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 var(--gold-deep);
+}
+.get:hover { background: #ffd95e; color: var(--gold-ink); }
+.get:active { box-shadow: inset var(--bevel) var(--bevel) 0 var(--gold-deep); }
+.btn {
+  color: var(--white); text-shadow: var(--pixel-shadow);
+  background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.3rem, var(--moss-deep) 0.3rem 0.45rem, var(--stone) 0.45rem);
+  padding-top: 0.95rem;
+  box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3);
+  transition: transform 160ms var(--ease-out);
+}
+.btn:hover { color: var(--white); transform: translateY(-0.2rem); }
+.btn:active { transform: translateY(0.1rem); }
+.get.big { font-size: 1.45rem; padding: 0.9rem 1.35rem 0.8rem; }
+
+kbd {
+  display: inline-grid; place-items: center; min-width: 1.9rem; height: 1.9rem; padding: 0 0.4rem;
+  font: 400 0.72rem/1 'Silkscreen', monospace; color: var(--white); text-shadow: none;
+  background: var(--stone-solid); border: 1px solid var(--pip-empty);
+  box-shadow: inset 0 -0.2rem 0 rgba(0, 0, 0, 0.45);
+}
+
+/* The kind chip of a power */
+.chip {
+  display: inline-block; padding: 0.28rem 0.42rem 0.22rem; font: 400 0.62rem/1 'Silkscreen', monospace;
+  letter-spacing: 0.04em; color: var(--white); text-shadow: none; background: #2c3335; border: var(--bevel) solid var(--ink);
+}
+.chip.harm { background: #7a1f22; }
+
+/* The live dot */
+.dot { width: 0.85rem; height: 0.85rem; background: var(--heart); border: var(--bevel) solid var(--heart-deep); animation: beat 1.6s steps(2, jump-none) infinite; flex: none; }
+@keyframes beat { 50% { opacity: 0.35; } }
+
+/* A slot, the hotbar's island block */
+.slot {
+  position: relative; display: grid; place-items: center; width: 4.6rem; height: 4.6rem; flex: none;
+  background: var(--speckle) 0 0 / 1.5rem, linear-gradient(var(--moss) 0 0.375rem, var(--moss-deep) 0.375rem 0.5625rem, var(--stone) 0.5625rem);
+  border: var(--bevel) solid var(--ink);
+  box-shadow: inset var(--bevel) 0 0 rgba(255, 255, 255, 0.13), inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 rgba(0, 0, 0, 0.3);
+}
+.slot .key { position: absolute; top: 0.75rem; left: 0.35rem; font: 400 0.6rem/1 'Silkscreen', monospace; color: var(--white); }
+.slot.harm::after { content: ""; position: absolute; top: 0; right: 0; border-style: solid; border-width: 0 0.75rem 0.75rem 0; border-color: transparent var(--heart) transparent transparent; }
+.slot [data-icon] { margin-top: 0.4rem; }
+
+/* Paper: only words a viewer wrote */
+.paper {
+  background: var(--paper); color: var(--paper-ink); text-shadow: none; border: var(--bevel) solid var(--ink);
+  box-shadow: inset calc(var(--bevel) * -1) calc(var(--bevel) * -1) 0 var(--paper-shade);
+}
+
+/* A shared top bar */
+.topbar {
+  position: absolute; z-index: 5; inset: 0 0 auto 0; display: flex; align-items: center; gap: 1.2rem;
+  padding: 1rem var(--gutter);
+}
+.brand { display: inline-flex; align-items: center; gap: 0.6rem; color: var(--white); text-decoration: none; font-size: 1.45rem; }
+.brand:hover { color: var(--white); }
+.topbar nav { display: flex; gap: 1.4rem; margin-left: auto; font-size: 1.02rem; }
+.topbar nav a { color: var(--mist); text-decoration: none; }
+.topbar nav a:hover { color: var(--white); text-decoration: underline; }
+.topbar .get { padding: 0.55rem 0.85rem 0.5rem; font-size: 1.02rem; }
+@media (max-width: 760px) { .topbar nav { display: none; } .topbar .get { margin-left: auto; } }
+
+/* A note on every draft: what is sample material */
+.sample { font: 400 0.62rem/1.3 'Silkscreen', monospace; letter-spacing: 0.05em; color: var(--fog); text-shadow: none; }
+
+/* The footer every draft ends on */
+.foot {
+  display: flex; flex-wrap: wrap; gap: 0.8rem 1.6rem; align-items: center; padding: 1.4rem var(--gutter) 2rem;
+  border-top: var(--bevel) solid var(--ink); background: var(--night-well); font-size: 0.98rem; color: var(--fog);
+}
+.foot a { color: var(--mist); }
+.foot .credit { margin-left: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
+}

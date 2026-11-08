@@ -61,7 +61,7 @@ class ScreenTests(TestCase):
         return self.client.post(path, body, content_type="application/json")
 
     def test_the_page_is_served_with_a_csrf_cookie(self):
-        response = self.client.get("/")
+        response = self.client.get("/watch")
         self.assertEqual(response.status_code, 200)
         self.assertIn("csrftoken", response.cookies)
         self.assertEqual(self.client.get("/viewer.js")["Content-Type"], "text/javascript")
@@ -460,6 +460,56 @@ class ScreenTests(TestCase):
         strict = Client(enforce_csrf_checks=True)
         strict.force_login(make_user("ozzy"))
         self.assertEqual(strict.post("/api/power", {"power": "Stone"}, content_type="application/json").status_code, 403)
+
+
+class LandingTests(TestCase):
+    """The front page (ADR-024): the booklet at /, the screen at /watch. Prices and rules come from the database."""
+
+    def test_the_front_page_is_the_booklet_and_sends_watchers_to_the_screen(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "landing.html")
+        page = response.content.decode()
+        self.assertIn("You do not control Godling.", page)
+        self.assertIn('href="/watch"', page)
+        self.assertIn("deepseek-flash", page)
+        self.assertIn("Create an account", page)
+        self.assertIn("csrftoken", self.client.get("/watch").cookies)  # the screen, as it was at /
+
+    def test_the_powers_and_rules_are_the_admins(self):
+        Power.objects.filter(key="Meteor").update(price=321, description="A rock falls. It leaves a crater.")
+        Power.objects.filter(key="Stone").update(enabled=False)
+        rules = Rules.get()
+        rules.welcome_credits, rules.note_limit, rules.free_powers = 35, 90, True
+        rules.save()
+        page = self.client.get("/").content.decode()
+        self.assertIn("321 cr", page)
+        self.assertIn("<p>A rock falls.</p>", page)  # the tooltip's first sentence
+        self.assertNotIn("A stone block drops", page)  # switched off, it is not on the hotbar either
+        self.assertIn("35 free credits", page)
+        self.assertIn("Up to 90 characters", page)
+        self.assertIn("Powers are free while we test.", page)
+        self.assertIn("from 100 for €5.00", page)
+
+    @override_settings(GODLING_MIND_MODEL="deepseek-v4-pro")
+    def test_the_page_names_the_mind_the_island_runs(self):
+        page = self.client.get("/").content.decode()
+        self.assertIn("deepseek-v4-pro", page)
+        self.assertNotIn("$0.21 an hour", page)  # that is deepseek-flash's price
+
+    def test_links_made_for_the_screen_still_reach_it(self):
+        moment = "/?t=2026-11-08T21:00:00.000Z"
+        self.assertRedirects(self.client.get(moment), "/watch?t=2026-11-08T21:00:00.000Z", fetch_redirect_response=False)
+        self.assertRedirects(self.client.get("/?bottle=1"), "/watch?bottle=1", fetch_redirect_response=False)
+        self.assertRedirects(self.client.get("/watch/?t=1"), "/watch?t=1", fetch_redirect_response=False)
+        self.assertEqual(self.client.get("/viewer.js")["Content-Type"], "text/javascript")  # its files stay at the root
+
+    def test_a_signed_in_viewer_is_offered_credits_and_signing_out(self):
+        self.client.force_login(make_user("tomv"))
+        page = self.client.get("/").content.decode()
+        self.assertIn("Signed in as tomv", page)
+        self.assertNotIn("Create an account", page)
+        self.assertIn('action="/accounts/logout/"', page)
 
 
 class ReplayTests(TestCase):

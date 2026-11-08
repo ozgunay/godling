@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#15191b">
+<title>Godling · landing drafts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Tiny5&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
+<style>
+  body { background: var(--speckle) 0 0 / 1.5rem, #14181a; }
+  main { max-width: 70rem; margin: 0 auto; padding: 3rem var(--gutter) 4rem; }
+  h1 { font-size: clamp(2.4rem, 5vw, 3.4rem); display: flex; align-items: center; gap: 0.8rem; }
+  .intro { margin-top: 0.9rem; color: var(--mist); max-width: 60ch; }
+  .drafts { margin-top: 2rem; display: grid; gap: 0.8rem; }
+  .draft { display: grid; grid-template-columns: 4rem 1fr auto; gap: 1.2rem; align-items: center; padding: 1.3rem 1.3rem 1.1rem; text-decoration: none; color: var(--white); }
+  .draft:hover { color: var(--white); }
+  .draft:hover .get { background: #ffd95e; }
+  .draft .letter { font-size: 3rem; line-height: 1; color: var(--gold); text-align: center; }
+  .draft b { font-weight: 400; font-size: 1.5rem; display: block; }
+  .draft p { color: var(--mist); margin-top: 0.4rem; max-width: 60ch; font-size: 1.02rem; }
+  .draft .label { display: block; margin-top: 0.55rem; }
+  .shared { margin-top: 2rem; padding: 1.1rem 1.2rem; color: var(--mist); font-size: 1rem; }
+  .shared b { font-weight: 400; color: var(--white); }
+  @media (max-width: 640px) { .draft { grid-template-columns: 2.6rem 1fr; } .draft .get { grid-column: 2; justify-self: start; } }
+</style>
+</head>
+<body>
+<main>
+  <h1><span data-icon="godling" data-scale="4"></span>Landing page drafts</h1>
+  <p class="intro">Three ways to open Godling's site, all in the screen's own Block HUD. Same facts, different structure. Static drafts: nothing works yet.</p>
+  <div class="drafts">
+    <a class="draft slab mossy" href="a-booklet.html">
+      <span class="letter">A</span>
+      <div><b>The booklet</b><p>The game's instruction booklet, cut in island stone. A cover over the island, then spreads: the story, the character sheet, controls (you have none over Godling), the mind, powers, rules, death, and technical data on the back.</p><span class="label">Reads as: a game you can understand in one sitting</span></div>
+      <span class="get">Open</span>
+    </a>
+    <a class="draft slab mossy" href="b-title-screen.html">
+      <span class="letter">B</span>
+      <div><b>The title screen</b><p>The island fills the first screen with the logo, a main menu and a loading tip. Each tip below opens into a full scene: what Godling is, its three-layer mind, the real hotbar with a tooltip, what it learned in five minutes, the rules.</p><span class="label">Reads as: a game you are about to start</span></div>
+      <span class="get">Open</span>
+    </a>
+    <a class="draft slab mossy" href="c-mind-log.html">
+      <span class="letter">C</span>
+      <div><b>The mind log</b><p>The mind is the show. The screen's feed, scaled up, opens the page. Below, the log is read line by line beside the part of the system that wrote it. Then the five-minute tower, the sky's rules and what runs underneath.</p><span class="label">Reads as: a mind you can watch think</span></div>
+      <span class="get">Open</span>
+    </a>
+  </div>
+  <p class="shared band">
+    <b>In all three:</b> what Godling is; its mind on DeepSeek <span class="gold">deepseek-flash</span> with reasoning on; the layers (mind, attention, body, learned skills, memory); the world (Clawblox, Rapier at 60 Hz, Three.js, the relay); the seven powers at today's prices; the sky's rules; death and rebirth. Feed lines are samples, marked as such.
+  </p>
+</main>
+<script type="module" src="icons.js"></script>
+</body>
+</html>

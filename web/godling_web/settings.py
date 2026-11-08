@@ -149,7 +149,7 @@ ACCOUNT_LOGOUT_ON_GET = False  # sign out only by POST
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 ACCOUNT_EMAIL_SUBJECT_PREFIX = "[Godling] "
 LOGIN_URL = "/accounts/login/"
-LOGIN_REDIRECT_URL = "/"
+LOGIN_REDIRECT_URL = "/watch"  # the screen (ADR-024); signing out goes to the front page
 # The proxies in front of the site (deploy/: Caddy, so 1). allauth then reads the viewer's address from
 # X-Forwarded-For; without it every sign-in comes from Caddy's address and all viewers share one rate limit.
 ALLAUTH_TRUSTED_PROXY_COUNT = int(os.environ.get("GODLING_TRUSTED_PROXIES", "0"))
@@ -197,6 +197,9 @@ if GODLING_STRIPE_SECRET_KEY.startswith(("sk_live_", "rk_live_")) and not GODLIN
 # relay hold it), e.g. https://island.godling.example/island (no slash after /island: that is where the world serves
 # its page under a base path). Empty, the panel's own, which carries the token: development only.
 GODLING_VIEW_URL = os.environ.get("GODLING_VIEW_URL", "")
+# The model Godling's mind thinks with, as the landing page names it (ADR-024). The island picks it
+# (GODLING_MIND_ARGS: --model …; deepseek-flash without one): change both together.
+GODLING_MIND_MODEL = os.environ.get("GODLING_MIND_MODEL", "deepseek-flash")
 # The live run, for the admin's log viewer (apps.users.log_views).
 GODLING_RUN_DIR = os.environ.get("GODLING_RUN_DIR", "")
 # Where browsers fetch replay chunks (ADR-016): the island's origin, where Caddy serves them from the runs volume

@@ -23,14 +23,16 @@ from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, HttpResponseRedirect, JsonResponse
+from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.credits import services as credits
-from apps.credits.models import Power, PowerCall
+from apps.credits.models import CreditPack, Power, PowerCall
+from apps.credits.views import money
 from apps.notes import services as notes
 from apps.notes.models import Note, Report
 from apps.rules import words
@@ -406,6 +408,35 @@ def api_replay(request, what):
     elif what == "tracks":
         answer = moderate_past(answer)
     return JsonResponse(answer, safe=False)
+
+
+# The screen's icon for each power (world/viewer/viewer.js POWERS); one the screen does not know gets the sky's.
+POWER_ICONS = {"Stone": "stone", "Log": "log", "Regrow": "sapling", "Lightning": "lightning", "Storm": "lightning",
+               "Meteor": "meteor", "Earthquake": "quake"}
+# What the screen reads from its address: ?t= (a moment of the past, ADR-016) and ?bottle=1 (back from signing in
+# through the bottle). A link to / carrying either was made for the screen, which lived at / until ADR-024.
+SCREEN_PARAMS = ("t", "bottle")
+
+
+def first_sentence(text):
+    found = re.match(r"\s*(.+?[.!?])(?:\s|$)", text or "", re.S)
+    return found.group(1) if found else (text or "").strip()
+
+
+def landing(request):
+    """The front page (ADR-024): what Godling is, how its mind works and what viewers can do, in the screen's look.
+    The powers, their prices, the packs and the site's rules are read from the database, as the screen reads them."""
+    if any(name in request.GET for name in SCREEN_PARAMS):
+        return HttpResponseRedirect(f"{reverse('watch')}?{request.META.get('QUERY_STRING', '')}")
+    rules = Rules.get()
+    powers = [{"label": p.label, "icon": POWER_ICONS.get(p.key, "sky"), "kind": p.kind, "harms": p.harms,
+               "price": p.price, "does": first_sentence(p.description)} for p in Power.objects.filter(enabled=True)]
+    pack = CreditPack.objects.filter(active=True).first()
+    return render(request, "landing.html", {
+        "rules": rules, "powers": powers, "note_key": len(powers) + 1,
+        "pack": pack and {"credits": pack.credits, "price": money(pack.price_cents)},
+        "model": settings.GODLING_MIND_MODEL, "share_image": request.build_absolute_uri("/demo/day.jpg"),
+    })
 
 
 @ensure_csrf_cookie

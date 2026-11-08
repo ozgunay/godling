@@ -34,6 +34,7 @@ x-site-env: &site-env
   GODLING_SECURITY_REVIEW: ${GODLING_SECURITY_REVIEW:-}  # live Stripe keys wait for it (ADR-017)
   GODLING_TURNSTILE_SITE_KEY: ${GODLING_TURNSTILE_SITE_KEY:-}
   GODLING_TURNSTILE_SECRET_KEY: ${GODLING_TURNSTILE_SECRET_KEY:-}
+  GODLING_MIND_MODEL: ${GODLING_MIND_MODEL:-deepseek-flash}  # the landing page names it (ADR-024)
 
 # What the backups and their restores both need (ADR-018). Snapshots are named after the site's domain. Without
 # GODLING_BACKUP_REPOSITORY the backups stay in the backups volume on this server, and an alert says so until a bucket
