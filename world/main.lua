@@ -3879,7 +3879,8 @@ local function shadowOccupied(fall) -- the sky never drops a stone on someone: i
 end
 
 -- `aimed`: a viewer chose the spot, and the stone falls there whoever stands under it (the user's rule: only the
--- meteor may hit Godling or what it built). Unaimed, it waits for a clear shadow, as it always has.
+-- meteor may break what Godling built; it and a storm's strikes may hit Godling). Unaimed, it waits for a clear shadow,
+-- as it always has.
 local function announceSkyFall(x, z, aimed)
     skyCounter = skyCounter + 1
     local top = surfaceTopAt(x, z, -20, 60) or 0 -- on whatever is there: the ground, or the top of a wall
@@ -4473,9 +4474,15 @@ sky.quake = (function()
         player:SetAttribute("LastActionResult", "Braced")
     end
 
+    -- Died within MERCY_AFTER_DEATH. A disaster already on its way when the body died (a storm's later strikes, a
+    -- meteor's stone) still lands, but spares the body born again.
+    local function diedLately(player)
+        return death.since(player) < MERCY_AFTER_DEATH
+    end
+
     local function weak(godling) -- the mercy rule, for every disaster
         local s = surviving[godling]
-        return (s and s.health < MERCY_HEALTH) or death.since(godling) < MERCY_AFTER_DEATH
+        return (s and s.health < MERCY_HEALTH) or diedLately(godling)
     end
 
     local function releaseBody(player) -- death ends a living body's brace or knock-down without getting it up
@@ -4484,13 +4491,14 @@ sky.quake = (function()
         player:SetAttribute("KnockedDown", false)
     end
 
-    return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak,
+    return { start = start, tick = tick, brace = brace, knockDown = knockDown, weak = weak, diedLately = diedLately,
         knocked = function(player) return knocked[player] ~= nil end, releaseBody = releaseBody }
 end)()
 
 -- AIMED POWERS (the user's rule, 2026-11-02): viewers choose where a power lands, and only the meteor may land on
--- Godling or on what it built. Everything else goes to the nearest clear spot to the aim: a gift aimed at Godling
--- lands at its feet; lightning picks a palm far enough from Godling not to hurt it, with nothing built beside it.
+-- what Godling built; it and a storm's strikes (ADR-023) may land on Godling. Everything else goes to the nearest clear
+-- spot to the aim: a gift aimed at Godling lands at its feet; lightning picks a palm far enough from Godling not to
+-- hurt it, with nothing built beside it.
 sky.aim = {
     REACH = 60, -- an aim at most this far from Godling, where viewers are watching
     SNAP = 12, -- how far from the aim a clear spot is looked for
@@ -4651,7 +4659,8 @@ end
 -- THE METEOR'S BLAST (the user's wish, 2026-11-02, after Godling's builds stood through every sky event): the stone
 -- blasts where it first touches something. Pieces it hits are smashed, fastenings near it break, loose pieces around
 -- are thrown out and up, palms close by are felled, and anyone close is hurt and knocked down. It leaves a crater with
--- the stone in it. A disaster: the mercy rule holds, and it is the dearest power but one.
+-- the stone in it. A disaster: the mercy rule holds, even for a stone called down before Godling died (it spares the
+-- body born again), and it is priced as one.
 sky.meteor = {
     MODEL = "asset://meteor.glb", CRATER_MODEL = "asset://crater.glb",
     EVERY = 60, -- seconds between meteors in test mode
@@ -4741,7 +4750,8 @@ function sky.meteor.blast(fall, top)
         end
     end
     for _, player in ipairs(Players:GetPlayers()) do
-        local hrp = player.Name ~= SKY_PLAYER and getHumanoidRootPart(player)
+        -- A stone called down before a death lands after the rebirth (40 s of warning, 30 s dead): it spares that body.
+        local hrp = player.Name ~= SKY_PLAYER and not sky.quake.diedLately(player) and getHumanoidRootPart(player)
         if hrp and Vector3.new(hrp.Position.X - c.X, 0, hrp.Position.Z - c.Z).Magnitude <= HARM.meteorRange
             and math.abs(hrp.Position.Y - c.Y) <= HARM.meteorRange then
             hurt(player, HARM.meteor, "Meteor")
@@ -4993,7 +5003,8 @@ sky.storm = (function()
         local godling = godlingPlayer()
         local hrp = godling and getHumanoidRootPart(godling)
         local x, z = spot.x, spot.z
-        local alive = hrp and not death.is(godling)
+        -- A storm lasts long enough for a death and rebirth between its warning and its later strikes.
+        local alive = hrp and not death.is(godling) and not sky.quake.diedLately(godling)
         local roofed = alive and ((godling:GetAttribute("Sheltered") or "") ~= ""
             or godling:GetAttribute("InHouse") == true)
         -- On Godling first, then a palm beside the spot, else the ground (or the roof, or what was built: unbroken).

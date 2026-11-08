@@ -676,4 +676,47 @@ T.test("with no palm standing in reach, the sky picks open ground well away from
     T.eq(w.power("Storm"), "SkyFailed:NobodyHere")
 end)
 
+T.test("a storm already called down leaves a newly reborn body under the death mercy rule", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local spawn = x.PLAYER_SPAWN_POSITION
+    e.hrp(w.g).Position = spawn
+    e.step(1)
+    local direct, near = { spawn.X, spawn.Z }, { spawn.X + 5, spawn.Z }
+    T.starts(w.power("Storm", { spots = { direct, near, { spawn.X, spawn.Z + 15 } } }), "SkyDone:Storm:")
+    strikesAt(x, { { direct[1], direct[2], 40 }, { near[1], near[2], 50 }, { spawn.X, spawn.Z + 15, 60 } })
+    x.death.die(w.g, x.surviving[w.g], "Hunger")
+    e.step(31, 0.5)
+    T.eq(w.g:GetAttribute("Dead"), false)
+    T.ok(x.sky.quake.weak(w.g), "rebirth is inside the death mercy window")
+    e.step(30, 0.5)
+    T.ok(x.surviving[w.g].health > 95, "neither the direct strike nor the nearby strike hurts the reborn body")
+    T.eq(w.g:GetAttribute("Hurts"), nil)
+    T.eq(w.g:GetAttribute("Struck"), nil)
+    T.eq(w.g:GetAttribute("Scorched"), nil)
+    T.eq(w.g:GetAttribute("KnockedDown"), false)
+    T.eq(x.sky.storm.active().struck, 3, "all three environmental strikes still happen")
+    T.ok(x.tickWeather.rain() >= 0.99, "the storm's weather continues")
+    T.logged(w, "SKY Storm #1 strike 3 of 3")
+end)
+
+T.test("a meteor already called down when Godling dies still blasts, and spares the body born again under it", function()
+    local w = sky()
+    local e, x = w.e, w.x
+    local spawn = x.PLAYER_SPAWN_POSITION
+    e.hrp(w.g).Position = spawn
+    e.step(1)
+    T.eq(w.power("Meteor", { at = { x = spawn.X, z = spawn.Z } }), "SkyDone:Meteor:1")
+    x.death.die(w.g, x.surviving[w.g], "Hunger")
+    e.step(31, 0.5) -- dead 30 s, of the stone's 40 s of warning
+    T.eq(w.g:GetAttribute("Dead"), false, "born again at the start spot, under the shadow")
+    e.step(12, 0.1)
+    T.logged(w, "SKY Meteor #1 blasted at .*hurt 0")
+    T.ok(e.find("Crater_1"), "the stone still blasts and leaves its crater")
+    T.ok(x.surviving[w.g].health > 95, "the reborn body is not hurt")
+    T.eq(w.g:GetAttribute("Hurts"), nil)
+    T.eq(x.sky.quake.knocked(w.g), false, "nor knocked down")
+    T.eq(e.find("Clock"):GetAttribute("MeteorHurt"), 0)
+end)
+
 return T.done("test_sky")

@@ -193,7 +193,7 @@ def spot(at):
         return None, None
     try:
         x, z = float(at[0]), float(at[1])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None, None
     return (round(x, 2), round(z, 2)) if all(math.isfinite(v) and abs(v) < 2000 for v in (x, z)) else (None, None)
 

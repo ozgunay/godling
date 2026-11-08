@@ -215,7 +215,7 @@ export function createBodyLook(scene, { random = Math.random, onMaterial } = {})
       let look = looks.get(id)
       if (!look) {
         look = { root, dead, struck, dying: { seen: null, left: 0 }, charring: { seen: null, left: 0 }, shockLeft: 0,
-          sinceStruck: Infinity, fade: 1, char: 0, shock: 0, materials: null, glow: null, arcs: null, smoke: null }
+          sinceStruck: Infinity, fade: 1, char: 0, shock: 0, shake: [0, 0], materials: null, glow: null, arcs: null, smoke: null }
         looks.set(id, look) // first sight: nothing plays that happened before it was seen
       }
       if (look.root !== root) {
@@ -227,7 +227,8 @@ export function createBodyLook(scene, { random = Math.random, onMaterial } = {})
       }
       if (look.dead && !dead) startGlow(look, position) // born again: it rises in the light
       look.dead = dead
-      if (struck > look.struck) { // struck just now: electrocuted, and smoking a while
+      const newStrike = struck > look.struck
+      if (newStrike) { // struck just now: electrocuted, and smoking a while
         look.shockLeft = SHOCK
         look.sinceStruck = 0
       }
@@ -246,11 +247,17 @@ export function createBodyLook(scene, { random = Math.random, onMaterial } = {})
       if (fade <= 0.01) root.visible = false // gone before it comes back
 
       if (look.shockLeft > 0) {
-        root.position.x += (random() - 0.5) * 0.16 // it shakes
-        root.position.z += (random() - 0.5) * 0.16
+        // A paused replay redraws this same moment with dt=0. Keep its arcs and shake still, while allowing a newly
+        // observed strike to appear even when no replay time elapsed between frames.
+        const advance = dt > 0 || newStrike || !look.arcs
+        if (advance) look.shake = [(random() - 0.5) * 0.16, (random() - 0.5) * 0.16]
+        root.position.x = position[0] + look.shake[0]
+        root.position.z = position[2] + look.shake[1]
         const arcs = arcsFor(look)
-        arcs.material.opacity = 0.5 + 0.5 * random()
-        crawl(arcs, position)
+        if (advance) {
+          arcs.material.opacity = 0.5 + 0.5 * random()
+          crawl(arcs, position)
+        }
       } else {
         endArcs(look)
       }

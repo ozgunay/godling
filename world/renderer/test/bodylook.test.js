@@ -147,6 +147,41 @@ describe('bodylook: death — a dead body fades before it is born again, and com
 })
 
 describe('bodylook: a storm\'s strike — electrocuted, then charred for a minute, then its own colours', () => {
+  it('freezes arcs and the shake while paused, and still shows a new strike at zero elapsed time', () => {
+    let value = 0
+    const random = vi.fn(() => { value = (value + 0.137) % 1; return value })
+    const scene = new THREE.Scene()
+    const look = createBodyLook(scene, { random })
+    const { root } = body()
+    const position = [5, 2.5, 5]
+    root.position.fromArray(position)
+    look.update(1, root, {}, position, 0)
+    look.update(1, root, { Struck: 1, Scorched: 60 }, position, 0.1)
+    const [arcs] = named(scene, 'GodlingShockArcs')
+    const paused = { position: root.position.toArray(), arcs: [...arcs.geometry.attributes.position.array],
+      opacity: arcs.material.opacity }
+    random.mockClear()
+    for (let i = 0; i < 3; i++) {
+      root.position.fromArray(position) // the renderer restores the world's transform before each body update
+      look.update(1, root, { Struck: 1, Scorched: 60 }, position, 0)
+    }
+    expect(random).not.toHaveBeenCalled()
+    expect(root.position.toArray()).toEqual(paused.position)
+    expect([...arcs.geometry.attributes.position.array]).toEqual(paused.arcs)
+    expect(arcs.material.opacity).toBe(paused.opacity)
+    look.update(1, root, { Struck: 2, Scorched: 60 }, position, 0)
+    expect(random).toHaveBeenCalled()
+    expect([...arcs.geometry.attributes.position.array]).not.toEqual(paused.arcs)
+    random.mockClear()
+    const struckAtPause = root.position.toArray()
+    look.update(1, root, { Struck: 2, Scorched: 60 }, position, 0)
+    expect(random).not.toHaveBeenCalled()
+    expect(root.position.toArray()).toEqual(struckAtPause) // repeated direct updates cannot accumulate a shake
+    look.update(1, root, { Struck: 2, Scorched: 60 }, position, 0.1)
+    expect(random).toHaveBeenCalled()
+    look.dispose()
+  })
+
   it('electrocuted for a moment: a blue-white flicker, arcs over it, and a shake; then charred, smoking', () => {
     const scene = new THREE.Scene()
     const look = createBodyLook(scene, { random: steady })

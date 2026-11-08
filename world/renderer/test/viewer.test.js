@@ -429,6 +429,17 @@ describe('the viewer screen', () => {
     expect(posts.at(-1).body).toMatchObject({ power: 'Storm', spots: [[7, 8]] })
   })
 
+  it('clears a partial storm aim when switching to another power', async () => {
+    const { slot, told, posts, fromIsland } = await boot()
+    slot('Storm').click()
+    fromIsland({ type: 'godling-aimed', x: 1, y: 0, z: 2 })
+    expect(told.filter((m) => m.type === 'godling-aim-marks').at(-1).spots).toHaveLength(1)
+    slot('Stone').click()
+    expect(told.filter((m) => m.type === 'godling-aim-marks').at(-1).spots).toEqual([])
+    expect(told.at(-1)).toMatchObject({ type: 'godling-aim', power: 'Stone' })
+    expect(posts).toEqual([])
+  })
+
   it('cools an aimed power, and the note box closes the aim', async () => {
     const { slot, $, tick } = await boot({ answers: { 'api/power': { ok: false, text: 'no', wait: 90 } } })
     slot('Storm').click()
