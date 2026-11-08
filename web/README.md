@@ -4,6 +4,18 @@ A small Django service (ADR-012, ADR-013). Viewers watch the island here, sign u
 their powers and notes go to the guest panel (`tools/guest_panel.py`) under their account's name. The accounts and
 the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a server is `deploy/`.
 
+## The front page and the screen (ADR-024)
+- **`/` is the booklet** (`templates/landing.html`, `apps/screen/static/landing/`): the game's instruction booklet in
+  the screen's Block HUD look. What Godling is, its controls (none over Godling), its mind and the model it thinks
+  with, what it learned, the powers, the rules, death, and the technical data.
+  - The powers, their prices and first tooltip sentence, the cheapest credit pack and the site rules (welcome
+    credits, note length, test mode) come from the database, so the admin's changes show there too.
+  - The model it names is `GODLING_MIND_MODEL` (deepseek-flash by default): set it with the island's `--model`.
+  - The drafts it was chosen from are in `prototypes/landing/` (open them through any static server at the repo root).
+- **`/watch` is the screen**, `world/viewer/index.html` as before. Its files stay at the root (`/viewer.js`,
+  `/demo/…`), so its relative links work from `/watch`. Signing in lands there; `/` with the screen's own `?t=` or
+  `?bottle=1` (links made before the move) goes on to `/watch`.
+
 ## What an account gets
 - **Anyone can watch:** the screen and `/api/status` need no account.
 - **Powers cost credits; notes are free.** Both need a signed-in account.

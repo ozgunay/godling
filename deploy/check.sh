@@ -86,7 +86,8 @@ for name in unknown.invalid ""; do
 done
 
 echo "== The site"
-expect 200 "$(status "https://$SITE/")" "the screen"
+expect 200 "$(status "https://$SITE/")" "the front page"
+expect 200 "$(status "https://$SITE/watch")" "the screen"
 hsts=$(header strict-transport-security "https://$SITE/")
 if [[ "$hsts" =~ max-age=([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -ge 31536000 ]; then pass "HSTS for a year or more ($hsts)"
 else fail "HSTS missing or short: '$hsts'"; fi

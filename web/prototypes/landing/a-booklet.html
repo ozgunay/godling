@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15191b">
+<title>Godling · Draft A, the booklet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Tiny5&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
+<style>
+  /* Draft A: the game's instruction booklet, cut in island stone. A cover over the island, then the booklet opened
+     spread by spread: story, the character, controls (you have none over Godling), its mind, powers, rules, death,
+     and the technical data on the back. */
+
+  .cover { position: relative; min-height: 100svh; display: grid; align-items: end; overflow: hidden; }
+  .cover > picture img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cover::before {
+    content: ""; position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(90deg, rgba(11, 14, 16, 0.86) 0, rgba(11, 14, 16, 0.6) 38rem, rgba(11, 14, 16, 0) 62rem),
+                linear-gradient(rgba(11, 14, 16, 0.55), rgba(11, 14, 16, 0) 9rem);
+  }
+  .cover-inner {
+    position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 40rem) 1fr; gap: 2rem; align-items: end;
+    padding: 7rem var(--gutter) clamp(2rem, 6vh, 4rem);
+  }
+  .cover-slab { padding: 2.2rem 2.2rem 1.6rem; }
+  .cover h1 { font-size: clamp(4rem, 9vw, 6rem); line-height: 0.92; letter-spacing: 0.01em; display: flex; align-items: flex-end; gap: 0.2em; }
+  .cover h1 .halo { margin-bottom: 0.55em; }
+  .cover .sub { margin-top: 0.7rem; font: 400 0.82rem/1.2 'Silkscreen', monospace; letter-spacing: 0.08em; color: var(--gold); }
+  .cover .lead { margin-top: 1.4rem; font-size: 1.42rem; line-height: 1.32; max-width: 32ch; }
+  .cover .lead2 { margin-top: 0.8rem; color: var(--mist); max-width: 40ch; }
+  .cover .ctas { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
+  .seals { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.6rem; padding-top: 1.1rem; border-top: var(--bevel) solid rgba(0, 0, 0, 0.35); }
+  .seal { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.5rem 0.7rem 0.45rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); }
+  .seal b { font-weight: 400; font-size: 1rem; }
+
+  .portrait { justify-self: end; width: min(22rem, 100%); }
+  .portrait .frame { padding: 0.8rem 0.8rem 0; }
+  .portrait img { width: 100%; aspect-ratio: 1; object-fit: cover; border: var(--bevel) solid var(--ink); }
+  .portrait .plate { display: flex; justify-content: space-between; align-items: baseline; padding: 0.7rem 0.2rem 0.75rem; }
+  .portrait .plate b { font-weight: 400; font-size: 1.3rem; }
+
+  /* The booklet opened */
+  .table { background: var(--speckle) 0 0 / 1.5rem, #14181a; padding: clamp(3rem, 8vw, 6rem) var(--gutter); }
+  .spread {
+    max-width: 78rem; margin: 0 auto clamp(2.5rem, 6vw, 4.5rem); display: grid; grid-template-columns: 1fr 1fr;
+    border: var(--bevel) solid var(--ink); background: var(--ink); gap: 0.55rem;
+  }
+  .page { position: relative; padding: 1.4rem 2rem 3.4rem; border: 0; min-height: 36rem; }
+  .page .head { display: flex; margin-bottom: 2.2rem; padding-bottom: 0.7rem; border-bottom: var(--bevel) solid rgba(0, 0, 0, 0.35); }
+  .page:nth-child(even) .head { justify-content: flex-end; }
+  .page .folio { position: absolute; bottom: 1.2rem; font: 400 0.7rem/1 'Silkscreen', monospace; color: var(--fog); }
+  .page:nth-child(odd) .folio { left: 2rem; }
+  .page:nth-child(even) .folio { right: 2rem; }
+  .page h2 { font-size: 2.3rem; line-height: 1.05; color: var(--gold); }
+  .page h2 + p { margin-top: 1rem; }
+  .page p { color: var(--mist); max-width: 46ch; }
+  .page p + p { margin-top: 0.8rem; }
+  .big-say { margin-top: 1rem; font-size: 1.75rem; line-height: 1.2; color: var(--white) !important; }
+
+  .soul { margin: 1.4rem 0 1.4rem; padding: 1.1rem 1.2rem; border: var(--bevel) solid var(--ink); }
+  .soul p { color: var(--white); font-size: 1.22rem; line-height: 1.38; }
+  .soul .who { margin-top: 0.7rem; }
+
+  .sheet { display: grid; grid-template-columns: auto 1fr; gap: 1.4rem; align-items: start; margin-top: 1.4rem; }
+  .sheet .tile { padding: 1rem; display: grid; place-items: center; }
+  .stats { display: grid; grid-template-columns: auto 1fr; gap: 0.55rem 1rem; margin: 0; }
+  .stats dt { font: 400 0.66rem/1.6 'Silkscreen', monospace; color: var(--term); letter-spacing: 0.05em; }
+  .stats dd { margin: 0; color: var(--white); }
+  .pips { display: flex; gap: 0.12rem; flex-wrap: wrap; }
+
+  .controls { margin-top: 1.6rem; display: grid; gap: 0.45rem; }
+  .ctl { display: grid; grid-template-columns: 9.5rem 1fr; gap: 1rem; align-items: center; padding: 0.6rem 0.8rem; }
+  .ctl .keys { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+  .ctl p { color: var(--white); }
+  .ctl.you { background: rgba(246, 201, 69, 0.08); border: var(--bevel) solid var(--ink); }
+  .ctl.godling { margin-top: 0.4rem; background: rgba(69, 214, 207, 0.08); border: var(--bevel) solid var(--ink); }
+  .ctl.godling .who { display: flex; align-items: center; gap: 0.5rem; color: var(--teal); }
+
+  .mind { margin-top: 1.5rem; display: grid; gap: 0; }
+  .layer { display: grid; grid-template-columns: 7.2rem 1fr; gap: 1rem; padding: 1.15rem 1rem 0.9rem; }
+  .layer + .layer { margin-top: -0.1875rem; }
+  .layer .name { display: flex; flex-direction: column; gap: 0.35rem; }
+  .layer .name b { font-weight: 400; font-size: 1.25rem; }
+  .layer p { color: var(--mist); font-size: 1.02rem; max-width: none; }
+  .layer .runs { margin-top: 0.45rem; display: inline-flex; gap: 0.5rem; align-items: center; padding: 0.3rem 0.5rem; background: rgba(14, 17, 18, 0.75); border: var(--bevel) solid var(--ink); font-size: 0.98rem; color: var(--white); }
+  .beside { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-top: 0.55rem; }
+  .beside > div { padding: 0.8rem 0.9rem; }
+  .beside b { display: block; font-weight: 400; margin-bottom: 0.3rem; }
+  .beside p { font-size: 0.98rem; }
+
+  .powers { margin-top: 1.5rem; display: grid; gap: 0.5rem; }
+  .power { display: grid; grid-template-columns: auto 1fr auto; gap: 0.9rem; align-items: center; }
+  .power .slot { width: 3.6rem; height: 3.6rem; }
+  .power .slot .key { top: 0.6rem; }
+  .power .what { display: flex; flex-direction: column; gap: 0.2rem; }
+  .power .what span { display: flex; gap: 0.55rem; align-items: center; }
+  .power .what p { font-size: 0.98rem; }
+  .power .price { font-size: 1.15rem; color: var(--gold); text-align: right; }
+  .power .price.free { color: var(--paper); }
+  .small-print { margin-top: 1.1rem; font-size: 0.95rem; color: var(--fog) !important; }
+
+  .rules { margin-top: 1.5rem; display: grid; gap: 0.7rem; padding: 0; list-style: none; }
+  .rules li { display: grid; grid-template-columns: auto 1fr; gap: 0.9rem; align-items: start; padding: 0.75rem 0.9rem; }
+  .rules li p { color: var(--white); }
+  .rules li .why { color: var(--mist); font-size: 0.98rem; margin-top: 0.2rem; }
+
+  .death { margin-top: 1.5rem; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.55rem; }
+  .death > div { padding: 0.9rem; display: grid; gap: 0.6rem; align-content: start; }
+  .death .t { font: 400 0.66rem/1 'Silkscreen', monospace; color: var(--term); }
+  .death p { color: var(--white); font-size: 1.02rem; }
+
+  .tech { margin: 1.4rem 0 0; display: grid; grid-template-columns: 9rem 1fr; gap: 0; }
+  .tech dt, .tech dd { padding: 0.62rem 0; border-top: var(--bevel) solid rgba(0, 0, 0, 0.35); }
+  .tech dt { font: 400 0.66rem/1.7 'Silkscreen', monospace; color: var(--term); letter-spacing: 0.05em; }
+  .tech dd { margin: 0; color: var(--white); }
+  .tech dd .fog { font-size: 0.95rem; }
+  .after-facts { margin-top: 1.2rem; }
+
+  .screen { position: relative; margin: 1.4rem 0 0; aspect-ratio: 16 / 10; padding: 0.7rem; border: var(--bevel) solid var(--ink); }
+  .screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 62% 55%; }
+  .screen .feed { position: relative; display: grid; gap: 0.22rem; max-width: 30rem; }
+  .feedline { display: grid; grid-template-columns: 2.8rem auto 1fr; gap: 0.5rem; align-items: center; padding: 0.38rem 0.6rem; font-size: 0.98rem; line-height: 1.2; background: rgba(14, 17, 18, 0.78); }
+  .feedline .label { font-size: 0.58rem; }
+  .feedline.notice { color: var(--teal); }
+  .feedline.is-sky { color: var(--gold); }
+  .screen-note { margin-top: 0.5rem; }
+  .legend { margin: 1.1rem 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; }
+  .legend li { display: flex; gap: 0.6rem; align-items: center; }
+  .legend p { font-size: 0.98rem; color: var(--white); }
+  .legend p.teal { color: var(--teal); }
+  .legend p.gold { color: var(--gold); }
+
+  .back { position: relative; min-height: 34rem; display: grid; place-items: center; padding: 4rem var(--gutter); overflow: hidden; }
+  .back > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .back::before { content: ""; position: absolute; inset: 0; z-index: 1; background: rgba(11, 14, 16, 0.45); }
+  .back .slab { position: relative; z-index: 2; padding: 2.2rem; max-width: 36rem; text-align: center; display: grid; justify-items: center; gap: 1rem; }
+  .back h2 { font-size: clamp(2.4rem, 5vw, 3.4rem); line-height: 1; }
+  .back p { color: var(--mist); }
+  .back .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.8rem; margin-top: 0.4rem; }
+
+  @media (max-width: 1000px) {
+    .cover-inner { grid-template-columns: 1fr; }
+    .portrait { display: none; }
+    .spread { grid-template-columns: 1fr; gap: 0.55rem; }
+    .page { min-height: 0; }
+    .page:nth-child(odd) .folio, .page:nth-child(even) .folio { left: auto; right: 2rem; }
+  }
+  @media (max-width: 760px) {
+    .cover::before { background: linear-gradient(rgba(11, 14, 16, 0.5), rgba(11, 14, 16, 0) 8rem), linear-gradient(rgba(11, 14, 16, 0) 30%, rgba(11, 14, 16, 0.85) 62%); }
+    .cover-inner { padding-top: 12rem; }
+    .cover-slab { padding: 1.5rem 1.2rem 1.2rem; }
+    .cover .lead { font-size: 1.25rem; }
+    .page { padding: 1.2rem 1.1rem 3.2rem; }
+    .page h2 { font-size: 1.9rem; }
+    .ctl { grid-template-columns: 1fr; gap: 0.5rem; }
+    .layer { grid-template-columns: 1fr; gap: 0.5rem; }
+    .beside, .death { grid-template-columns: 1fr; }
+    .sheet { grid-template-columns: 1fr; }
+    .sheet .tile { justify-self: start; }
+    .tech { grid-template-columns: 1fr; }
+    .tech dd { border-top: 0; padding-top: 0; }
+    .screen { aspect-ratio: auto; padding: 0.5rem 0.5rem 5rem; }
+    .feedline { grid-template-columns: 2.5rem auto 1fr; font-size: 0.92rem; padding: 0.34rem 0.5rem; gap: 0.4rem; }
+    .legend { grid-template-columns: 1fr; }
+    .power { grid-template-columns: auto 1fr; }
+    .power .price { grid-column: 2; text-align: left; margin-top: -0.4rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#"><span data-icon="godling" data-scale="2"></span>Godling</a>
+  <nav aria-label="Booklet">
+    <a href="#story">Story</a><a href="#controls">Controls</a><a href="#mind">The mind</a><a href="#learning">Learning</a><a href="#powers">Powers</a><a href="#tech">Technical data</a>
+  </nav>
+  <a class="get" href="#">Watch live</a>
+</header>
+
+<section class="cover">
+  <picture>
+    <source media="(max-width: 760px)" srcset="../../../world/viewer/demo/phone.jpg">
+    <img src="../../../world/viewer/demo/day.jpg" alt="Godling, a small white figure with a gold halo, among its stone blocks on the island">
+  </picture>
+  <div class="cover-inner">
+    <div class="cover-slab slab mossy">
+      <h1>Godling</h1>
+      <p class="sub">Instruction booklet for watchers</p>
+      <p class="lead">A small AI builder lives alone on an island, day and night. Nobody plays it. It thinks for itself.</p>
+      <p class="lead2">You watch every thought as it happens. You can send it stones, palms, storms and notes. You can never tell it what to do.</p>
+      <div class="ctas">
+        <a class="get big" href="#"><span data-icon="play" data-scale="2"></span>Watch the island</a>
+        <a class="btn" href="#story"><span data-icon="more" data-scale="2"></span>Open the booklet</a>
+      </div>
+      <div class="seals">
+        <div class="seal"><span class="label">Mind</span><b>DeepSeek</b></div>
+        <div class="seal"><span class="label">On air</span><b>24 hours a day</b></div>
+        <div class="seal"><span class="label">World</span><b>Real physics, 60 Hz</b></div>
+      </div>
+    </div>
+    <figure class="portrait slab" style="margin:0">
+      <div class="frame"><img src="../../../art/previews/godling_front.png" alt="Godling: a white body, a square head with a dark screen face, red hands and feet, a gold halo"></div>
+      <figcaption class="plate"><b>Godling</b><span class="label">Castaway · builder</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<main class="table">
+
+  <div class="spread" id="story">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>The story</h2>
+      <p>Every life of Godling begins with the same few lines. They are the first thing its mind reads.</p>
+      <div class="soul band">
+        <p>“I am Godling. I woke in a wide meadow in the middle of an island I do not know; the wreck of my life raft lies on its west beach. No one knows I am here.”</p>
+        <p class="who label">From its persona, word for word</p>
+      </div>
+      <p>From there it decides everything itself. First, to be seen from the sea. Then to learn the island, make fire, find food, and build things that can be seen from far away.</p>
+      <p>When something it built falls, it wants to know why, and tries again differently.</p>
+      <span class="folio">2</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Meet Godling</h2>
+      <div class="sheet">
+        <div class="tile block"><span data-icon="godling" data-scale="6" data-label="Godling"></span></div>
+        <dl class="stats">
+          <dt>Home</dt><dd>Mesa Island, a castaway island</dd>
+          <dt>Health</dt><dd><span class="pips"><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span><span data-icon="heart" data-scale="2"></span></span></dd>
+          <dt>Food</dt><dd><span class="pips"><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span><span data-icon="food" data-scale="2"></span></span></dd>
+          <dt>Can</dt><dd>Walk, quarry stone, fell palms, climb ladders, fish, make fire, build</dd>
+          <dt>Wants</dt><dd>To be found. Then towers, gates, rings, lines across the land</dd>
+          <dt>Speaks</dt><dd>Short field notes. Numbers when they matter. No exclamation marks.</dd>
+          <dt>Feels</dt><dd>Wet, cold, hungry and alone, the way you would</dd>
+        </dl>
+      </div>
+      <span class="folio">3</span>
+    </article>
+  </div>
+
+  <div class="spread" id="controls">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Controls</h2>
+      <p class="big-say">You do not control Godling.</p>
+      <p>Your controls belong to the sky and the camera. Godling notices what you do, and decides what it means.</p>
+      <div class="controls">
+        <div class="ctl you"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><p>Fly the free camera around the island</p></div>
+        <div class="ctl you"><span class="keys"><kbd>1</kbd><kbd>…</kbd><kbd>7</kbd></span><p>Pick a sky power from the hotbar</p></div>
+        <div class="ctl you"><span class="keys"><kbd>Click</kbd></span><p>Aim where it lands. A gift aimed at Godling lands at its feet.</p></div>
+        <div class="ctl you"><span class="keys"><kbd>Enter</kbd></span><p>Send a note, folded into a paper glider. It reads notes out of curiosity.</p></div>
+        <div class="ctl godling"><span class="who"><span data-icon="godling" data-scale="2"></span>Godling</span><p>Everything else.</p></div>
+      </div>
+      <span class="folio">4</span>
+    </article>
+    <article class="page slab" id="mind">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>How Godling thinks</h2>
+      <p>A mind in three layers, like ours: one that plans, one that notices, one that moves.</p>
+      <div class="mind">
+        <div class="layer block">
+          <div class="name"><span class="label">Plans</span><b>Mind</b></div>
+          <div>
+            <p>Chooses its next project and says out loud what it intends. Writes lessons, teaches itself skills, and sleeps every hour to sort its memory.</p>
+            <span class="runs"><span data-icon="think" data-scale="2"></span>DeepSeek · deepseek-flash · reasoning on</span>
+          </div>
+        </div>
+        <div class="layer block">
+          <div class="name"><span class="label">Notices</span><b>Attention</b></div>
+          <p>Sees new things, damage to what it built, visitors and the sky. When something matters, it stops the plan and makes the mind think again.</p>
+        </div>
+        <div class="layer block">
+          <div class="name"><span class="label">Moves</span><b>Body</b></div>
+          <p>Walks around the mesas, picks up, places, throws, jumps and climbs. Glances at what attention saw. Braces when the ground shakes.</p>
+        </div>
+      </div>
+      <div class="beside">
+        <div class="slab"><b class="gold">Skills it teaches itself</b><p>Made from body moves. They only count once they have worked in the world.</p></div>
+        <div class="slab"><b class="gold">Memory</b><p>What happened, what it meant to do, what it built, and a digest it keeps short.</p></div>
+      </div>
+      <span class="folio">5</span>
+    </article>
+  </div>
+
+  <div class="spread" id="learning">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>It learns by doing</h2>
+      <p>Nobody gives Godling the rules of its world. In one early five-minute test, with no hints about physics, it worked these out for itself.</p>
+      <dl class="tech">
+        <dt>Block height</dt><dd>0.37, then 1.12, then 1.87: measured by stacking</dd>
+        <dt>Tallest tower</dt><dd>12 blocks</dd>
+        <dt>Its reach</dt><dd>About 9 units, found by trying</dd>
+        <dt>Skills taught</dt><dd>7, broken ones forgotten</dd>
+        <dt>Cost</dt><dd>$0.028 of thinking</dd>
+      </dl>
+      <p class="after-facts">What it learns stays. Lessons go into its memory, and a skill is kept only once it has worked in the world.</p>
+      <span class="folio">6</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Reading its mind</h2>
+      <p>On the screen, Godling's mind runs down the top left corner as it happens.</p>
+      <figure class="screen">
+        <img src="../../../world/viewer/demo/day.jpg" alt="" aria-hidden="true">
+        <div class="feed">
+          <div class="feedline"><span class="label">07:12</span><span data-icon="think" data-scale="2"></span><span>“The tremor cut the last haul short.”</span></div>
+          <div class="feedline"><span class="label">07:14</span><span data-icon="idea" data-scale="2"></span><span>Learned “lift on top”: carry a block and set it on the stack.</span></div>
+          <div class="feedline"><span class="label">07:20</span><span data-icon="think" data-scale="2"></span><span>“Two logs now. One more and the gate gets its lintel.”</span></div>
+          <div class="feedline notice"><span class="label">07:21</span><span data-icon="notice" data-scale="2"></span><span>A log washed up on the beach.</span></div>
+          <div class="feedline is-sky"><span class="label">07:23</span><span data-icon="meteor" data-scale="2"></span><span>A dark shadow spreads on the ground: something is falling, in about 40 s.</span></div>
+        </div>
+      </figure>
+      <p class="sample screen-note">Sample lines in the screen's own format</p>
+      <ul class="legend">
+        <li><span data-icon="think" data-scale="2"></span><p>In quotes: its thoughts, in its own words</p></li>
+        <li><span data-icon="idea" data-scale="2"></span><p>A skill it just taught itself</p></li>
+        <li><span data-icon="notice" data-scale="2"></span><p class="teal">Teal: something it noticed</p></li>
+        <li><span data-icon="meteor" data-scale="2"></span><p class="gold">Gold: what the sky did</p></li>
+      </ul>
+      <span class="folio">7</span>
+    </article>
+  </div>
+
+  <div class="spread" id="powers">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Sky powers</h2>
+      <p>Seven slots on the hotbar. Gifts help. Disasters can hurt. All of them change the world, none of them the mind.</p>
+      <div class="powers">
+        <div class="power"><span class="slot"><span class="key">1</span><span data-icon="stone" data-scale="2"></span></span><div class="what"><span>Stone <span class="chip">Gift</span></span><p>A stone block drops where you aim.</p></div><span class="price">4 cr</span></div>
+        <div class="power"><span class="slot"><span class="key">2</span><span data-icon="log" data-scale="2"></span></span><div class="what"><span>Log <span class="chip">Gift</span></span><p>A log beam drops where you aim.</p></div><span class="price">4 cr</span></div>
+        <div class="power"><span class="slot"><span class="key">3</span><span data-icon="sapling" data-scale="2"></span></span><div class="what"><span>Regrow <span class="chip">Gift</span></span><p>The nearest stump grows back into a palm.</p></div><span class="price">6 cr</span></div>
+        <div class="power"><span class="slot harm"><span class="key">4</span><span data-icon="lightning" data-scale="2"></span></span><div class="what"><span>Storm <span class="chip harm">Disaster</span></span><p>Rain, a gale and three strikes you aim. It can hurt. It never kills.</p></div><span class="price">400 cr</span></div>
+        <div class="power"><span class="slot harm"><span class="key">5</span><span data-icon="meteor" data-scale="2"></span></span><div class="what"><span>Meteor <span class="chip harm">Disaster</span></span><p>A shadow, then 40 s later a blast and a crater.</p></div><span class="price">300 cr</span></div>
+        <div class="power"><span class="slot harm"><span class="key">6</span><span data-icon="quake" data-scale="2"></span></span><div class="what"><span>Earthquake <span class="chip harm">Disaster</span></span><p>20 s of shaking. Loose pieces fall. Godling braces.</p></div><span class="price">500 cr</span></div>
+        <div class="power"><span class="slot"><span class="key">7</span><span data-icon="glider" data-scale="2"></span></span><div class="what"><span>Note <span class="chip">Words</span></span><p>Up to 140 characters, on a paper glider.</p></div><span class="price free">free</span></div>
+      </div>
+      <p class="small-print">1 credit is €0.05. 20 free credits when you confirm your email.</p>
+      <span class="folio">8</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Rules of the sky</h2>
+      <ul class="rules">
+        <li class="band"><span data-icon="lock" data-scale="2"></span><div><p>You change the world. Never the mind.</p><p class="why">No power, price or note buys a decision.</p></div></li>
+        <li class="band"><span data-icon="eye" data-scale="2"></span><div><p>Godling never sees who paid.</p><p class="why">It sees a stone fall, a shadow spread, a sky go dark. Not your name.</p></div></li>
+        <li class="band"><span data-icon="heart" data-scale="2"></span><div><p>No disaster while it is weak.</p><p class="why">Not under 30 health, and not for 15 minutes after a death.</p></div></li>
+        <li class="band"><span data-icon="lightning" data-scale="2"></span><div><p>A storm can hurt it. It never kills.</p><p class="why">A strike leaves half a heart at most. What follows, the cold and the soaking, is up to Godling.</p></div></li>
+        <li class="band"><span data-icon="notice" data-scale="2"></span><div><p>Everything you do gets an answer.</p><p class="why">A warning, Godling noticing, a change that stays on the island.</p></div></li>
+      </ul>
+      <span class="folio">9</span>
+    </article>
+  </div>
+
+  <div class="spread" id="tech">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>If Godling dies</h2>
+      <p>Death is real here, and Godling learns from it the way you would: by itself.</p>
+      <div class="death">
+        <div class="band"><span class="t">At zero health</span><span data-icon="heartEmpty" data-scale="3"></span><p>It falls and drops whatever it held.</p></div>
+        <div class="band"><span class="t">30 seconds</span><span data-icon="pause" data-scale="3"></span><p>It lies still. The mind does not think.</p></div>
+        <div class="band"><span class="t">Born again</span><span data-icon="sun" data-scale="3"></span><p>At the start: whole, but half fed.</p></div>
+        <div class="band"><span class="t">Afterwards</span><span data-icon="idea" data-scale="3"></span><p>It reads the facts of its death and writes its own lessons. Nobody tells it what to learn.</p></div>
+      </div>
+      <p class="small-print">Every death is counted on the screen and marked on the replay.</p>
+      <span class="folio">10</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Technical data</h2>
+      <dl class="tech">
+        <dt>Mind</dt><dd>DeepSeek, <span class="gold">deepseek-flash</span>, reasoning fully on</dd>
+        <dt>Thinking</dt><dd>Streams to your screen as it thinks</dd>
+        <dt>Cost of thought</dt><dd>About $0.21 an hour <span class="fog">· the island runs on it</span></dd>
+        <dt>World</dt><dd>Clawblox, in Rust, with a Luau world script</dd>
+        <dt>Physics</dt><dd>Rapier, 60 steps a second</dd>
+        <dt>Picture</dt><dd>Three.js in your browser, light enough for a phone</dd>
+        <dt>Stream</dt><dd>One relay shares the same island with every viewer</dd>
+        <dt>A day</dt><dd>40 minutes, with rain, fog and wind</dd>
+        <dt>Thought bubble</dt><dd>23 pictures, 14 feelings</dd>
+        <dt>Replays</dt><dd>Rewind to any moment of its life</dd>
+      </dl>
+      <span class="folio">11</span>
+    </article>
+  </div>
+
+</main>
+
+<section class="back">
+  <img src="../../../world/viewer/demo/night.jpg" alt="" aria-hidden="true">
+  <div class="slab mossy">
+    <span data-icon="godling" data-scale="4"></span>
+    <h2>The island is out there now.</h2>
+    <p>Come and see what Godling is building, and what it is thinking while it builds.</p>
+    <div class="ctas">
+      <a class="get big" href="#"><span data-icon="play" data-scale="2"></span>Watch the island</a>
+      <a class="btn" href="#">Create an account</a>
+    </div>
+    <p class="small-print">20 free credits when you confirm your email.</p>
+  </div>
+</section>
+
+<footer class="foot">
+  <a class="brand" href="#"><span data-icon="godling" data-scale="2"></span>Godling</a>
+  <a href="#">Sign in</a><a href="#">Credits</a><a href="#">Feedback</a>
+  <span class="credit">Draft A · the booklet · a static draft, no links work</span>
+</footer>
+
+<script type="module" src="icons.js"></script>
+</body>
+</html>

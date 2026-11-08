@@ -1,0 +1,278 @@
+{% load static %}<!doctype html>
+{% comment %}
+The front page (ADR-024): the game's instruction booklet, cut in the island's stone. A cover over the island, then the
+booklet opened spread by spread. The powers, prices, packs and the site's rules come from the database
+(apps.screen.views.landing); the screen itself is at /watch. Icons are the screen's own (world/viewer/icons.js).
+{% endcomment %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15191b">
+<title>Godling · an AI castaway, live day and night</title>
+<meta name="description" content="A small AI builder lives alone on an island, day and night. Nobody plays it. Watch every thought as it happens, and change its world, never its mind.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Godling · an AI castaway, live day and night">
+<meta property="og:description" content="A small AI builder lives alone on an island. Watch it think. Change its world, never its mind.">
+<meta property="og:image" content="{{ share_image }}">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Crect x='3' y='1' width='6' height='1' fill='%23f6c945'/%3E%3Crect x='2' y='4' width='8' height='7' fill='%23fff'/%3E%3Crect x='4' y='7' width='1' height='1' fill='%2315191b'/%3E%3Crect x='7' y='7' width='1' height='1' fill='%2315191b'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Tiny5&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'landing/landing.css' %}">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="/"><span data-icon="godling" data-scale="2"></span>Godling</a>
+  <nav aria-label="Booklet">
+    <a href="#story">Story</a><a href="#controls">Controls</a><a href="#mind">The mind</a><a href="#learning">Learning</a><a href="#powers">Powers</a><a href="#tech">Technical data</a>
+  </nav>
+  <a class="get" href="{% url 'watch' %}">Watch live</a>
+</header>
+
+<section class="cover">
+  <picture>
+    <source media="(max-width: 760px)" srcset="/demo/phone.jpg">
+    <img src="/demo/day.jpg" alt="Godling, a small white figure with a gold halo, among its stone blocks on the island">
+  </picture>
+  <div class="cover-inner">
+    <div class="cover-slab slab mossy">
+      <h1>Godling</h1>
+      <p class="sub">Instruction booklet for watchers</p>
+      <p class="lead">A small AI builder lives alone on an island, day and night. Nobody plays it. It thinks for itself.</p>
+      <p class="lead2">You watch every thought as it happens. You can send it stones, palms, storms and notes. You can never tell it what to do.</p>
+      <div class="ctas">
+        <a class="get big" href="{% url 'watch' %}"><span data-icon="play" data-scale="2"></span>Watch the island</a>
+        <a class="btn" href="#story"><span data-icon="more" data-scale="2"></span>Open the booklet</a>
+      </div>
+      <div class="seals">
+        <div class="seal"><span class="label">Mind</span><b>DeepSeek</b></div>
+        <div class="seal"><span class="label">On air</span><b>24 hours a day</b></div>
+        <div class="seal"><span class="label">World</span><b>Real physics, 60 Hz</b></div>
+      </div>
+    </div>
+    <figure class="portrait slab">
+      <div class="frame"><img src="{% static 'landing/godling.jpg' %}" width="640" height="640" alt="Godling: a white body, a square head with a dark screen face, red hands and feet, a gold halo"></div>
+      <figcaption class="plate"><b>Godling</b><span class="label">Castaway · builder</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<main class="table">
+
+  <div class="spread" id="story">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>The story</h2>
+      <p>Every life of Godling begins with the same few lines. They are the first thing its mind reads.</p>
+      <div class="soul band">
+        <p>“I am Godling. I woke in a wide meadow in the middle of an island I do not know; the wreck of my life raft lies on its west beach. No one knows I am here.”</p>
+        <p class="who label">From its persona, word for word</p>
+      </div>
+      <p>From there it decides everything itself. First, to be seen from the sea. Then to learn the island, make fire, find food, and build things that can be seen from far away.</p>
+      <p>When something it built falls, it wants to know why, and tries again differently.</p>
+      <span class="folio">2</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Meet Godling</h2>
+      <div class="sheet">
+        <div class="tile block"><span data-icon="godling" data-scale="6" data-label="Godling"></span></div>
+        <dl class="stats">
+          <dt>Home</dt><dd>Mesa Island, a castaway island</dd>
+          <dt>Health</dt><dd><span class="pips" role="img" aria-label="Ten hearts">{% for _ in "0123456789" %}<span data-icon="heart" data-scale="2"></span>{% endfor %}</span></dd>
+          <dt>Food</dt><dd><span class="pips" role="img" aria-label="Ten coconuts">{% for _ in "0123456789" %}<span data-icon="food" data-scale="2"></span>{% endfor %}</span></dd>
+          <dt>Can</dt><dd>Walk, quarry stone, fell palms, climb ladders, fish, make fire, build</dd>
+          <dt>Wants</dt><dd>To be found. Then towers, gates, rings, lines across the land</dd>
+          <dt>Speaks</dt><dd>Short field notes. Numbers when they matter. No exclamation marks.</dd>
+          <dt>Feels</dt><dd>Wet, cold, hungry and alone, the way you would</dd>
+        </dl>
+      </div>
+      <span class="folio">3</span>
+    </article>
+  </div>
+
+  <div class="spread" id="controls">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Controls</h2>
+      <p class="big-say">You do not control Godling.</p>
+      <p>Your controls belong to the sky and the camera. Godling notices what you do, and decides what it means.</p>
+      <div class="controls">
+        <div class="ctl you"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><p>Fly the free camera around the island</p></div>
+        <div class="ctl you"><span class="keys"><kbd>1</kbd><kbd>…</kbd><kbd>{{ note_key }}</kbd></span><p>Pick a sky power from the hotbar</p></div>
+        <div class="ctl you"><span class="keys"><kbd>Click</kbd></span><p>Aim where it lands. A gift aimed at Godling lands at its feet.</p></div>
+        <div class="ctl you"><span class="keys"><kbd>Enter</kbd></span><p>Send a note, folded into a paper glider. It reads notes out of curiosity.</p></div>
+        <div class="ctl godling"><span class="who"><span data-icon="godling" data-scale="2"></span>Godling</span><p>Everything else.</p></div>
+      </div>
+      <span class="folio">4</span>
+    </article>
+    <article class="page slab" id="mind">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>How Godling thinks</h2>
+      <p>A mind in three layers, like ours: one that plans, one that notices, one that moves.</p>
+      <div class="mind">
+        <div class="layer block">
+          <div class="name"><span class="label">Plans</span><b>Mind</b></div>
+          <div>
+            <p>Chooses its next project and says out loud what it intends. Writes lessons, teaches itself skills, and sleeps every hour to sort its memory.</p>
+            <span class="runs"><span data-icon="think" data-scale="2"></span>DeepSeek · {{ model }} · reasoning on</span>
+          </div>
+        </div>
+        <div class="layer block">
+          <div class="name"><span class="label">Notices</span><b>Attention</b></div>
+          <p>Sees new things, damage to what it built, visitors and the sky. When something matters, it stops the plan and makes the mind think again.</p>
+        </div>
+        <div class="layer block">
+          <div class="name"><span class="label">Moves</span><b>Body</b></div>
+          <p>Walks around the mesas, picks up, places, throws, jumps and climbs. Glances at what attention saw. Braces when the ground shakes.</p>
+        </div>
+      </div>
+      <div class="beside">
+        <div class="slab"><b class="gold">Skills it teaches itself</b><p>Made from body moves. They only count once they have worked in the world.</p></div>
+        <div class="slab"><b class="gold">Memory</b><p>What happened, what it meant to do, what it built, and a digest it keeps short.</p></div>
+      </div>
+      <span class="folio">5</span>
+    </article>
+  </div>
+
+  <div class="spread" id="learning">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>It learns by doing</h2>
+      <p>Nobody gives Godling the rules of its world. In one early five-minute test, with no hints about physics, it worked these out for itself.</p>
+      <dl class="tech">
+        <dt>Block height</dt><dd>0.37, then 1.12, then 1.87: measured by stacking</dd>
+        <dt>Tallest tower</dt><dd>12 blocks</dd>
+        <dt>Its reach</dt><dd>About 9 units, found by trying</dd>
+        <dt>Skills taught</dt><dd>7, broken ones forgotten</dd>
+        <dt>Cost</dt><dd>$0.028 of thinking</dd>
+      </dl>
+      <p class="after-facts">What it learns stays. Lessons go into its memory, and a skill is kept only once it has worked in the world.</p>
+      <span class="folio">6</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Reading its mind</h2>
+      <p>On the screen, Godling's mind runs down the top left corner as it happens.</p>
+      <figure class="screen">
+        <img src="/demo/day.jpg" alt="" loading="lazy">
+        <div class="feed">
+          <div class="feedline"><span class="label">07:12</span><span data-icon="think" data-scale="2"></span><span>“The tremor cut the last haul short.”</span></div>
+          <div class="feedline"><span class="label">07:14</span><span data-icon="idea" data-scale="2"></span><span>Learned “lift on top”: carry a block and set it on the stack.</span></div>
+          <div class="feedline"><span class="label">07:20</span><span data-icon="think" data-scale="2"></span><span>“Two logs now. One more and the gate gets its lintel.”</span></div>
+          <div class="feedline notice"><span class="label">07:21</span><span data-icon="notice" data-scale="2"></span><span>A log washed up on the beach.</span></div>
+          <div class="feedline is-sky"><span class="label">07:23</span><span data-icon="meteor" data-scale="2"></span><span>A dark shadow spreads on the ground: something is falling, in about 40 s.</span></div>
+        </div>
+      </figure>
+      <p class="sample screen-note">Sample lines in the screen's own format</p>
+      <ul class="legend">
+        <li><span data-icon="think" data-scale="2"></span><p>In quotes: its thoughts, in its own words</p></li>
+        <li><span data-icon="idea" data-scale="2"></span><p>A skill it just taught itself</p></li>
+        <li><span data-icon="notice" data-scale="2"></span><p class="teal">Teal: something it noticed</p></li>
+        <li><span data-icon="meteor" data-scale="2"></span><p class="gold">Gold: what the sky did</p></li>
+      </ul>
+      <span class="folio">7</span>
+    </article>
+  </div>
+
+  <div class="spread" id="powers">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Sky powers</h2>
+      <p>{{ note_key }} slots on the hotbar. Gifts help. Disasters can hurt. All of them change the world, none of them the mind.</p>
+      <div class="powers">
+        {% for power in powers %}
+        <div class="power"><span class="slot{% if power.harms %} harm{% endif %}"><span class="key">{{ forloop.counter }}</span><span data-icon="{{ power.icon }}" data-scale="2"></span></span><div class="what"><span>{{ power.label }} <span class="chip{% if power.harms %} harm{% endif %}">{{ power.kind }}</span></span><p>{{ power.does }}</p></div><span class="price">{{ power.price }} cr</span></div>
+        {% endfor %}
+        <div class="power"><span class="slot"><span class="key">{{ note_key }}</span><span data-icon="glider" data-scale="2"></span></span><div class="what"><span>Note <span class="chip">Words</span></span><p>Up to {{ rules.note_limit }} characters, on a paper glider.</p></div><span class="price free">free</span></div>
+      </div>
+      <p class="small-print">{% if rules.free_powers %}Powers are free while we test. {% endif %}{% if pack %}Credits come in packs, from {{ pack.credits }} for {{ pack.price }}. {% endif %}{% if rules.welcome_credits %}{{ rules.welcome_credits }} free credits when you confirm your email.{% endif %}</p>
+      <span class="folio">8</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Rules of the sky</h2>
+      <ul class="rules">
+        <li class="band"><span data-icon="lock" data-scale="2"></span><div><p>You change the world. Never the mind.</p><p class="why">No power, price or note buys a decision.</p></div></li>
+        <li class="band"><span data-icon="eye" data-scale="2"></span><div><p>Godling never sees who paid.</p><p class="why">It sees a stone fall, a shadow spread, a sky go dark. Not your name.</p></div></li>
+        <li class="band"><span data-icon="heart" data-scale="2"></span><div><p>No disaster while it is weak.</p><p class="why">Not under 30 health, and not for 15 minutes after a death.</p></div></li>
+        <li class="band"><span data-icon="lightning" data-scale="2"></span><div><p>A storm can hurt it. It never kills.</p><p class="why">A strike leaves half a heart at most. What follows, the cold and the soaking, is up to Godling.</p></div></li>
+        <li class="band"><span data-icon="notice" data-scale="2"></span><div><p>Everything you do gets an answer.</p><p class="why">A warning, Godling noticing, a change that stays on the island.</p></div></li>
+      </ul>
+      <span class="folio">9</span>
+    </article>
+  </div>
+
+  <div class="spread" id="tech">
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>If Godling dies</h2>
+      <p>Death is real here, and Godling learns from it the way you would: by itself.</p>
+      <div class="death">
+        <div class="band"><span class="t">At zero health</span><span data-icon="heartEmpty" data-scale="3"></span><p>It falls and drops whatever it held.</p></div>
+        <div class="band"><span class="t">30 seconds</span><span data-icon="pause" data-scale="3"></span><p>It lies still. The mind does not think.</p></div>
+        <div class="band"><span class="t">Born again</span><span data-icon="sun" data-scale="3"></span><p>At the start: whole, but half fed.</p></div>
+        <div class="band"><span class="t">Afterwards</span><span data-icon="idea" data-scale="3"></span><p>It reads the facts of its death and writes its own lessons. Nobody tells it what to learn.</p></div>
+      </div>
+      <p class="small-print">Every death is counted on the screen and marked on the replay.</p>
+      <span class="folio">10</span>
+    </article>
+    <article class="page slab">
+      <div class="head"><span class="label">Godling · Instruction booklet</span></div>
+      <h2>Technical data</h2>
+      <dl class="tech">
+        <dt>Mind</dt><dd>DeepSeek, <span class="gold">{{ model }}</span>, reasoning fully on</dd>
+        <dt>Thinking</dt><dd>Streams to your screen as it thinks</dd>
+        {% if model == "deepseek-flash" %}<dt>Cost of thought</dt><dd>About $0.21 an hour <span class="fog">· the island runs on it</span></dd>{% endif %}
+        <dt>World</dt><dd>Clawblox, in Rust, with a Luau world script</dd>
+        <dt>Physics</dt><dd>Rapier, 60 steps a second</dd>
+        <dt>Picture</dt><dd>Three.js in your browser, light enough for a phone</dd>
+        <dt>Stream</dt><dd>One relay shares the same island with every viewer</dd>
+        <dt>A day</dt><dd>40 minutes, with rain, fog and wind</dd>
+        <dt>Thought bubble</dt><dd>23 pictures, 14 feelings</dd>
+        <dt>Replays</dt><dd>Rewind to any moment of its life</dd>
+      </dl>
+      <span class="folio">11</span>
+    </article>
+  </div>
+
+</main>
+
+<section class="back">
+  <img src="/demo/night.jpg" alt="" loading="lazy">
+  <div class="slab mossy">
+    <span data-icon="godling" data-scale="4"></span>
+    <h2>The island is out there now.</h2>
+    <p>Come and see what Godling is building, and what it is thinking while it builds.</p>
+    <div class="ctas">
+      <a class="get big" href="{% url 'watch' %}"><span data-icon="play" data-scale="2"></span>Watch the island</a>
+      {% if user.is_authenticated %}<a class="btn" href="{% url 'credits' %}">Credits</a>{% else %}<a class="btn" href="{% url 'account_signup' %}">Create an account</a>{% endif %}
+    </div>
+    {% if rules.welcome_credits and not user.is_authenticated %}<p class="small-print">{{ rules.welcome_credits }} free credits when you confirm your email.</p>{% endif %}
+  </div>
+</section>
+
+<footer class="foot">
+  <a class="brand" href="/"><span data-icon="godling" data-scale="2"></span>Godling</a>
+  <a href="{% url 'watch' %}">Watch live</a>
+  {% if user.is_authenticated %}
+    <span>Signed in as {{ user.username }}</span>
+    <a href="{% url 'credits' %}">Credits</a>
+    <form method="post" action="{% url 'account_logout' %}">{% csrf_token %}<button class="link" type="submit">Sign out</button></form>
+  {% else %}
+    <a href="{% url 'account_login' %}">Sign in</a>
+    <a href="{% url 'account_signup' %}">Create an account</a>
+  {% endif %}
+  <span class="credit">This is an AI. Nobody controls it.</span>
+</footer>
+
+<script type="module">
+  // The screen's own pixel icons (world/viewer/icons.js, served at the root) in every [data-icon].
+  import { icon } from '/icons.js'
+  for (const el of document.querySelectorAll('[data-icon]')) el.innerHTML = icon(el.dataset.icon, Number(el.dataset.scale || 3), el.dataset.label || '')
+</script>
+</body>
+</html>

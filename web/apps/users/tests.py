@@ -35,7 +35,7 @@ class SignupTests(TestCase):
         link = re.search(r"https?://\S+/accounts/confirm-email/\S+/", mail.outbox[-1].body).group(0)
         self.client.post(link)
         response = self.client.post(reverse("account_login"), {"login": "mara@example.org", "password": PASSWORD})
-        self.assertRedirects(response, "/", fetch_redirect_response=False)
+        self.assertRedirects(response, "/watch", fetch_redirect_response=False)
         self.assertEqual(int(self.client.session["_auth_user_id"]), User.objects.get(username="mara_k").pk)
 
     def test_reserved_long_and_offensive_usernames_are_refused(self):

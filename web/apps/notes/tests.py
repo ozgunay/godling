@@ -132,7 +132,7 @@ class AdminTests(TestCase):
         self.client.force_login(newcomer)
         for page in ("/admin/", "/admin/credits/power/", reverse("admin_logs")):
             self.assertRedirects(self.client.get(page), reverse("mfa_activate_totp"), fetch_redirect_response=False)
-        self.assertEqual(self.client.get("/").status_code, 200)  # the screen itself asks nothing of them
+        self.assertEqual(self.client.get("/watch").status_code, 200)  # the screen itself asks nothing of them
         two_factor(newcomer)
         code_entered(self.client)
         self.assertEqual(self.client.get("/admin/").status_code, 200)
