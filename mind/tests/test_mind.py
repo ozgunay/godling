@@ -102,12 +102,12 @@ def test_prompts(world, tmp_path):
     assert "a coconut's dry husk" in system
     assert "a log laid against a burning one takes the fire as it burns out" in system
     assert "Rain puts out a fire in the open, but not one under a roof." in system
+    flat_system = " ".join(system.split())
     # a meteor's stone: what it is like, never what it is for (METEORIC IRON)
     assert ("It lands glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like "
-            "metal") in " ".join(system.split())
+            "metal") in flat_system
     assert not re.search(r"\b(iron|harpoon|blade|edge)\b", system, re.IGNORECASE), "never what it is for"
     # ADR-026: no log washes up any more, so the mind is not sent looking for one; an axe fells a tree into one log.
-    flat_system = " ".join(system.split())
     assert not re.search(r"\b(wash|washes|washed|driftwood)\b", flat_system, re.IGNORECASE)
     assert "an axe fells a tree into one" in flat_system
     assert '"agenda"' in system

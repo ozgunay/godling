@@ -9,6 +9,7 @@ Procedural memory (protected proven skills) lives in learned.SkillLibrary.
 """
 import json
 import re
+from pathlib import Path
 
 from .files import write_atomic
 from .memory import NativeMemory
@@ -28,9 +29,15 @@ def _similar(a, b):
 
 class BrainMemory(NativeMemory):
     def __init__(self, root):
-        super().__init__(root)
-        self.facts_path = self.root / "facts.json"
+        self.facts_path = Path(root) / "facts.json"  # read first: opening the memory may retire some (RETIRED)
         self.facts = json.loads(self.facts_path.read_text()) if self.facts_path.exists() else {}
+        super().__init__(root)
+
+    def _retire_more(self, pattern):
+        kept = {subject: [f for f in facts if not pattern.search(f["text"])] for subject, facts in self.facts.items()}
+        if kept != self.facts:
+            self.facts = kept
+            write_atomic(self.facts_path, json.dumps(self.facts, indent=2))
 
     def save(self):
         super().save()

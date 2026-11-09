@@ -1,6 +1,7 @@
 # ADR-026: Fewer logs come into the world: no driftwood, lightning that seldom fells, one log from the axe
 
-Date: 2026-11-09. Status: built and tested in the world's and the mind's suites. Not yet tested in a live run.
+Date: 2026-11-09. Status: built and tested in the world's and the mind's suites, and reviewed (the fixes are under
+"After the review"). Not yet tested in a live run.
 
 ## Why
 In the live run of 2026-11-08 (22:10 to 07:50 UTC, 9.6 hours) the island filled with loose logs. The world made 106
@@ -36,6 +37,11 @@ building-site work in another change.
   up on the beach", so it does not go looking for them.
 - A log an old save still marks `Driftwood` is an ordinary log. The world ignores the mark, and the mind reports it as
   "A new object … appeared", as it does any log.
+- **Old lessons are retired.** A memory written before this change holds lessons that say logs wash up, or that the axe
+  leaves two logs (the 2026-11-08 run kept 11 of them). Opening such a memory retires those lessons once
+  (`memory.RETIRED`), so a resumed run never recalls them. What happened is kept: "A log washed up on the west beach
+  at …" is history, not a rule. The memory's state records that it was done, so a lesson learnt later ("lightning
+  felled Palm_3 into two logs", still true) is never retired.
 
 ### The weather's lightning seldom fells a palm
 - **Its look and its danger are unchanged.** In heavy rain a bolt still comes every 3 to 8 minutes, 12 to 45 from
@@ -44,9 +50,18 @@ building-site work in another change.
   counted only while the rain is heavy. A run's first storm may fell one.
 - **The storms spare a palm they felled for 6 hours** (`PALM_REST`), even after it has grown back.
 - **Any other bolt** strikes the open ground in the same ring, at least 4 from a standing palm (`PALM_CLEAR`; a palm
-  that close would have taken it), or the sea. Ground keeps a `Scorch` for 4 minutes, as the viewers' Storm leaves one.
-  The world logs `WEATHER lightning struck the ground at (x, z)`, or `… the sea …`. The mind is not told: a bolt marker
-  carries no `SkyEvent`, as before.
+  that close would have taken it), or the sea. It takes up to 20 tries to find such a point; if none is clear, no bolt
+  comes down this time. That is practically never: at the worst spot on the island 15% of the ring lies that close to
+  a palm, so all 20 tries fail about once in 10^16 bolts (six tries, as first built, failed once in 80,000).
+  - The island's own ground keeps a `Scorch` for 4 minutes, as the viewers' Storm leaves one. A bolt on a piece lying
+    or built there ends on its top, and leaves no scorch: one would hang in the air once the piece was carried off.
+  - A bolt in the sea ends on the sea's surface (`OCEAN_TOP_Y`).
+  - The world logs `WEATHER lightning #n struck the ground at (x, z)`, or `… the sea …`, and a felling as
+    `WEATHER lightning #n felled Palm_k into …`. So the log tells the weather's lightning from a viewer's
+    (`SKY Lightning #n …`, which `tools/analyze_run.py` counts as applied powers).
+  - The mind is not told of a bolt on the ground: a bolt marker carries no `SkyEvent`, as before. Its hands treat a
+    scorch, and a Storm's crackling spot, as markers they never touch (`SKY_MARKERS`), so neither gets in the way of
+    a piece set on the top under it.
 - **No more falling back to the nearest palm beyond 45.** With no palm it may fell in the ring, the bolt strikes the
   ground.
 - A palm that lightning does fell still comes down as two logs: the bolt splits it.
@@ -96,12 +111,14 @@ middle and 2 by the house.
 - the viewers' drops, 13, as before.
 
 ## What a house costs now
-The benchmark house (`house.py`, ADR-019) is a room two cells by two, with walls three blocks high round it (11 wall
-cells, corners too, and a doorway). Over it is a roof layer of 6 logs and 2 blocks.
-- **All in logs:** 11 logs stood on end for the walls (one fills a wall cell three blocks high) and 6 for the roof,
-  so 17 logs and 2 blocks at the least. The working figure is about 21, allowing for pieces set wrong or burned.
-  - At one log a palm, that is **17 to 21 palms**, 68 to 84 blows of the axe. It was 9 to 11 palms.
-- **Stone walls, log roof:** 33 quarry blocks (99 blows of the hammer) and 6 logs, so **6 palms**.
+The benchmark house is a room two cells by two, with walls three blocks high round it (11 wall cells, corners too,
+and a doorway). Its roof, as `house.py` lays it out and asks the mind for it (`roof_layout`), is 5 logs (the doorway's
+lintel, and one over each cell of the room) and 5 blocks capping the walls left over. That holds for every doorway.
+- **All in logs:** 11 logs stood on end for the walls (one fills a wall cell three blocks high) and 5 for the roof,
+  so 16 logs and 5 blocks at the least. The working figure is about 21, allowing for pieces set wrong or burned.
+  - At one log a palm, that is **16 to 21 palms**, 64 to 84 blows of the axe. It was 8 to 11 palms.
+- **Stone walls, log roof:** 38 quarry blocks (33 for the walls and 5 caps; 114 blows of the hammer) and 5 logs, so
+  **5 palms**.
 - **Supply is no limit.** The island has 94 palms, and each regrows 10 minutes after it is felled. 11 stand 12 to 45
   from the island's middle, and the inland groves hold 7 each. The storms' and the viewers' logs come on top.
 
@@ -125,16 +142,36 @@ Each test below was written first, and failed on the code before:
 | `test_attention`: a log marked `Driftwood` is a new object | "A log washed up on the beach" |
 | `test_mind`: the prompt never says logs wash up, and says the axe gives one | "which sometimes wash up on the beach" |
 
-The viewers' Storm keeps its own test (`test_sky`: a palm beside a spot falls into two logs). Its bolt and scorch now
-come from the same `sky.bolt` and `sky.storm.scorch` as the weather's.
+The viewers' Storm keeps its own test (`test_sky`: a palm beside a spot falls into two logs). Its bolt, its scorch and
+its pick of spots now come from the same `sky.bolt`, `sky.scorch` and `sky.ringPick` as the weather's.
 
 ## Not done
 - **No live run has tried this yet.**
-- **Restarts forget which palms the storms spare.** That is held in the world script, not in the island save. After a
-  restart a palm could be felled sooner than 6 hours after the last time.
+- **Restarts err on the side of fewer logs.** Which palms the storms spare is held in the world script, not in the
+  island save. So a restored island starts the felling gap afresh, as if a palm had just fallen, and spares every stump
+  it puts back for 6 hours, since the save does not say how each fell. A palm the storms felled that had grown back
+  before the restart can still be felled sooner than 6 hours after.
+- **The rest is timed on `os.clock()`,** as the palms' regrowth and the sky's cooldowns are; the gap counts the
+  weather's own seconds. They would part only if the world ran far below its tick rate for hours.
 - **The viewers' Storm and the meteor still give two logs a palm.** Lowering them too would change a paid power's
   description: its text in `world/viewer/viewer.js`, and a data migration in `web/apps/credits`. That is the user's
   call.
 - **Sample feed text.** `mind/tests/feed.json`, `world/renderer/test/viewer.test.js` and the landing prototypes in
   `web/prototypes/` still use "A log washed up on the beach" as sample text. They test the feed's format, not
   driftwood. The live landing page's sample line now reads "It has started to rain".
+
+## After the review
+The review of #77 found these, fixed in its own change:
+- **Scorches got in the hands' way.** The world never collides with a scorch, but the hands' checks did not skip it:
+  a scorch on a post's top stopped a beam settling across the posts, and a piece aimed a hair low onto scorched ground
+  was refused as "taken by Scorch_n". `Scorch` and `StormSpot` are now in `SKY_MARKERS` (`mind/godling/world.py`).
+- **A ground bolt could land beside a palm** when its six tries all fell near one. It now takes up to 20, and strikes
+  nowhere rather than beside a palm.
+- **No scorch on a piece**, and **a sea bolt ends on the sea**, as above.
+- **Chops are reset however a palm falls**, so one part-chopped and then felled by lightning grows back whole.
+- **Restarts**, **old lessons** and **the weather's own log lines**, as above.
+- **One copy of what the sky's lightning shares:** the ring 12 to 45 from Godling, the standing test, the pick of a
+  palm or a point (`sky.ringPick`), the bolt and the scorch. Scorches now expire with the sky's other markers
+  (`skyFlashes`), not in the Storm's own tick.
+- **The house's cost** above was first given with a roof of 6 logs and 2 blocks, from ADR-019's hand-built house, not
+  the roof `house.py` asks for.
