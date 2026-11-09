@@ -7,7 +7,7 @@ import math
 import pytest
 
 from godling import skills as sk
-from godling.house import plan
+from godling.house import plan, site_of
 from godling.skills import BODY_HEIGHT, BODY_RADIUS, STAND_MARGIN, Skills
 from godling.structures import pieces_of, terrain_of
 from godling.world import BODY_CENTRE_Y, PICKUP_RANGE, turned_size
@@ -141,7 +141,7 @@ def test_hands_full_sets_nothing_down_in_the_house(monkeypatch, held, start):
                     me=(start[0] * C, BODY_CENTRE_Y, start[1] * C))
     island.held = piece["name"]
     monkeypatch.setattr(sk, "time", FakeTime(island))
-    body = Skills(island, reserved=lambda: RESERVED)
+    body = Skills(island, reserved=lambda: site_of(ROOM, DOOR))
     r = body.run("pick_up", {"object": "Hammer_1"})
     if r.ok:
         assert island.held == "Hammer_1" and not footprint(island.ents[piece["name"]]) & RESERVED, r.summary
@@ -160,7 +160,7 @@ def test_hands_full_keeps_unsnapped_objects_wholly_out_of_the_room(monkeypatch, 
                     me=(0, BODY_CENTRE_Y, -C))
     island.held = name
     monkeypatch.setattr(sk, "time", FakeTime(island))
-    body = Skills(island, reserved=lambda: RESERVED)
+    body = Skills(island, reserved=lambda: site_of(ROOM, DOOR))
     r = body.run("pick_up", {"object": "Hammer_1"})
     assert r.ok and island.held == "Hammer_1", r.summary
     (x, _, z), (sx, _, sz) = island.ents[name]["position"], size
@@ -174,13 +174,19 @@ def test_the_cells_a_house_needs_clear(tmp_path):
     assert mem.reserved_cells() == {}
     mem.set_house({"inside": [list(c) for c in ROOM], "door": list(DOOR)})
     site = mem.reserved_cells()
-    assert {c for c, kind in site.items() if kind != "strip"} == RESERVED
+    assert site.building and {c for c, kind in site.items() if kind in ("room", "doorway", "way out")} == RESERVED
     assert site[DOOR] == "doorway" and site[(0, -2)] == "way out" and all(site[c] == "room" for c in ROOM)
-    # ADR-027: and the ground a cell round the walls, where the body stands to build them; not the walls themselves.
+    # ADR-027: its walls, the ground a cell round them where the body stands to build them, and the way in to the
+    # doorway, the three cells straight on beyond the way out.
     walls = {(x, z) for x in range(-1, 3) for z in range(-1, 3)} - set(ROOM) - {DOOR}
+    assert {c for c, kind in site.items() if kind == "wall"} == walls
     assert {c for c, kind in site.items() if kind == "strip"} == (
         {(x, z) for x in range(-2, 4) for z in range(-2, 4)} - walls - set(ROOM) - {DOOR, (0, -2)})
-    assert not walls & set(site)
+    assert {c for c, kind in site.items() if kind == "approach"} == {(-1, -3), (0, -3), (1, -3)}
+    # Once it stands, only its room, doorway and way out, for what the body sets aside (ADR-027 review).
+    mem.state["house"]["built"] = 1.0
+    site = mem.reserved_cells()
+    assert not site.building and set(site) == RESERVED
 
 
 def walls_only(caps=()):

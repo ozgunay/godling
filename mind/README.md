@@ -33,13 +33,15 @@ Useful flags:
 - `--guest-panel 8081`: also serve the guest panel at http://localhost:8081/. It shows the live view, what Godling thinks and needs, and buttons for the sky powers (stone, log, regrow, lightning, meteor). Free in test mode. It also runs on its own: `python3 tools/guest_panel.py --world http://localhost:8080 --run-dir <run>`.
 - `--relay 8082`: stream the island to viewers through the relay (`relay/`, ADR-015; build it first with `cargo build --release` in `relay/`). The world gets a spectator token the relay shares, and the guest panel's island streams from the relay: one connection to the world however many watch, and pages that reconnect pick up where they left off. With `--attach`, export the world's `WORLD_SPECTATOR_TOKEN`.
 - `--sky-test-minutes 10`: drop a meteor near Godling every 10 minutes, its shadow 40 s ahead, to measure reactions without anyone at the panel.
-- **The house's site, kept clear** (ADR-027): while Godling builds a house, the hands set nothing down in its room,
-  doorway or way out, nor on the ground a cell wide round its walls (a block on its own, as a step, excepted), and in a
-  wall only a piece along the wall's line or stood on end; each refusal says why. A piece lying across a wall, out of
-  its line, is in the house's way, not its own, and the house's next step names it. With full hands and nowhere clear
-  in reach, the body carries what it holds off the site and says where it went. `nearest_free` takes the piece in the
-  hands when it is of the kind asked, else the nearest the body can walk to, and a walk that sticks says what stopped
-  it.
+- **The house's site, kept clear** (ADR-027): while Godling builds a house, the hands set nothing down on purpose in
+  its room, doorway or way out, nor on the ground a cell wide round its walls (but a block on its own, as a step, or a
+  ladder), and in a wall only a building piece along the wall's line or stood on end; each refusal says why. What the
+  body sets aside to free its hands goes nowhere on the site, nor on the way in to the doorway unless nothing else is
+  clear; with nowhere clear in reach it carries the piece off the site and says where it went. A piece lying across a
+  wall, out of its line, is in the house's way, not its own, and the house's next step names it. Once the house stands,
+  only what is set aside keeps out of its room, doorway and way out. `nearest_free` as `pick_up`'s object takes the
+  piece in the hands when it is of the kind asked, else the nearest the body can walk to; `pick_up` walks round what it
+  goes to; a walk that sticks says what stopped it.
 - **The brace reflex** (`skills.steady`): when the Clock says the ground is rumbling, the body looks around for about 2 s (the world plays LookAround), then sends `Brace` and holds on until the world lets go. It runs between steps, while waiting, and while the mind thinks. The rumble is a salience-5 event, so the step in progress stops; the mind is told how quakes work and hears of one in its next plan. `analyze_run.py` reports each quake: pieces woken, moved and fallen, how soon the body braced, and knock-downs.
 
 Each decision also carries a `needs` line (what the agenda is short of, with counts) for the panel. `analyze_run.py` reports reactions to sky events: applied, noticed (a glance or mention within a minute), named in a thought or intention, and engaged.

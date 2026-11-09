@@ -46,9 +46,10 @@ HOUSE_STALL = 15 * 60  # seconds without progress before the mind hears its hous
 # ADR-027: a fact about the body, as the ladder's is. Its hands keep the site of the house it builds clear.
 SITE_RULE = """While you build it, your hands keep its site clear: they set nothing down in its room, its doorway or the
 way out of it, nor on the ground a cell wide round its walls, where you stand to build them, but a block on its own as a
-step; and in a wall only a piece along the wall's line or stood on end. A piece lying across a wall, out of its line, is
-not part of the house but in its way. The roof, over the walls, is not counted. With nowhere clear in reach to set down
-what you hold, your body carries it off the site first."""
+step, or a ladder; and in a wall only a building piece along the wall's line or stood on end. A piece lying across a
+wall, out of its line, is not part of the house but in its way. The roof, over the walls, is not counted. What your body
+sets aside to free its hands goes nowhere on the site, nor on the way in to its doorway: with nowhere clear in reach, it
+carries it off the site first. Once the house stands, where you set things down is yours to choose."""
 
 TEACHING = """## Teaching yourself skills
 You start with only your body's basic moves. When you find a sequence that works, give it a name with
@@ -58,7 +59,8 @@ arguments may use your parameters ("$object") and these helpers, worked out at t
   {"top": "$object"} -> [x, y, z] of the top surface of the stack that object is part of
   {"add": [a, b]}    -> add two vectors, e.g. {"add": [{"top": "$object"}, [0, 0.5, 0]]}
   {"x": vector}, {"y": vector}, {"z": vector} -> one coordinate
-  {"nearest_free": "cube"} -> the nearest block nobody has claimed; also "stone" (quarried blocks), "log" or "boulder"
+  {"nearest_free": "cube"} -> the nearest block nobody has claimed; also "stone" (quarried blocks), "log" or "boulder".
+    As pick_up's object it is the one in your hands, if that is one
 A step may have "repeat": n. Example: {"skill": "place_at", "args": {"x": {"x": {"pos": "$o"}}, "y": 3, "z": {"z": {"pos": "$o"}}}}
 New skills are "unproven" until one full run succeeds. Fix or forget skills that keep failing."""
 
@@ -599,7 +601,7 @@ thought and in that project's intention."""
         if self.discovery is not None and any(f"{ix},{iz}" not in ground for ix, iz in self._house_cells()):
             return None  # a remembered project can predate the geometry cache; inspect it before changing ownership
         found = house_plan(pieces_of(observed), terrain_of(observed), [tuple(c) for c in house["inside"]], tuple(house["door"]))
-        house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
+        house["pieces"], house["in_the_way"], house["steps"] = found["pieces"], found["in_the_way"], found["steps"]
         if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
             house["installed"] = len(found["pieces"])
             self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
