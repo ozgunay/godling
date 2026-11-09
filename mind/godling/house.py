@@ -78,19 +78,71 @@ def outside_of(room, door):
     return None if inner is None else (2 * door[0] - inner[0], 2 * door[1] - inner[1])
 
 
+SITE_ORDER = ("room", "doorway", "way out", "wall", "strip", "approach")  # what a cell of a site is, the gravest first
+
+
+class Site(dict):
+    """A house's site (site_of): {cell: what it is}. `building`: the house does not stand yet. The site of a house that
+    stands is only its room, doorway and way out, which the hands keep clear when they set something aside to free
+    themselves (ADR-019); where the mind sets things down on purpose is then its own choice (ADR-027)."""
+
+    def __init__(self, cells=(), building=True):
+        super().__init__(cells)
+        self.building = building
+
+
 def site_of(room, door):
-    """The cells a house being built needs clear, each with what it is (ADR-027): its room, its doorway, the way out of
-    the doorway, and the strip of ground a cell wide round its walls and doorway, where the body stands to build them.
-    Its walls are not in it: their own pieces go there. {cell: "room" | "doorway" | "way out" | "strip"}."""
-    room = set(room)
-    walls = set(ring(room))  # the doorway too
-    site = {c: "strip" for c in ring(room | walls)}
+    """The site of a house being built, cell by cell (ADR-027), as a Site of {cell: what it is}:
+    - "room", "doorway" and "way out": what must stay clear for it to be a house;
+    - "wall": the cells round the room, but for the doorway, where the walls' own pieces go;
+    - "strip": the ground a cell wide round the walls and the doorway, where the body stands to build them;
+    - "approach": the three cells straight on beyond the way out, the way in to the doorway. Only what the hands set
+      aside keeps off these: what is set down there on purpose is the mind's business."""
+    room, door = set(room), tuple(door)
+    walls = set(ring(room)) - {door}
+    site = {c: "strip" for c in ring(room | walls | {door})}
+    site.update({c: "wall" for c in walls})
     site.update({c: "room" for c in room})
-    site[tuple(door)] = "doorway"
-    out = outside_of(room, tuple(door))
+    site[door] = "doorway"
+    out = outside_of(room, door)
     if out is not None:
         site[out] = "way out"
-    return site
+        dx, dz = out[0] - door[0], out[1] - door[1]
+        beyond = (out[0] + dx, out[1] + dz)
+        for c in (beyond, (beyond[0] + dz, beyond[1] + dx), (beyond[0] - dz, beyond[1] - dx)):
+            site.setdefault(c, "approach")
+    return Site(site)
+
+
+def footprint(centre, size, margin=GAP):
+    """The cells a box at `centre` (x, y, z), world-aligned `size`, reaches into by more than `margin`: touching is not
+    reaching. A piece settled on the grid reaches the cells whose centres it covers, as Grid counts them."""
+    x, z = centre[0], centre[2]
+    xs = [ix for ix in range(math.floor((x - size[0] / 2) / CELL), math.ceil((x + size[0] / 2) / CELL) + 1)
+          if abs(x - ix * CELL) < (size[0] + CELL) / 2 - margin]
+    zs = [iz for iz in range(math.floor((z - size[2] / 2) / CELL), math.ceil((z + size[2] / 2) / CELL) + 1)
+          if abs(z - iz * CELL) < (size[2] + CELL) / 2 - margin]
+    return {(ix, iz) for ix in xs for iz in zs}
+
+
+def placement(site, cells, bottom, floor):
+    """How a piece reaching into `cells`, its underside at `bottom`, lies on the site of a house being built
+    (ADR-027). One check, so the house's plan and the hands never disagree: the plan tells a course of a wall from a
+    piece in the house's way with it, and the hands refuse a set-down with it.
+    - None: off the site (the approach is not counted), roof work (its underside at the roof line, `floor` +
+      WALL_LINE, or higher), or wholly in the walls' cells, as a course of them;
+    - ("across", the wall cells): it lies in a wall's cell and out of the walls' line;
+    - otherwise (what the site is there, the gravest first, and the cells)."""
+    if bottom >= floor + WALL_LINE:
+        return None
+    cells = set(cells)
+    on = {c: site[c] for c in cells if site.get(c, "approach") != "approach"}
+    if not on:
+        return None
+    walls = sorted(c for c, kind in on.items() if kind == "wall")
+    if walls:
+        return None if len(walls) == len(cells) else ("across", walls)
+    return min(on.values(), key=SITE_ORDER.index), sorted(on)
 
 
 class Grid:
@@ -100,11 +152,14 @@ class Grid:
         self.terrain = terrain
         self.columns = {}  # (ix, iz) -> [(bottom, top, name)]
         self.supports = {}  # settled, aligned pieces covering a whole cell, for walls and roofs
+        self.pieces = {}  # name -> (bottom, the cells it lies in)
         for p in pieces:
             (x, y, z), (sx, sy, sz) = p["pos"], p["size"]
+            cells = self.pieces.setdefault(p["name"], (y - sy / 2, set()))[1]
             for ix in _cells(x - sx / 2, x + sx / 2):
                 for iz in _cells(z - sz / 2, z + sz / 2):
                     span = (y - sy / 2, y + sy / 2, p["name"])
+                    cells.add((ix, iz))
                     self.columns.setdefault((ix, iz), []).append(span)
                     if (p.get("anchored", True) and p.get("aligned", True) and p.get("settled", True)
                             and abs(ix * CELL - x) + CELL / 2 <= sx / 2 + GAP
@@ -439,29 +494,33 @@ def plan(pieces, terrain, inside, door):
     elif room and max(floors.values()) - min(floors.values()) > FLAT:
         issue = f"choose level ground: the room's floor changes height across {_list(room, 4)}"
     if issue:
-        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": []}
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": []}
     floor = grid.floor(room[0])
     v = judge(grid, room, floor)
-    issue = guidance_issue(room, door) if not (v["house"] and v["doors"] == [door]) else ""
+    finished = v["house"] and v["doors"] == [door]
+    issue = guidance_issue(room, door) if not finished else ""
     if issue:
-        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": []}
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": []}
     top = v["top"]
     walls = [c for c in v["ring"] if c != door]
     # ADR-027: a piece in a wall's cell is one of its courses only if it lies in the walls' line, wholly in their cells.
     # One that sticks out of it (a log lying across a wall, half on the ground outside) is in the way, not the house's
     # own: kept, the body would never lift it, and every piece set in that cell is refused as occupied. Nor does it
     # count as the wall standing there. The ground a cell round the walls is where the body stands to build them, so
-    # what lies on it is in the way too. A house that stands has nothing in its way.
-    finished = v["house"] and v["doors"] == [door]
-    line = floor + WALL_LINE
-    spans = {}  # each piece: its underside, and the cells it lies in
-    for c, column in grid.columns.items():
-        for b, _, name in column:
-            spans.setdefault(name, [b, set()])[1].add(c)
-    strays = set() if finished else {name for name, (b, cells) in spans.items()
-                                     if b < line and cells & set(walls) and not cells <= set(walls)}
-    beside = set() if finished else {name for c, kind in site_of(room, door).items() if kind == "strip"
-                                     for b, t, name in grid.columns.get(c, ()) if b < line and t > floor + GAP}
+    # what lies on it is in the way too, but a block alone on the ground there, a step to build from, which stays kept.
+    # A house that stands has nothing in its way.
+    site = site_of(room, door)
+    by_name = {p["name"]: p for p in pieces}
+    lies = {} if finished else {name: placement(site, cells, b, floor) for name, (b, cells) in grid.pieces.items()}
+    strays = {name for name, lying in lies.items() if lying and lying[0] == "across"}
+
+    def lone_step(name):  # a block on its own in one cell of the strip, on the ground there
+        (b, cells), size = grid.pieces[name], by_name[name]["size"]
+        return (len(cells) == 1 and all(abs(s - CELL) <= 0.1 for s in size)
+                and b < (grid.floor(next(iter(cells))) or floor) + 0.3)
+    beside = {name for name, lying in lies.items() if lying and lying[0] == "strip"}
+    steps = sorted(name for name in beside if lone_step(name))
+    beside -= set(steps)
     low = [c for c in walls if grid.standing(c, floor, strays) < top - GAP]
     out = outside_of(room, door)
     door_open = grid.clear(door, floor, up_to=top - GAP)
@@ -499,7 +558,7 @@ def plan(pieces, terrain, inside, door):
             + (["the roof is over the room"] if not bare else [])
             + (["the roof covers the walls and the doorway"] if len(capped) == len(walls) and lintel else []))
     def wall_now(c):  # how high it stands, and what lies across it out of the walls' line
-        lying = sorted(n for n in strays if c in spans[n][1])
+        lying = sorted(n for n in strays if c in grid.pieces[n][1])
         return f"{at(c)} stands {grid.standing(c, floor, strays):.1f}" + (
             f" ({' and '.join(lying)} {'lies' if len(lying) == 1 else 'lie'} across it, out of the walls' line)"
             if lying else "")
@@ -542,16 +601,13 @@ def plan(pieces, terrain, inside, door):
                 "the doorway or the way out): " + "; ".join(needs))
     else:
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
-    where = {p["name"]: p["pos"] for p in pieces}
-    sizes = {p["name"]: p["size"] for p in pieces}
-    # What the body set down there before ADR-027, or what fell there: named, as the room's are. A block alone on the
-    # ground there is a step to build from, and the hands may set one there.
-    lying_beside = sorted(n for n in beside - strays if max(sizes[n]) > CELL + 0.1 or spans[n][0] > floor + 0.3)
+    # What the body set down there before ADR-027, or what fell there: named, as the room's are.
+    lying_beside = sorted(beside)
     if lying_beside:
         step += ("; lying on the ground a cell round the walls, where you stand to build them: "
-                 + ", ".join(f"{n} ({where[n][0]:.1f}, {where[n][2]:.1f})" for n in lying_beside[:6])
+                 + ", ".join(f"{n} ({by_name[n]['pos'][0]:.1f}, {by_name[n]['pos'][2]:.1f})" for n in lying_beside[:6])
                  + (f" and {len(lying_beside) - 6} more" if len(lying_beside) > 6 else ""))
     score = ((len(walls) - len(low)) + (len(room) - len(v["filled"])) + door_open + out_open + (len(room) - len(bare))
              + len(capped) + bool(lintel))
-    return {"house": v["house"] and v["doors"] == [door], "next": step, "done": done, "score": score, "pieces": own,
-            "in_the_way": sorted(in_the_way)}
+    return {"house": finished, "next": step, "done": done, "score": score, "pieces": own,
+            "in_the_way": sorted(in_the_way), "steps": steps}

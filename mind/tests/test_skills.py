@@ -142,7 +142,7 @@ class FakeLibrary:
         self.skills = {"mine": {}}
         self.behaviour = behaviour
 
-    def resolve_helpers(self, args, skills):
+    def resolve_helpers(self, args, skills, skill=None):
         if args.get("bad"):
             raise ValueError("no such helper")
         return {k: (v["value"] if isinstance(v, dict) else v) for k, v in args.items()}
