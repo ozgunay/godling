@@ -173,13 +173,14 @@ New and changed tests:
   `test_mind.py`, `test_attention.py`, `test_replay_restore.py`, `test_run_godling.py` (a note coming down through
   `main()`, its line in the chat and the mind told), `test_guest_panel.py` (the site's moderated words held to the
   panel's) and `viewer.test.js` (the now line and thoughts). Run against the code before the fixes, 25 of them fail.
-- Suites, run locally (CI is not running): the mind (407), the tools (63), the site (202), the renderer (221, with
-  coverage) and the world (99; `main.lua` is untouched).
+- With ADR-028 merged (PR #76): `test_its_house_lost_is_spoken_from_the_minds_own_entry`. A real Mind builds the
+  benchmark house and loses its roof and a corner; the voice, hearing the mind's log, speaks of it once, told in plain
+  words.
+- Suites, run locally on the tree merged with main after #75, #76 and #77 (CI is not running): the mind (487), the
+  tools (63), the site (202), the renderer (221, with coverage) and the world (105; `main.lua` is untouched by this
+  ADR).
 
 ## Not checked
-- **Losing the house needs ADR-028.** The voice keys on the entry ADR-028 logs (`house` phase `lost`,
-  `was_house`, PR #76), tested here with that entry's shape. On this branch alone nothing logs it, so that one moment
-  stays silent until both are merged.
 - **No live run yet.** These are not yet measured on the island: how the lines read in the moment, how often
   deepseek-flash returns a line at all, whether the 45 s gap and the cooldowns feel right with viewers watching, and
   the real cost.

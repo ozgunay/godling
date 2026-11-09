@@ -577,3 +577,37 @@ def test_moments_come_from_what_the_entries_say_they_are_not_their_wording():
     v.hears({"kind": "skill", "skill": "strike", "ok": True, "summary": "speared Fish_2; the catch, Catch_1, lies...",
              "facts": {"made": "Catch_1"}})
     assert v.step() == "Fire." and "speared a fish" in v.llm.calls[-1]["user"]
+
+
+# ---- with ADR-028 merged ------------------------------------------------------------------------------------------
+def test_its_house_lost_is_spoken_from_the_minds_own_entry(monkeypatch, tmp_path):
+    """The house-lost moment, end to end on the merged tree: a real Mind builds the benchmark house, loses its roof and
+    a corner (as run live's quake and meteor did), and logs ADR-028's entry (Mind._house_lost); the voice, hearing the
+    mind's log as run_godling.py wires it, speaks of it once, told it in plain words."""
+    from godling.learned import SkillLibrary
+    from godling.memory import NativeMemory
+    from godling.mind import Mind
+    from godling.world import BODY_CENTRE_Y
+    from test_house_lost import DOOR, ROOF, ROOM, FakeLLM as MindLLM, house
+    v, clock, logs = voice({"say": "My house is down; the rain comes in."})
+    island = Island([ground(attrs={"Surface": "Sand"}), *house()])
+    island.me = [0, BODY_CENTRE_Y, -20]
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    library, mem = SkillLibrary(tmp_path / "skills.json"), NativeMemory(tmp_path / "mem")
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into)
+    mind = Mind(MindLLM(), mem, "I am a castaway.", body, library, log=lambda **k: v.hears(k), house_project=True)
+    mind.adopt({"reply": {"house": {"inside": ROOM, "door": DOOR}}, "seconds": 1, "prepared": {"assumes": None}},
+               island.snap())
+    assert v.step() is not None  # its house first standing: an achievement
+    clock.now += speech.COOLDOWN["achievement"]
+    for name in ROOF:
+        island.ents.pop(name)
+    island.ents["Block_w003"]["position"] = [-12, 1.25, 6]
+    mind.record_outcome({"goal": "sit out the quake under the roof"}, [], island.snap())
+    mind.record_outcome({"goal": "look at what is left"}, [], island.snap())  # still lost: no second moment
+    assert v.step() == "My house is down; the rain comes in."
+    told = v.llm.calls[-1]["user"]
+    assert "is no longer a house" in told and "(0.0" not in told and "Block_NE" not in told
+    clock.now += speech.COOLDOWN["house_lost"]
+    assert v.step() is None
+    assert [l["moment"] for l in v.hears_log()] == ["achievement", "house_lost"]

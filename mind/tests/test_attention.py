@@ -64,7 +64,9 @@ def test_new_objects_and_sky_events(mem):
     ]))
     texts = [e["text"] for e in a.take_events()]
     assert "A new object, Block_7, appeared at (5, 5)" in texts
-    assert "A log washed up on the beach: Log_9 lies at (8, 0)" in texts
+    # No log washes up any more (ADR-026): one an old save still marks Driftwood is a new object like any other.
+    assert "A new object, Log_9, appeared at (8, 0)" in texts
+    assert not any("washed up" in t for t in texts)
     assert "A gift dropped from the sky: Stone_2 and Stone_3 landed at (1, 1)" in texts
     assert "A stone fell from the sky: Meteor_1 landed at (9, 9)" in texts
     assert "Palm_1 grew back from its stump in an instant at (10, 0)" in texts

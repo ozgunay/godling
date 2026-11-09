@@ -32,7 +32,9 @@ FASTEN_SECONDS = 2.5  # main.lua FASTEN_COOLDOWN
 LADDER_HEIGHT = 3 * CUBE  # main.lua LADDER_SIZE.Y
 TURN_RATE = 6.0  # main.lua TURN_RATE: radians per second when Face turns the body on the spot
 SKY_PLAYER = "Sky"  # main.lua SKY_PLAYER: the guest panel's bodiless player, which is not someone on the island
-SKY_MARKERS = ("SkyShadow", "SkyFlash", "SkyNote", "Blast", "Crater")  # seen, never touched; a crater is walked over
+# Seen, never touched (the world never collides with them): a crater is walked over, a bolt's scorch (ADR-026: most
+# ground bolts leave one) and a storm's crackling spot lie on what they lie on.
+SKY_MARKERS = ("SkyShadow", "SkyFlash", "SkyNote", "Blast", "Crater", "Scorch", "StormSpot")
 STEP = 0.45  # the highest step the legs take without a ladder
 MOVABLE_KINDS = ("Block_", "ImpactBlock_", "SupplyBlock_", "Stone_", "Meteor_", "Brick_", "Log_", "Boulder_", "Ring_",
                  "Rock_", "Hammer_", "Axe_", "Ladder_", "Spear_", "Coconut_", "Catch_", "Volleyball", "Iron_")

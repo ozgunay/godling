@@ -1,6 +1,7 @@
 # ADR-010: Weather and random events, fire by friction, driftwood, and stepping up a block
 
-Date: 2026-11-02. Status: built and tested live.
+Date: 2026-11-02. Status: built and tested live. Driftwood removed, and the storms' lightning made to fell palms far
+less often, by ADR-026 (2026-11-09).
 
 ## Why
 You asked why Godling built no structures. In night run n7 (4.6 hours, on the code before ADR-009), the structure measure counted 16 posts, one gate and a largest structure of 12 pieces, but no walls, rooms or roofs. Three things held it back.
@@ -53,6 +54,7 @@ The persona is unchanged.
 - **Wet spells.** Two or three in-game days of rain without a break, 80–120 minutes real time. The rain swells and eases between 0.6 and 1 as it goes.
   - The first comes 1.5–2.5 hours into a run, then one every 4–7 hours. Ordinary showers come in between.
 - **Thunderstorms.** In heavy rain (0.85 or more), lightning strikes a standing palm 12–45 from Godling every 3–8 minutes. It is the same strike as the guest panel's Lightning: it fells the palm, and it hurts anyone within 7.
+  - Since ADR-026 a bolt fells a palm at most once in 25 minutes of heavy rain, and never one felled in the last 6 hours; the others strike open ground or the sea.
 - **Fog.** On some mornings (35%), fog comes in from the sea at 04:30 and lifts by 08:30–10:00. The Clock carries `Fog`.
   - Godling's sight shrinks to 0.4 of its usual reach, and the peak cannot be seen from afar.
   - The renderer closes the view in with milky fog. `?fog=1` forces it.
@@ -67,7 +69,7 @@ The persona is unchanged.
   - The rain streaks stretch along each drop's velocity, so the wind slants them. They drive in at nearly 40° in a storm.
   - The streaks are longer, brighter and denser, so the rain shows by day. `?wind=1` forces a gale.
 
-### Driftwood
+### Driftwood (removed by ADR-026)
 - **A log washes up** every 3 minutes, on open sand a little up the beach from the water and clear of other pieces, lying along the shore. It stops while 6 lie on the beach.
 - **It is marked `Driftwood`.** The mind notices "A log washed up on the beach", and is told that logs sometimes wash up.
 
