@@ -66,7 +66,7 @@ each kind of moment, a global gap between lines and a cap. Here the voice hears 
 | Its death (last words) | event `death: died` | 5 | none |
 | Its rebirth | the reflection's `feeling` (kind `death`); else 45 s after event `death: reborn` | 5 | none |
 | The sky hitting it | "Lightning struck you", "You were hurt by…", a meteor blast that threw it down, an earthquake's rumble | 4 | 120 s |
-| Losing its house | `house` phase `lost` (new: `Mind.house_progress` logs it once, when a house that stood no longer does) | 4 | 600 s |
+| Losing its house | `house` phase `lost` with `was_house` (ADR-028, `Mind._house_lost`: once, when a house that stood is no house); its `text` is what it is told | 4 | 600 s |
 | A viewer's note arriving | event `sky: Note`, stage `arrived`: it answers the note | 3 | 90 s |
 | A big achievement | its house first stands, a flame catches, a fish speared, a new roof or enclosure (`structures`, after this run's first measure) | 2 | 300 s |
 
@@ -119,6 +119,7 @@ does. A stand-in model answered every call, and the prompt sizes were priced as 
 - **Worst case: the cap.** 20 calls an hour plus a death and a rebirth comes to about $0.005 an hour at peak prices,
   1.5% of the run's cost.
 - The run had no `house lost` entries, because the old code logged none, so that moment is missing from the replay.
+  ADR-028 (PR #76) adds them.
 
 ## Alternatives set aside
 - **A prompt rule ("say something when you die", "no coordinates in say").** That is the approach that failed in this
@@ -137,7 +138,6 @@ Reproduction tests first. Run against the code from before this change, they fai
 - the `say` step posted "Night 1245595. … WestTower carries a mast at 17.5." as it was, and reported "said it";
 - `speech` did not exist, so no moment spoke;
 - the feed had no line for a `said` entry;
-- a house that fell logged nothing.
 
 New and changed tests:
 - `mind/tests/test_speech.py`:
@@ -149,15 +149,17 @@ New and changed tests:
   - the hourly cap over two hours of the sky hitting it and notes falling;
   - failed calls and a failed chat;
   - the run's log feeding back into the voice, from another thread, with no deadlock.
-- `mind/tests/test_mind.py`: a house that falls is logged lost once.
 - `mind/tests/test_replay_feed.py`, `world/renderer/test/feed.test.js`, `mind/tests/feed.json`: spoken lines in the
   feed, read the same way live and in replay.
 - `world/renderer/test/viewer.test.js`: the screen draws `Said: “…”` in plain words, with its icon.
 - `tools/tests/test_guest_panel.py`, `web/apps/screen/tests.py`: spoken lines are cleaned and moderated in replays.
-- Suites, run locally (CI is not running): the mind (391), the tools (62), the site (202), and the renderer (220, with
-  coverage). The world's suite is unchanged by this ADR (`main.lua` is untouched).
+- Suites, run locally (CI is not running): the mind (390), the tools (62), the site (202), the renderer (220, with
+  coverage) and the world (99; `main.lua` is untouched).
 
 ## Not checked
+- **Losing the house needs ADR-028.** The voice keys on the entry ADR-028 logs (`house` phase `lost`,
+  `was_house`, PR #76), tested here with that entry's shape. On this branch alone nothing logs it, so that one moment
+  stays silent until both are merged.
 - **No live run yet.** These are not yet measured on the island: how the lines read in the moment, how often
   deepseek-flash returns a line at all, whether the 45 s gap and the cooldowns feel right with viewers watching, and
   the real cost.

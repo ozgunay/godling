@@ -49,8 +49,10 @@ COUNTS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", 
 PAREN = re.compile(rf"\(\s*{NUMBER}\s*(?:,\s*{NUMBER}\s*){{1,2}}\)")
 PAIR = re.compile(r"(?<![\w.])[-−]?\d+(?:\.\d+)?\s?,\s?[-−]?\d+(?:\.\d+)?(?![\w.])")
 MEMO = re.compile(r"\[\s*tick\s+\d+\s*\]\s*", re.I)
-NAMED = r"([A-Z][a-zA-Z]*)_\d+(?:_\d+)*"
-NAMED_LIST = re.compile(rf"\b([A-Z][a-zA-Z]*)_\d+(?:(?:,\s*|,?\s+and\s+)\1_\d+)+\b")
+# The world's names for its pieces: Log_12, ObservedGround_3_4, and in a house's lists Log_W0 or Block_SE. No word a
+# viewer reads has an underscore in it.
+NAMED = r"([A-Z][a-zA-Z]*)_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
+NAMED_LIST = re.compile(rf"\b([A-Z][a-zA-Z]*)_[A-Za-z0-9]+(?:(?:,\s*|,?\s+and\s+)\1_[A-Za-z0-9]+)+\b")
 NAMED_AFTER = re.compile(rf"\b(the|a|an|my|this|that|each|every|its|your)\s+{NAMED}\b", re.I)
 NAMED_ONE = re.compile(rf"\b{NAMED}\b")
 JOINED = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
@@ -70,7 +72,7 @@ def _plural(word):
 def _names(text, left):
     """Numbered names (Log_12, Palm_3 and Palm_4, arch_beam_115) and joined ones (WestTower) in words."""
     def a_list(m):
-        n = len(re.findall(r"_\d+", m.group(0)))
+        n = len(re.findall(r"_[A-Za-z0-9]+", m.group(0)))
         left.add("numbered names")
         return f"{COUNTS[n] if n < len(COUNTS) else n} {_plural(_words(m.group(1)))}"
 
@@ -308,10 +310,11 @@ class Voice:
                 self._event(entry, now)
             elif kind == "death" and entry.get("feeling") and self.reborn_said != self.life:
                 self._add("reborn", None, now, words=str(entry["feeling"]))  # its own words about coming back
-            elif kind == "house" and entry.get("phase") == "lost":
-                why = plain(entry.get("next") or "")[0]
-                self._add("house_lost", "Your house no longer stands as a house"
-                          + (f": what it needs now is {why[0].lower() + why[1:]}" if why else "."), now)
+            elif kind == "house" and entry.get("phase") == "lost" and entry.get("was_house"):
+                # ADR-028 (Mind._house_lost) logs it once a house that stood is no house; without was_house, only
+                # some pieces of a house still being built came down, which is no moment of its own.
+                self._add("house_lost", plain(entry.get("text") or "")[0] or "Your house no longer stands as a house.",
+                          now)
             elif kind == "house" and entry.get("phase") == "built":
                 self._add("achievement", ACHIEVED["built"], now)
             elif kind == "skill" and entry.get("ok"):

@@ -67,6 +67,8 @@ def test_numbered_names_become_plain_words():
     assert plain("Bring Log_12 to the house, then fasten Block_3, Block_4 and Block_5.")[0] == (
         "Bring a log to the house, then fasten three blocks.")
     assert plain("arch_beam_115 failed twice")[0] == "Arch beam failed twice."
+    assert plain("Gone: Log_W0, Log_W1 and Block_SE.")[0] == "Gone: two logs and a block."
+    assert plain("ObservedGround_3_4 is sand.")[0] == "An observed ground is sand."
     assert plain("[tick 1245595] I slept, World tick 1245595.") == ("I slept.", ["the world's counts"])
 
 
@@ -243,9 +245,21 @@ def test_the_sky_hitting_it_is_spoken_once_in_a_while():
 
 def test_losing_the_house_and_big_achievements_are_spoken():
     v, clock, logs = voice({"say": "The house is down."}, {"say": "A roof over me at last."}, {"say": "Fire."})
-    v.hears({"kind": "house", "phase": "lost", "next": "the north wall"})
+    # ADR-028 (Mind._house_lost) logs pieces of a house still being built coming down too, without was_house
+    v.hears({"kind": "house", "phase": "lost", "was_house": False, "gone": ["Block_3"],
+             "text": "Part of your house at (0.0, 0.0) came down: Block_3 is gone or knocked out of place (40 of its "
+                     "pieces stand)."})
+    clock.now += 1
+    assert v.step() is None and v.llm.calls == []
+    v.hears({"kind": "house", "phase": "lost", "was_house": True, "had": 41, "pieces": 38,
+             "gone": ["Log_W0", "Log_W1", "Block_SE"],
+             "text": "Your house at (0.0, 0.0) is no longer a house: 3 of the 41 pieces in its walls and roof are gone "
+                     "or knocked out of place (Log_W0, Log_W1, Block_SE). It keeps neither the rain nor the cold off "
+                     "you now."})
     assert v.step() == "The house is down."
-    assert "no longer stands" in v.llm.calls[0]["user"]
+    told = v.llm.calls[0]["user"]
+    assert "is no longer a house" in told and "keeps neither the rain nor the cold" in told
+    assert "(0.0" not in told and "Log_W0" not in told  # the mind's sentence, told in plain words
     clock.now += speech.GAP
     v.hears({"kind": "house", "phase": "built", "inside": [[0, 0]], "door": [0, -2.5]})
     assert v.step() == "A roof over me at last."
