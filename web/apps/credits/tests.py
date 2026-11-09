@@ -566,6 +566,29 @@ class MeteorRuleTests(TestCase):
         self.assertEqual(Power.objects.get(key="Meteor").rule, self.migration.OLD)
 
 
+class LogReachTests(TestCase):
+    """A log aimed past Godling's reach lands at its edge and never on its house (ADR-029): the Log's seeded words and
+    its rule, which the screen shows, say so; words written in the admin are left as they are."""
+    migration = importlib.import_module("apps.credits.migrations.0010_log_reach_and_house")
+
+    def test_the_seeded_log_says_where_it_lands(self):
+        log = services.powers()["Log"]
+        self.assertEqual(log["rule"], "Within 60 of Godling: an aim further out lands at the edge")
+        self.assertEqual(log["does"], self.migration.NEW)
+        self.assertIn("beside Godling's house and never on it", log["does"])
+        self.assertEqual(services.powers()["Stone"]["rule"], "")  # the other powers are as they were
+
+    def test_words_written_in_the_admin_stay_and_the_seeded_ones_go_back(self):
+        Power.objects.filter(key="Log").update(rule="Mine", description="Mine too")
+        self.migration.forward(django_apps, None)
+        self.assertEqual((Power.objects.get(key="Log").rule, Power.objects.get(key="Log").description),
+                         ("Mine", "Mine too"))
+        Power.objects.filter(key="Log").update(rule=self.migration.RULE, description=self.migration.NEW)
+        self.migration.backward(django_apps, None)
+        self.assertEqual((Power.objects.get(key="Log").rule, Power.objects.get(key="Log").description),
+                         ("", self.migration.OLD))
+
+
 class StripeErrorTests(TestCase):
     def test_stripe_errors_are_importable_where_the_views_expect_them(self):
         self.assertTrue(issubclass(stripe.SignatureVerificationError, Exception))

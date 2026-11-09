@@ -80,11 +80,14 @@ T.test("a gift goes round what is built and round bodies, and finds no room in a
         end
     end
     T.eq(w.power("Stone", aim(p, 0.1, 0)), "SkyFailed:NoClearSpot")
-    T.eq(w.power("Log", aim(p, 5, 5)), "SkyFailed:NoClearSpot")
     T.eq(w.power("Stone"), "SkyFailed:NoClearSpot")
+    -- A log looks further round its aim (ADR-029: SNAP_FAR), and lands past the crowd rather than being refused.
+    T.eq(w.power("Log", aim(p, 5, 5)), "SkyDone:Log:1")
+    local log = e.find("Log_1")
+    T.ok(math.sqrt((log.Position.X - p.X) ^ 2 + (log.Position.Z - p.Z) ^ 2) > 16, "past the crowd")
 end)
 
-T.test("unaimed, a log where a stone would fit is moved till it fits", function()
+T.test("unaimed, a log where a stone would fit is moved or turned till it fits", function()
     -- The first unaimed spot (a fixed sequence) found in one world; in a second, the same, a block lies just past a
     -- stone's room from it but in a log's way.
     local first = sky()
@@ -99,7 +102,9 @@ T.test("unaimed, a log where a stone would fit is moved till it fits", function(
     local panel = w.skyPlayer()
     T.eq(w.act(panel, "Sky", { power = "Log" }), "SkyDone:Log:1")
     local log = w.e.find("Log_1")
-    T.ok(math.abs(log.Position.X - sx) > 0.01 or math.abs(log.Position.Z - sz) > 0.01, "moved off the stone's spot")
+    local moved = math.abs(log.Position.X - sx) > 0.01 or math.abs(log.Position.Z - sz) > 0.01
+    local turned = math.abs(log.CFrame.RightVector.X) < 0.5 -- its length along z (ADR-029: either axis)
+    T.ok(moved or turned, "moved or turned off the stone's spot")
 end)
 
 T.test("lightning fells the palm nearest the aim, if it stands clear of Godling and its walls", function()

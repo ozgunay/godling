@@ -91,6 +91,57 @@ describe('aiming a sky power', () => {
     expect(scene.children.length).toBe(before)
   })
 
+  it('a log shows Godling\'s reach, and an aim past it comes in to the edge, where the world will drop it (ADR-029)', () => {
+    const godlingAt = new THREE.Vector3(-50, 2.4, 0)
+    const { aim, c, calls, reticle, scene } = setup(godlingAt)
+    const step = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 4).translate(10, 0, 0), new THREE.MeshBasicMaterial())
+    scene.add(step) // a block standing at the edge of the reach: the ring sits on it there
+    scene.updateMatrixWorld()
+    const reach = scene.getObjectByName('aim-reach')
+    expect(reach.visible).toBe(false)
+    aim.start('Log')
+    expect(reach.visible).toBe(true)
+    expect([reach.position.x, reach.position.z]).toEqual([-50, 0])
+    reach.geometry.computeBoundingSphere()
+    expect(reach.geometry.boundingSphere.radius).toBeCloseTo(60, 5) // main.lua sky.aim.REACH
+    c.dispatchEvent(pointer('pointermove', { x: 95, y: 50 })) // about 76 out from Godling
+    const hovered = calls.hover.at(-1)
+    expect(hovered.beyond).toBe(true)
+    expect(Math.hypot(hovered.x + 50, hovered.z)).toBeCloseTo(60, 5) // on the edge
+    expect(hovered.z).toBeCloseTo(0, 5) // on the line from Godling to the pointer
+    expect(hovered.y).toBeCloseTo(3, 5) // on top of what stands there
+    expect(reticle.position.x).toBeCloseTo(10, 5)
+    c.dispatchEvent(pointer('pointermove', { x: 50, y: 50 })) // 50 out: within reach, where the pointer is
+    expect(calls.hover.at(-1).beyond).toBe(false)
+    expect(calls.hover.at(-1).x).toBeCloseTo(0, 5)
+    c.dispatchEvent(pointer('pointerdown', { x: 95, y: 50 }))
+    c.dispatchEvent(pointer('pointerup', { x: 95, y: 50 }))
+    expect(calls.aimed[0]).toMatchObject({ power: 'Log', beyond: true })
+    expect(calls.aimed[0].x).toBeCloseTo(10, 5)
+    expect(reach.visible).toBe(false) // aimed: the ring goes with the reticle
+    aim.start('Log')
+    godlingAt.set(-40, 2.4, 5) // Godling walks while the viewer aims: the ring goes with it
+    aim.update()
+    expect([reach.position.x, reach.position.z]).toEqual([-40, 5])
+    aim.stop()
+    aim.update()
+    expect(reach.visible).toBe(false)
+    aim.start('Stone') // the other powers are as they were: no ring, and the aim is where the pointer is
+    expect(reach.visible).toBe(false)
+    c.dispatchEvent(pointer('pointermove', { x: 95, y: 50 }))
+    expect(calls.hover.at(-1).beyond).toBe(false)
+    expect(calls.hover.at(-1).x).toBeGreaterThan(20)
+  })
+
+  it('a log aimed with Godling out of sight is taken as it is', () => {
+    const { aim, c, calls, scene } = setup(null)
+    aim.start('Log')
+    aim.update()
+    expect(scene.getObjectByName('aim-reach').visible).toBe(false)
+    c.dispatchEvent(pointer('pointermove', { x: 95, y: 50 }))
+    expect(calls.hover.at(-1).beyond).toBe(false)
+  })
+
   it('misses the sky, and Escape cancels', () => {
     const { aim, c, calls, camera } = setup(null)
     camera.position.set(0, 50, 0)

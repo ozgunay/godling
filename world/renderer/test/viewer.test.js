@@ -400,6 +400,28 @@ describe('the viewer screen', () => {
     expect(posts.at(-1).body.power).toBe('Regrow')
   })
 
+  it('a log is aimed within Godling\'s reach: the tip and the aim bar say so, and past it, where it lands (ADR-029)', async () => {
+    const { slot, $, posts, fromIsland, tick } = await boot()
+    slot('Log').dispatchEvent(new MouseEvent('mouseenter'))
+    expect($('.b-tip').textContent).toContain('Within 60 of Godling: an aim further out lands at the edge')
+    expect($('.b-tip p').textContent).toContain("beside Godling's house and never on it")
+    slot('Log').dispatchEvent(new MouseEvent('mouseleave'))
+    slot('Log').click()
+    expect($('.b-aim .words').textContent).toBe('Click within the ring where the log should land')
+    fromIsland({ type: 'godling-aim-hover', atGodling: false, beyond: true })
+    expect($('.b-aim .words').textContent).toBe('Past Godling\'s reach: it lands on the ring')
+    expect($('.b-aim .words .reach')).not.toBeNull()
+    fromIsland({ type: 'godling-aim-hover', atGodling: false, beyond: false })
+    expect($('.b-aim .words').textContent).toBe('Click to call it here')
+    fromIsland({ type: 'godling-aim-hover', atGodling: true, beyond: false })
+    expect($('.b-aim .words').textContent).toBe('At Godling: it lands at its feet')
+    fromIsland({ type: 'godling-aimed', x: 10, y: 3, z: 0, beyond: true }) // the spot on the ring, as the island sent it
+    await tick(0)
+    expect(posts.at(-1).body).toMatchObject({ power: 'Log', at: [10, 0] })
+    slot('Stone').click() // the other powers are as they were
+    expect($('.b-aim .words').textContent).toBe('Click the island where the stone should land')
+  })
+
   it("aims a storm's three strikes one by one, marks each, and lets the sky choose the rest", async () => {
     const { slot, $, told, posts, fromIsland, tick } = await boot()
     slot('Storm').click()

@@ -2,15 +2,22 @@
 // the pointer over the island, on whatever is there, and a click (or tap) reports the spot. The world decides what
 // lands there (main.lua sky.aim): a meteor or storm can hit Godling; a meteor can also break what it built. A storm
 // (main.lua sky.storm) takes three spots: the screen aims again after each, and the spots picked so far stay marked.
+// A log (ADR-029) shows how far from Godling it may be aimed, as a ring round Godling, and an aim past that ring comes
+// in to its edge, on the line from Godling, as a ground-targeted ability's cast range does in a MOBA: the reticle shows
+// the spot the world will drop it, and that spot is what the screen sends. The world brings it in too (sky.aim.read),
+// as Godling may walk on before the call arrives.
 
 const LOOKS = { // ring radius (the meteor's: its blast), colour, and an inner disk (the meteor's: what it smashes)
   Meteor: { radius: 7, color: 0xec4b4f, inner: 2.5 },
   Lightning: { radius: 1.8, color: 0xfff1a8 },
   Storm: { radius: 2.5, color: 0x9cc8ff }, // a strike: within 2.5 it is on Godling (main.lua sky.storm HIT)
   Regrow: { radius: 1.8, color: 0x63b544 },
+  Log: { radius: 1.6, color: 0xf6c945, reach: true },
   default: { radius: 1.6, color: 0xf6c945 },
 }
 const AT_GODLING = 4.5 // main.lua sky.aim.AT_GODLING: an aim this close counts as aimed at Godling
+const REACH = 60 // main.lua sky.aim.REACH: a log aimed further from Godling comes in to the edge of it
+const FEET = 2.4 // Godling's middle above its feet (bodylook.js): the reach ring lies at its feet
 const CLICK_PX = 7 // a press that moves less than this is a click, not a drag of the camera
 
 export function createAim(THREE, scene, camera, canvas, { godling, onHover, onAimed, onCancel }) {
@@ -26,23 +33,53 @@ export function createAim(THREE, scene, camera, canvas, { godling, onHover, onAi
   reticle.visible = false
   ring.renderOrder = fill.renderOrder = 30
   scene.add(reticle)
+  const reachMaterial = new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0.5, depthTest: false })
+  const reach = new THREE.Mesh(new THREE.RingGeometry(REACH - 0.6, REACH, 192).rotateX(-Math.PI / 2), reachMaterial)
+  reach.name = 'aim-reach'
+  reach.renderOrder = 29
+  reach.visible = false
+  scene.add(reach)
   let press = null
   let spot = null
+
+  // The island's parts and terrain: drawn in instanced groups and the terrain mesh, all straight under the scene.
+  const targets = () => scene.children.filter((o) => (o.isInstancedMesh || o.isMesh) && o.visible && o !== reticle
+    && !(o.material && o.material.transparent))
 
   function pick(event) {
     const r = canvas.getBoundingClientRect()
     pointer.set(((event.clientX - r.left) / r.width) * 2 - 1, -((event.clientY - r.top) / r.height) * 2 + 1)
     raycaster.setFromCamera(pointer, camera)
-    // The island's parts and terrain: drawn in instanced groups and the terrain mesh, all straight under the scene.
-    const targets = scene.children.filter((o) => (o.isInstancedMesh || o.isMesh) && o.visible && o !== reticle
-      && !(o.material && o.material.transparent))
-    const hit = raycaster.intersectObjects(targets, false).find((h) => h.distance < 1500 && h.point.y > -5 && h.point.y < 150)
+    const hit = raycaster.intersectObjects(targets(), false).find((h) => h.distance < 1500 && h.point.y > -5 && h.point.y < 150)
     return hit ? hit.point : null
+  }
+
+  const down = new THREE.Vector3(0, -1, 0)
+  function topAt(x, z) { // the height of whatever is at (x, z), seen from above
+    raycaster.set(new THREE.Vector3(x, 150, z), down)
+    const hit = raycaster.intersectObjects(targets(), false).find((h) => h.point.y > -5)
+    return hit ? hit.point.y : null
+  }
+
+  function placeReach() { // round Godling, while a power with a reach is picked and Godling is in sight
+    const g = godling()
+    reach.visible = Boolean(power && LOOKS[power]?.reach && g)
+    if (reach.visible) reach.position.set(g.x, g.y - FEET + 0.06, g.z)
   }
 
   function show(point) {
     const look = LOOKS[power] || LOOKS.default
     const g = godling()
+    let beyond = false
+    if (look.reach && g && Math.hypot(point.x - g.x, point.z - g.z) > REACH) { // in to the edge, towards the pointer
+      const k = REACH / Math.hypot(point.x - g.x, point.z - g.z)
+      const x = g.x + (point.x - g.x) * k
+      const z = g.z + (point.z - g.z) * k
+      point = { x, y: topAt(x, z) ?? point.y, z }
+      beyond = true
+    }
+    placeReach()
+    reachMaterial.opacity = beyond ? 0.9 : 0.5
     const atGodling = Boolean(g) && Math.hypot(point.x - g.x, point.z - g.z) < AT_GODLING
     const harms = power === 'Meteor' || power === 'Storm' // red on Godling: a blast, or a strike, hurts it there
     const color = atGodling ? (harms ? 0xec4b4f : 0x45d6cf) : look.color // teal: it will land at Godling's feet
@@ -52,7 +89,7 @@ export function createAim(THREE, scene, camera, canvas, { godling, onHover, onAi
     fill.scale.setScalar(look.inner || look.radius * 0.5)
     reticle.position.set(point.x, point.y + 0.06, point.z)
     reticle.visible = true
-    spot = { x: point.x, y: point.y, z: point.z, atGodling }
+    spot = { x: point.x, y: point.y, z: point.z, atGodling, beyond }
     onHover?.(spot)
   }
 
@@ -89,6 +126,7 @@ export function createAim(THREE, scene, camera, canvas, { godling, onHover, onAi
   function stop() {
     power = null
     reticle.visible = false
+    reach.visible = false
     spot = null
     canvas.style.cursor = ''
   }
@@ -115,8 +153,12 @@ export function createAim(THREE, scene, camera, canvas, { godling, onHover, onAi
     start(name) {
       power = name
       canvas.style.cursor = 'crosshair'
+      placeReach()
     },
     stop,
+    update() { // each frame: the reach ring goes with Godling
+      if (power) placeReach()
+    },
     get active() { return Boolean(power) },
   }
 }

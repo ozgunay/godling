@@ -3639,6 +3639,9 @@ end
 
 if AgentInputService then
     AgentInputService.InputReceived:Connect(function(player, inputType, inputData)
+        if inputType == "HouseSite" then -- the mind's word on its house, not a step of the body (ADR-029)
+            return sky.aim.keepSite(player, inputData)
+        end
         local humanoid = getHumanoid(player)
         if not humanoid then return end
         if death.is(player) then -- a dead body does nothing until it is born again (DEATH)
@@ -4499,18 +4502,27 @@ end)()
 -- what Godling built; it and a storm's strikes (ADR-023) may land on Godling. Everything else goes to the nearest clear
 -- spot to the aim: a gift aimed at Godling lands at its feet; lightning picks a palm far enough from Godling not to
 -- hurt it, with nothing built beside it.
+-- VIEWERS' LOGS (ADR-029, after the live run of 2026-11-08/09, where 19 of 32 were refused as too far and five landed
+-- in and round the house): an aim past REACH comes in to the edge of it instead of being refused, and a log keeps
+-- clear of what is built, as an unaimed one does, and off the house the mind is building (sky.aim.keeper).
 sky.aim = {
     REACH = 60, -- an aim at most this far from Godling, where viewers are watching
     SNAP = 12, -- how far from the aim a clear spot is looked for
+    SNAP_FAR = 20, -- and for a log, which keeps further clear (KEEPS), before it is refused
     FEET = 3.5, -- a gift aimed at Godling lands this far from its centre: at its feet, never on it
     AT_GODLING = 4.5, -- an aim this close to Godling counts as aimed at it
     GAP = 0.5, -- room left between a gift, as it will lie, and any piece already there
     BODY = 1.5, -- and between it and anyone's middle (a body is about 2 wide)
     PALM_FROM_GODLING = HARM.lightningRange + 2, PALM_CLEAR = 5,
+    KEEPS = { Log = true }, -- gifts brought in to the reach and kept clear of the house (ADR-029); a stone as before
+    SITE_MOST = 400, -- cells a house site may hold: far more than any house the mind plans (house.py MOST, walls too)
+    sites = {}, -- player -> the cells { ix, iz } of the house its mind is building (HouseSite)
 }
 
--- The viewer's aim, (x, z); nothing when the world is to choose; or nil, nil and why not.
-function sky.aim.read(godling, inputData)
+-- The viewer's aim, (x, z); nothing when the world is to choose; or nil, nil and why not. `within`: an aim past REACH
+-- comes in to the edge of it, on the line from Godling to the aim, as a ground-targeted ability's cast range does in
+-- a MOBA (ADR-029), and the fourth value says how far out it was; without it, such an aim is refused.
+function sky.aim.read(godling, inputData, within)
     local at = inputData and inputData.at
     local x, z = type(at) == "table" and tonumber(at.x), type(at) == "table" and tonumber(at.z)
     if not (x and z) then
@@ -4520,10 +4532,84 @@ function sky.aim.read(godling, inputData)
     if not hrp then
         return nil, nil, "NobodyHere"
     end
-    if Vector3.new(x - hrp.Position.X, 0, z - hrp.Position.Z).Magnitude > sky.aim.REACH then
-        return nil, nil, "TooFar"
+    local g = hrp.Position
+    local d = math.sqrt((x - g.X) * (x - g.X) + (z - g.Z) * (z - g.Z))
+    if d > sky.aim.REACH then
+        if not within then
+            return nil, nil, "TooFar"
+        end
+        local k = sky.aim.REACH / d
+        return g.X + (x - g.X) * k, g.Z + (z - g.Z) * k, nil, d
     end
     return x, z
+end
+
+-- The house the mind is building (ADR-029), as its mind declares it (the input HouseSite, { cells = { {ix, iz}, ...
+-- } }): every cell the house needs clear, its room, its walls all round, its doorway and the way out
+-- (mind/godling/site.py). The world cannot tell a house from its pieces until it stands (houseAt), so the mind says
+-- where it will stand, and the sky keeps viewers' logs off it. The mind's word, not a step of the body: taken while the
+-- body lies dead too, and it never touches LastActionResult, which the body's own steps read. Nonsense leaves the site
+-- as it was; no cells clear it.
+function sky.aim.keepSite(player, inputData)
+    local cells = inputData and inputData.cells
+    if player.Name == SKY_PLAYER or type(cells) ~= "table" or #cells > sky.aim.SITE_MOST then
+        return
+    end
+    local site = {}
+    for _, c in ipairs(cells) do
+        local ix, iz = type(c) == "table" and tonumber(c[1]), type(c) == "table" and tonumber(c[2])
+        if not (ix and iz and ix == math.floor(ix) and iz == math.floor(iz)) then
+            return
+        end
+        table.insert(site, { ix, iz })
+    end
+    sky.aim.sites[player] = #site > 0 and site or nil
+    print(string.format("HOUSE SITE %s keeps %d cells clear for its house", player.Name, #site))
+end
+
+-- Where a viewer's log keeps clear (ADR-029): its middle SKY_SPOT_CLEARANCE from the middle of every piece lying in
+-- the world, as an unaimed gift keeps (skySpotNear), a piece in someone's hands aside; and its whole outline, turned
+-- as it will lie, off every cell of the house Godling's mind is building (sky.aim.sites; touching is not on). Gathered
+-- once for a drop, as the search round the aim tries hundreds of spots. Returns a check of (x, z, yaw).
+function sky.aim.keeper(godling, kind)
+    local size = kind == "Log" and LOG_SIZE or Vector3.new(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+    local pieces = {}
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        if inst:IsA("Part") and inst:GetAttribute("IsPickupObject") and not isCarried(inst) then
+            table.insert(pieces, inst.Position)
+        end
+    end
+    local cells, clear = sky.aim.sites[godling] or {}, SKY_SPOT_CLEARANCE
+    local hx, hz, cell = size.X / 2, size.Z / 2, GRID / 2
+    local far = math.sqrt(hx * hx + hz * hz) + cell * math.sqrt(2) -- a cell's middle further off cannot touch it
+    return function(x, z, yaw)
+        for _, q in ipairs(pieces) do
+            local dx, dz = q.X - x, q.Z - z
+            if dx * dx + dz * dz < clear * clear then
+                return false
+            end
+        end
+        local turned = CFrame.Angles(0, yaw or 0, 0)
+        local gx, gz = { turned.RightVector.X, turned.RightVector.Z }, { turned.LookVector.X, turned.LookVector.Z }
+        for _, c in ipairs(cells) do
+            local dx, dz = c[1] * GRID - x, c[2] * GRID - z
+            if math.abs(dx) < far and math.abs(dz) < far then
+                local apart = false
+                for _, d in ipairs({ { 1, 0 }, { 0, 1 }, gx, gz }) do -- the cell's sides and the log's
+                    local reach = math.abs(gx[1] * d[1] + gx[2] * d[2]) * hx
+                        + math.abs(gz[1] * d[1] + gz[2] * d[2]) * hz + (math.abs(d[1]) + math.abs(d[2])) * cell
+                    if math.abs(dx * d[1] + dz * d[2]) >= reach - 1e-6 then
+                        apart = true
+                        break
+                    end
+                end
+                if not apart then
+                    return false
+                end
+            end
+        end
+        return true
+    end
 end
 
 -- Whether a gift (`kind`) lying at (x, z), turned by `yaw`, keeps GAP from every piece and BODY from every body. The
@@ -4579,12 +4665,26 @@ end
 
 -- The nearest spot to (x, z) where a gift may land: open land, where it fits (sky.aim.fits), and never on Godling.
 -- Aimed at Godling, it lands at its feet on the side the aim was, and a log lies across that side (yaw), not pointing
--- at it.
+-- at it. A log (KEEPS) also keeps clear of what is built and off the house (sky.aim.keeper), lies along either axis,
+-- and is looked for further out (SNAP_FAR), so that keeping clear does not leave it refused where it used to land.
 function sky.aim.spot(godling, x, z, kind)
     local a, g = sky.aim, getHumanoidRootPart(godling).Position
+    local keeps = a.KEEPS[kind] and a.keeper(godling, kind)
+    local function lies(px, pz, yaw) -- the cheap checks first: the search mostly fails them
+        return (not keeps or keeps(px, pz, yaw)) and clearSupplySpot(px, pz) and a.fits(kind, px, pz, yaw)
+    end
+    local turns = keeps and { 0, math.pi / 2 } or { 0 }
     local function ok(px, pz)
         local dx, dz = px - g.X, pz - g.Z
-        return dx * dx + dz * dz >= a.FEET * a.FEET and clearSupplySpot(px, pz) and a.fits(kind, px, pz, 0)
+        if dx * dx + dz * dz < a.FEET * a.FEET then
+            return nil
+        end
+        for _, yaw in ipairs(turns) do
+            if lies(px, pz, yaw) then
+                return yaw
+            end
+        end
+        return nil
     end
     local dx, dz = x - g.X, z - g.Z
     local d = math.sqrt(dx * dx + dz * dz)
@@ -4598,18 +4698,19 @@ function sky.aim.spot(godling, x, z, kind)
             local rx, rz = ux * c - uz * sn, ux * sn + uz * c
             local px, pz = g.X + rx * a.FEET, g.Z + rz * a.FEET
             local yaw = math.atan2(-rx, -rz) -- a log's length across the line to Godling
-            if clearSupplySpot(px, pz) and a.fits(kind, px, pz, yaw) then
+            if lies(px, pz, yaw) then
                 return px, pz, yaw
             end
         end
     end
-    for r = 0, a.SNAP, 1.25 do
+    for r = 0, keeps and a.SNAP_FAR or a.SNAP, 1.25 do
         local steps = r == 0 and 1 or math.max(8, math.floor(r * 4))
         for k = 0, steps - 1 do
             local angle = k / steps * 2 * math.pi
             local px, pz = x + math.cos(angle) * r, z + math.sin(angle) * r
-            if ok(px, pz) then
-                return px, pz, 0
+            local yaw = ok(px, pz)
+            if yaw then
+                return px, pz, yaw
             end
         end
     end
@@ -4617,16 +4718,22 @@ function sky.aim.spot(godling, x, z, kind)
 end
 
 function sky.aim.gift(kind, godling, inputData)
-    local x, z, why = sky.aim.read(godling, inputData)
+    local keeps = sky.aim.KEEPS[kind]
+    local x, z, why, beyond = sky.aim.read(godling, inputData, keeps)
     if why then
         return nil, why
+    end
+    if beyond then
+        print(string.format("SKY %s aimed %.1f from %s, past its reach: brought in to (%.1f, %.1f)", kind, beyond,
+            godling.Name, x, z))
     end
     local yaw = 0
     if x then
         x, z, yaw = sky.aim.spot(godling, x, z, kind)
     else
         x, z = skySpotNear(godling)
-        if x and not sky.aim.fits(kind, x, z, 0) then -- room for a stone there, but not for a log: look around it
+        -- room for a stone there, but not for a log, or on the house: look around it
+        if x and not (sky.aim.fits(kind, x, z, 0) and (not keeps or sky.aim.keeper(godling, kind)(x, z, 0))) then
             x, z, yaw = sky.aim.spot(godling, x, z, kind)
         end
     end

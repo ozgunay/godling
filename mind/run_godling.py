@@ -36,6 +36,7 @@ from godling.llm import LLM, load_api_key  # noqa: E402
 from godling.discovery import Discovery  # noqa: E402
 from godling.memory import NativeMemory  # noqa: E402
 from godling.mind import Mind  # noqa: E402
+from godling.site import HouseSite  # noqa: E402
 from godling.skills import Interrupted, Skills  # noqa: E402
 from godling.structures import measure, pieces_of, terrain_of  # noqa: E402
 from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
@@ -414,6 +415,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
              "last_think": 0.0}
     survive = Survive(log)
     thinking = ThinkingLog(args.run_dir.expanduser().resolve() / "mind/thinking.jsonl", getattr(mind, "on_reasoning", None))
+    site = HouseSite(world, memory, log)  # the house's cells, told to the world: the sky keeps logs off them (ADR-029)
 
     def heard():
         msgs = [m for m in world.chat_since(state["chat_after"]) if m.get("agent_name") != args.name]
@@ -441,6 +443,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         live_through_death(world, attention, mind, log, state.get("doing", ""))
 
     def cycle():
+        site.sync()
         snap = observe_body(world, attention)
         if snap.dead or attention.death_pending:
             return died()
@@ -472,6 +475,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
                 return died()
             state["future"] = None
             decision = mind.adopt(thought, now)
+            site.sync()  # a house chosen in this plan is kept clear before its first project begins
             state["agenda"].extend(p for p in decision["projects"] if p["steps"])
             if not state["agenda"]:
                 skills.run("wait", {"seconds": 5})
@@ -611,8 +615,10 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
     """The m-003 loop: decide one project, do it, repeat (body waits while the mind thinks)."""
     state = {"chat_after": None}
     survive = Survive(log)
+    site = HouseSite(world, memory, log)  # as in agenda_loop (ADR-029)
 
     def cycle():
+        site.sync()
         snap = observe_body(world, attention)
         if snap.dead or attention.death_pending:
             live_through_death(world, attention, mind, log, state.get("doing", ""))
@@ -634,6 +640,7 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
             live_through_death(world, attention, mind, log, state.get("doing", ""))
             return
         decision = mind.adopt(thought, snap)
+        site.sync()
         for project in decision["projects"][:1]:
             state["doing"] = project["goal"]
             if project["intention"] and not args.no_narration:

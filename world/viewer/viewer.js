@@ -22,12 +22,15 @@ const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Arro
 // What a viewer can call, in hotbar order. `id` is the world's name for it (main.lua SKY_POWERS).
 // Viewers aim every power but the earthquake and the note. The meteor and a storm's strikes can land on Godling; only
 // the meteor breaks what it built (main.lua sky.aim, the user's rule). The rest go to the nearest clear spot, and a gift
-// aimed at Godling lands at its feet. Both are priced as the disasters they are.
+// aimed at Godling lands at its feet. Both are priced as the disasters they are. A log (ADR-029, `reach`) is aimed
+// within 60 of Godling, shown as a ring round it (renderer aim.js): an aim past it lands on the ring, never refused for
+// it, and the log lands beside Godling's house, never on it.
 const POWERS = [
   { id: 'Stone', name: 'Stone', icon: 'stone', price: 4, kind: 'Gift', aim: true, did: 'dropped a stone', after: 'from the sky',
     does: 'A stone block drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },
-  { id: 'Log', name: 'Log', icon: 'log', price: 4, kind: 'Gift', aim: true, did: 'dropped a log', after: 'from the sky',
-    does: 'A log beam drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },
+  { id: 'Log', name: 'Log', icon: 'log', price: 4, kind: 'Gift', aim: true, reach: true, did: 'dropped a log',
+    after: 'from the sky', rule: 'Within 60 of Godling: an aim further out lands at the edge',
+    does: "A log beam drops where you aim, beside Godling's house and never on it. Aimed at Godling, it lands at its feet." },
   { id: 'Regrow', name: 'Regrow a palm', icon: 'sapling', price: 6, kind: 'Gift', aim: true, did: 'regrew a palm',
     after: 'from its stump', does: 'The stump nearest your aim grows back at once.' },
   // Lightning's place (ADR-023): a storm, its three strikes aimed one by one (`spots`), the world picking when.
@@ -596,12 +599,13 @@ function aimHint(p, spot) {
   aimWords.replaceChildren()
   aimWords.insertAdjacentHTML('afterbegin', icon(p.icon, 2))
   let words = p.spots ? `${aimTap} where strike ${aimedSpots.length + 1} of ${p.spots} should land`
-    : `${aimTap} the island where the ${p.name.toLowerCase()} should land`
+    : `${aimTap} ${p.reach ? 'within the ring' : 'the island'} where the ${p.name.toLowerCase()} should land`
   let tone = ''
   skyChooses.textContent = aimedSpots.length ? 'Let the sky choose the rest' : 'Let the sky choose'
   if (spot?.atGodling && p.id === 'Meteor') [words, tone] = ['On Godling: the blast will hit it', 'harm']
   else if (spot?.atGodling && p.id === 'Storm') [words, tone] = ['On Godling: a strike here leaves it with half a heart', 'harm']
   else if (spot?.atGodling && (p.id === 'Stone' || p.id === 'Log')) [words, tone] = ['At Godling: it lands at its feet', 'feet']
+  else if (spot?.beyond && p.reach) [words, tone] = ["Past Godling's reach: it lands on the ring", 'reach']
   else if (spot) words = p.spots ? `${aimTap} to strike here (${aimedSpots.length + 1} of ${p.spots})` : `${aimTap} to call it here`
   aimWords.append(text('span', tone, words))
 }

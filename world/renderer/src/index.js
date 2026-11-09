@@ -1303,6 +1303,7 @@ export function createRenderer(ctx) {
     }
     ambient.intensity += lightning.update({ time: elapsed, daylight: sky.daylight })
     stormSpots.update(elapsed)
+    aim?.update() // a log's reach ring goes with Godling (ADR-029)
     renderer.toneMappingExposure = EXPOSURE * lightning.exposure()
     instancer.flush()
     if (governor.sample(dt)) applyResolution()
