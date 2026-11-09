@@ -213,9 +213,9 @@ def test_guided_layouts_require_supported_roof_and_a_straight_doorway():
     large = [(x, z) for x in range(3) for z in range(3)]
     rejected = layout([[x * C, z * C] for x, z in large], [0, -C])
     assert isinstance(rejected, str) and rejected.startswith("nothing holds up the roof over (2.5, 0.0), (2.5, 2.5)")
-    assert "stand posts inside" in rejected  # ADR-033: a room wider than two cells holds its roof on posts
+    assert rejected.endswith("it has a roof with one more post, at (2.5, 2.5)")  # ADR-033: a wider room's posts
     persisted = plan([], GROUND, large, DOOR)
-    assert not persisted["house"] and "stand posts inside, or make the room at most two cells wide" in persisted["next"]
+    assert not persisted["house"] and persisted["next"] == rejected
     for length in range(2, 9):
         rectangle = [[x * C, z * C] for x in range(2) for z in range(length)]
         assert not isinstance(layout(rectangle, [0, -C]), str)
@@ -227,9 +227,9 @@ def test_guided_layouts_require_supported_roof_and_a_straight_doorway():
     overlapping = [[0, 0], [0, C], [C, 0], [C, C], [C, 2 * C], [C, 3 * C]]
     assert not isinstance(layout(overlapping, [-C, 0]), str)
     short = layout([[x * C, z * C] for x in range(3) for z in range(4)], [-C, 0], [[C, C]])
-    assert isinstance(short, str) and "has nothing left to rest on" in short
+    assert isinstance(short, str) and short.startswith("no way of laying the roof covers")
     persisted = plan([], GROUND, [(x, z) for x in range(3) for z in range(4)], (-1, 0), [(1, 1)])
-    assert "stand another post beside it, or move the doorway" in persisted["next"]
+    assert persisted["next"] == short and "it has a roof with" in short
 
 
 def test_a_complete_larger_house_uses_the_same_verdict_even_without_guided_roof_supports():

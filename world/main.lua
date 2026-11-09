@@ -3044,9 +3044,8 @@ local tickWeather = (function()
                 elseif os.clock() >= (s.houseCheckAt or 0) then
                     s.houseCheckAt = os.clock() + 1
                     s.houseRoom = houseAt(player, hrp) or 0 -- the cells of its room to stand in (ADR-033)
-                    s.houseSeen = s.houseRoom > 0
                 end
-                inHouse = shelter ~= "" and s.houseSeen == true
+                inHouse = shelter ~= "" and (s.houseRoom or 0) > 0
                 -- The more room it has, the faster a fed body mends there (ADR-033): twice as fast in the smallest room
                 -- (four cells), a quarter faster for each cell more, up to four times.
                 local mends = inHouse and math.min(HARM.houseHealsMost,

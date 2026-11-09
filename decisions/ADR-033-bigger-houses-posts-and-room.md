@@ -1,6 +1,7 @@
 # ADR-033: Bigger houses: posts hold up a wider roof, and a bigger room mends faster
 
-Date: 2026-11-09. Status: built and tested in the mind's and the world's suites. Not yet tested in a live run.
+Date: 2026-11-09. Status: built and tested in the mind's and the world's suites, with the code review's fixes (Review
+fixes, below). Not yet tested in a live run.
 
 ## Why
 In the 9.6-hour live run (2026-11-08 22:10 to 2026-11-09 07:50 UTC) Godling built the smallest house there is, a room
@@ -37,38 +38,48 @@ two cells by two, and kept to it. The investigation found the reasons in the cod
    - posts that cut the room in two;
    - a room whose roof cannot be laid (point 3).
 
-   The post's cell is not kept clear for the room (`memory.reserved_cells`), so the hands may stand a log there.
+   A reply that leaves `"posts"` out keeps the house's posts that still stand alone in its new cells; a reply that
+   leaves the cells inside or the doorway out keeps those; only `"inside": []` gives the house up.
 3. **The guided roof is laid as a whole.** `house.roof_layout` used to match each cell of the room to a wall, then
    check for overlaps afterwards. It now searches for a roof with every cell of the room under exactly one log and no
    two pieces in one cell:
    - The doorway's lintel goes first, as before.
    - Each cell of the room then gets a log, tried in order: one centred on a wall beside it, then one centred on a post
      beside it (which also reaches over the cell on the post's far side). The first roof that covers the whole room is
-     the one used.
+     the one used. A log already lying where one of these goes stays where it is.
    - The walls and posts left over get a block on top.
 
-   When no roof can be laid, the refusal names the cell that is short:
+   When no roof can be laid, the refusal names the cell that is short, and the doorways and single posts more that
+   would give the room a roof:
    - "nothing holds up the roof over (2.5, 0.0), (2.5, 2.5): a log three blocks long reaches one cell from the wall or
      post it rests on, so every cell inside must lie beside a wall or a post (not the doorway or the walls either side
-     of it); stand posts inside, or make the room at most two cells wide";
-   - "the roof over (2.5, 5.0) has nothing left to rest on: the post at (2.5, 2.5) beside it holds another log
-     already, and each wall or post holds one; stand another post beside it, or move the doorway".
+     of it); it has a roof with one more post, at (2.5, 2.5)";
+   - "no way of laying the roof covers (2.5, 5.0): each wall or post holds one log, and every way of laying them leaves
+     none for it; it has a roof with the doorway at (0.0, -2.5), (2.5, -2.5) or (5.0, -2.5)";
+   - with none: "...; no other doorway, and no one more post, gives it a roof: make the room another size or shape".
 
    The comparison covered rooms two cells wide (2×2 to 2×10, both ways round) and two L shapes, each with every
    doorway. For all 77 room-and-doorway pairs the old code accepted, the new roof and the plan's wording are the same
    as before. Six pairs the old code refused for overlapping pieces now have a roof.
 4. **The body reaches a roof over a post from the floor inside.** From the floor, the body's centre is 6.2 below the
    roof's middle (8.75), and the hands reach 7. Two body changes in `skills.py`, each a fix to what the body believed:
-   - **A log resting on its middle is set where it was aimed.** Before, the body moved a raised log so that both its
-     ends rested on something (`_beam_on_supports`). A log balanced on a wall or a post stays up; the ADR-019 roof
-     already rests on wall middles. The old code moved a log aimed at the post's middle onto the post and the north
-     wall, at (2.5, 8.8, 5.0). That left the cell south of the post with nothing to hold its roof.
-   - **A piece wholly over the head may be set standing under it.** Before, the body never stood under a piece it was
-     setting. When there is nowhere under the piece in reach, it may also be set from right beside it, as far as the
-     hands reach less a quarter unit (`OVERHEAD_SLACK`, where the usual margin is 0.4). From beside a post the hands
-     are 6.67 from the log's middle; with the 0.4 margin no spot beside a post qualified. The step outside the walls is
-     still how logs on the walls go up: from under their outer end the hands are 6.69 away, so the hp-roofcheck test
-     still steps up.
+   - **A log the house's roof puts on a middle is set there.** The body moves a raised log so that both its ends
+     rest on something (`_beam_on_supports`). The old code moved a log aimed at the post's middle onto the post and the
+     north wall, at (2.5, 8.8, 5.0), which left the cell south of the post with nothing to hold its roof. Now a log
+     aimed with its middle on something is set there if the house's guided roof puts a log there (`plan()["roof"]`,
+     kept in memory, `Skills(planned=memory.planned_roof)`), or if no cell along it lies across two supports. A lintel
+     aimed on one flank is still moved across the doorway, as before.
+   - **A piece that will rest wholly over the head may be set from under it, or from right beside it.** The body tries
+     the old ways first: a spot beside the piece within the usual margin (0.4 short of the hands' 7), then a step
+     outside. Then, only for a piece that will rest there (on its middle, or a log on both ends), it stands under it
+     (6.2 from the hands), and last of all right beside it, as far as the hands reach less a quarter unit
+     (`OVERHEAD_SLACK`). From beside a post the hands are 6.67 from the log's middle. Logs on the walls and caps still
+     go up from a step where there is one.
+   - **A piece over the head is lifted from below.** The world lifts the piece nearest where the hands reach, within
+     1.5 of it, from at most 6 away (`findNearestBlock`, `PICKUP_RANGE`). `pick_up` now aims at the point below the
+     piece, or below it and to a side, where it is still the nearest by a margin. So the hands reach up to a block on a
+     post's top from the floor beside the post (5.3 away), where its middle is out of reach (6.2). This also lifts a
+     stone off a ladder's top from the ground (ADR-025 said it was out of reach there).
 5. **A bigger room mends faster.** Inside a house, a fed body mends twice as fast in a room of four cells to stand in.
    Each cell more adds a quarter, up to four times as fast in twelve cells or more (`HARM.houseHealsPerCell`,
    `houseHealsMost`). `houseAt` now returns the room's cells to stand in. The world gives the body `HouseRoom` and
@@ -92,7 +103,9 @@ two cells by two, and kept to it. The investigation found the reasons in the cod
      its walls. A wider room needs posts inside it: a log stood on end, from the floor up to the roof, alone with the
      room on all four sides of it, holding a log on its middle over the cells either side. A post counts as a cell
      inside the house, not as room to stand in."
-   - It also gives the payoff in point 5.
+   - It also gives the payoff in point 5, and its cost: "A bigger house takes more to build: a room of four cells some
+     twenty pieces, sixteen of them logs if its walls are logs; one of twelve cells nearly twice as many, some thirty
+     logs" (the review's INT-9: PR #77 halves the logs a palm gives).
    - The body facts say the hands set "a piece of a fourth [block] only right over its head or right beside it".
    - The house shape gains `"posts"`.
    - The house line names the posts, and the plan's next step names them.
@@ -125,9 +138,41 @@ round it, which is no better a house, and the middle of the block could not be r
   would do.
 - **The prompt hints at the method.** "A wider room needs posts inside it" is a fact of logs three cells long, but it
   points at the answer.
+- **The refusals name what would work.** When the roof cannot be laid, the refusal names the other doorways and the
+  single posts more that would give the room a roof (82-AB5). The mind still chooses, but from a list the body worked
+  out.
+- **The hands know the house's roof.** A log aimed on a middle where the guided roof puts one is set there, where any
+  other log on a middle with two supports a cell along it is moved onto them (82-AB8).
 - **What stays the mind's.** Where the house stands, its size and shape, where its posts go, the doorway, the order of
   the work and what it is built of. The body does not place posts for it or choose them, and the check judges what was
   built, not the plan.
+
+## Review fixes (PR #82's code review, 2026-11-09)
+Thirty-two findings; each id's outcome is in the review-fix PR.
+- **A house built as the plan says is finished (82-AB1).** A log laid as asked made its wall's top "taken"; the next
+  plan routed its cell to another wall, which then dropped out of the caps and was never asked for. Following the plan
+  piece by piece, first need first, left even a 2×2 unfinished (and every shape in the table). The roof search now
+  keeps the logs already lying where a log goes (and tries them first), and `test_following_the_plan_piece_by_piece`
+  builds every shape both first need first and last need first.
+- **A lintel aimed a cell off goes across the doorway again (82-AB8, 82-AB9)**, and only a log the house plans on a
+  middle stays there (point 4).
+- **Lifting a piece off a post's top from the floor (82-AB2)**: point 4, and the plan says "reach up from the floor
+  beside the post".
+- **What a reply leaves out (82-AB3, 82-SWEEP1)**: point 2.
+- **The body never stands under a piece that would fall (82-AB11), and keeps the step for caps and the lintel where
+  there is one (82-CDE2)**: point 4.
+- **What lies where a log on a post goes is named in the way (82-CDE3)**, also over the other cell it reaches, and the
+  hands-full reflex keeps the post's cell clear again (82-CDE4: it set a block there, which became the post's base).
+- **The refusals name what works (82-AB5)**: point 3. The old one said a post "holds another log already" when the
+  roof laid none on it, and advised a post beside the cell where none could stand, in all 160 refusals measured.
+- **Smaller:** the room's cells as a whole number (82-AB6); the fall report names what was under the log's middle and
+  says the rule as the prompt does (82-CLEAN19); a search cut short says so (82-CLEAN13); the stand-in island holds the
+  hands to the world's reach (82-CDE9; one older test had set a block from 7.6 away); the docs (82-AB7).
+- **Cleanups that change nothing:** one flood fill, one roof probe, one way of saying what fits, the roof issue
+  cached per layout, one helper for the feeling, the walls/posts split, the shared test builders, one `houseRoom` in
+  the world (82-CLEAN1 to 82-CLEAN15).
+- **Not changed:** a room cell between a post and a wall leaves the body a band 0.1 wide to walk (82-CDE7), as a
+  doorway does, which live bodies pass; the world test helpers (82-CLEAN6), since other open PRs edit those tests.
 
 ## What changed
 - `mind/godling/house.py`:
