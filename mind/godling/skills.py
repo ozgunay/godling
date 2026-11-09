@@ -187,8 +187,8 @@ class Skills:
                 return self.library.execute(self, skill, args)
             except Stuck as why:
                 return Result(False, skill, str(why))
-            except Interrupted as why:
-                return Result(False, skill, f"interrupted: {why}")
+            except Interrupted as why:  # cut short by attention: not the skill failing (ADR-032)
+                return Result(False, skill, f"interrupted: {why}", {"interrupted": True})
             except Exception as err:  # a broken self-taught skill must never take the body down
                 self.log(kind="error", message=f"learned skill {skill} crashed: {err!r}")
                 return Result(False, skill, f"{skill} broke while running ({err}); fix or forget it")
@@ -203,8 +203,8 @@ class Skills:
             result = fn(**args)
         except Stuck as why:
             result = Result(False, skill, str(why))
-        except Interrupted as why:
-            result = Result(False, skill, f"interrupted: {why}")
+        except Interrupted as why:  # cut short by attention: not the skill failing (ADR-032)
+            result = Result(False, skill, f"interrupted: {why}", {"interrupted": True})
         except (TypeError, ValueError) as err:
             result = Result(False, skill, f"bad arguments: {err}")
         except WorldError as err:
