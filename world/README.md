@@ -27,7 +27,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - Each `Strike` with the hammer in hand counts toward the next stone. Every `STRIKES_PER_STONE` (3) strikes, a stone breaks off: a `Stone_n` cube (0.75) and a `Brick_n` (1.5 x 0.75 x 0.75) by turns.
     - Stones are heavy and grippy (density 2.6, friction 1.0). The quarry never runs out.
   - **Trees.** `Axe_1` lies by the grove.
-    - `CHOPS_PER_TREE` (4) strikes with the axe fell a tree into two `Log_n` beams (light wood), lying along the fall. A stump is left.
+    - `CHOPS_PER_TREE` (4) strikes with the axe fell a tree into one `Log_n` beam (light wood, `AXE_LOGS`; two until ADR-026), lying along the fall. A stump is left.
     - Logs are 7.5 x 2.5 x 2.5: square beams three blocks long and one thick, so they fit the cube grid. Round ones rolled off what they were set on.
   - **Settling (ADR-005).** A block, stone or log that has come to rest lying on a face is squared into its grid cell and held there (anchored, attribute `Settled`), so the body cannot shove it. Lifting a piece wakes what rested on it; that falls until it settles again.
   - **Touching is not overlap.** The placement probe is 0.1 smaller than the piece, because grid neighbours always touch.
@@ -51,7 +51,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
 - **Godling's look (art session; build scripts and previews in `art/`, details in `art/README.md`).**
   - The character uses `assets/godling.glb`, set as `ModelUrl` on the root part. It has Idle and Walk, a gesture clip for each action the world names (PickUp, PutDown, Throw, Chop, Mine, Carve, Spear, Shake, Kindle, Cook, Eat, Fasten, Draw, Talk, WakeUp), the earthquake's Stagger, GetUp and LookAround, the Jump, Fall, Climb and Brace loops, and Strike (see `art/README.md`).
   - Eight trees, `Tree_1`…`Tree_8`: anchored trunk colliders (2.5 x 20 x 2.5, on grid cells about 10 apart) with `RenderRole` "Tree", drawn with `assets/tree.glb`.
-    - A felled tree falls along the grid into two logs side by side, in the cells next to its stump (2.5 x 1.25 x 2.5, `RenderRole` "Stump"). The body walks round stumps as terrain.
+    - A felled tree falls along the grid, in the cells next to its stump (2.5 x 1.25 x 2.5, `RenderRole` "Stump"): one log from the axe, two side by side from lightning or a meteor. The body walks round stumps as terrain.
   - **Terrain on the block grid (ADR-005).** Mesa and quarry heights are whole blocks (2.5, 5, 7.5, 10, 20), and their faces lie on cell boundaries, so blocks set against them sit flush.
     - The mind treats trees and the quarry as terrain too high to climb (`godling/world.py`).
   - The `ART` table in `main.lua` maps objects to `assets/*.glb`: hammer, quarry, stone, brick, axe, log and ladder. Boulders have no model yet.
@@ -122,7 +122,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - The cold (at night, or soaked) drains health and stops healing. A roof over the head halves it, and so does a fire within 7 (`ByFire`). Only in a house is the body warm, and there a fed body mends twice as fast.
   - Body attributes: `InRain`, `Wet`, `Cold`, `ByFire`, `Sheltered`, and `WalkSpeed` (the pace now).
   - Wet spells of 2–3 in-game days of rain come every 4–7 hours (the first 1.5–2.5 hours in).
-  - In heavy rain, lightning strikes a palm near Godling every 3–8 minutes.
+  - In heavy rain, lightning strikes 12–45 from Godling every 3–8 minutes (ADR-026). A bolt fells a palm there into two logs at most once in 25 minutes of heavy rain (`FELL_GAP`), and never a palm the storms felled in the last 6 hours (`PALM_REST`). The other bolts strike open ground at least 4 from a standing palm, or the sea; with no such point in 20 tries, none comes down. The island's own ground keeps a `Scorch` for 4 minutes (none on a piece lying or built there). The log says `WEATHER lightning #n struck the ground at (x, z)` or `… felled Palm_k into …`, apart from a viewer's `SKY Lightning`. Every bolt hurts 35 within 7. A restored island waits the whole gap before its storms fell a palm, and spares the stumps it put back for 6 hours.
   - Fog comes some mornings (the Clock's `Fog`).
   - Rain puts every fire out.
 - **Fire by friction (ADR-010).** There is no `Kindle` input.
@@ -131,7 +131,6 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
   - Nothing warms in the rain or for 5 minutes after it.
 - **A ship (ADR-010)** sails along the horizon for five minutes every 2.5–5 hours: parts `Ship`, `Ship_Cabin`, `Ship_Mast` and `Ship_Sail`.
 - **The sea (ADR-020).** A body hanging on the beach's lip for 3 s is put back on the nearest sand (`Ashore`, log `ASHORE`). A body in the water drowns over 90 s (`Drowning`), then faints and wakes at the start spot, the middle meadow at (15, -27.5) (`Drowned`, log `DROWNED`).
-- **Driftwood (ADR-010).** Every 3 minutes a `Log_n` marked `Driftwood` washes up on open sand, while fewer than 6 lie on the beach.
 - **Renderer (ADR-006).** Godling's own, in `renderer/src/`; it no longer uses the runtime's model helpers.
   - **No CDN.**
     - three.js r187 is bundled in: `npm install`, then `npm run build` (`build.mjs`).

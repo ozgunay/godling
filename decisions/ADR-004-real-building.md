@@ -77,7 +77,7 @@ You chose:
 
 **World** (`C:\Work\godling\world`, details in its README):
 - the quarry and hammer, with stones and bricks by turns, every 3 strikes;
-- the axe: 4 strikes fell a tree into 2 logs, and the stump regrows in 10 minutes;
+- the axe: 4 strikes fell a tree into 2 logs, and the stump regrows in 10 minutes (one log since ADR-026);
 - placing with a quarter turn or stood on end;
 - fastening with welds, and a hammer knocks a piece loose;
 - a ladder that stands up when set down, with world-driven climbing up and back down;

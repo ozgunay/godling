@@ -200,8 +200,6 @@ class Attention:
             e = new[name]
             if e.attrs.get("SkyEvent"):
                 from_sky.setdefault((e.attrs["SkyEvent"], e.attrs.get("SkyId")), []).append(e)
-            elif e.attrs.get("Driftwood"):
-                out.append((f"A log washed up on the beach: {name} lies at {_xz(e)}", 3, [name], _at(e.pos)))
             else:
                 out.append((f"A new object, {name}, appeared at {_xz(e)}", 3, [name], _at(e.pos)))
         for (kind, _), pieces in from_sky.items():

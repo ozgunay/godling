@@ -23,6 +23,17 @@ def _words(text):
     return {w for w in re.findall(r"[a-z0-9_]+", text.lower()) if len(w) > 3}
 
 
+# Lessons a change to the world made untrue: (an id, what such a lesson says, why). A memory written before the change
+# retires them once, when it is opened, so a resumed run never recalls them; the id is kept in its state, so a lesson
+# learnt afterwards is never retired. What happened (a log that did wash up, a project) is kept: only lessons go.
+RETIRED = (
+    # ADR-026: no log washes up any more, and the axe fells a palm into one log, not two.
+    ("adr-026-logs", re.compile(r"\blogs? (?:\w+ )?wash(?:es)? up\b|\bdriftwood\b"
+                                r"|\b(?:palms?|fell\w*|axe)\b[^.]*\b(?:two|2) logs\b", re.IGNORECASE),
+     "untrue since ADR-026: no log washes up, and the axe fells a palm into one log"),
+)
+
+
 class NativeMemory:
     def __init__(self, root):
         self.root = Path(root)
@@ -40,6 +51,27 @@ class NativeMemory:
         self.state = {"digest": "", "intentions": [], "structures": {}, "last_sleep": time.time(), "slept": 0}
         if self.state_path.exists():
             self.state.update(json.loads(self.state_path.read_text()))
+        self._retire()
+
+    def _retire(self):
+        """Retire the lessons RETIRED names that this memory has not retired yet (once per memory, not every start)."""
+        done = set(self.state.get("retired", []))
+        due = [r for r in RETIRED if r[0] not in done]
+        if not due:
+            return
+        for name, pattern, why in due:
+            for ep in self.episodes:
+                if ep.get("kind") == "lesson" and not ep.get("invalid") and pattern.search(ep["text"]):
+                    ep["invalid"] = why
+            self._retire_more(pattern)
+            done.add(name)
+        self.state["retired"] = sorted(done)
+        if self.episodes:
+            write_atomic(self.episodes_path, "".join(json.dumps(ep) + "\n" for ep in self.episodes))
+        write_atomic(self.state_path, json.dumps(self.state, indent=2))
+
+    def _retire_more(self, pattern):
+        """What else an engine keeps that `pattern` makes untrue (BrainMemory: its facts)."""
 
     # ---- MemoryAdapter ----------------------------------------------------------------
     def store_experience(self, text, kind="event", tick=0, entities=(), importance=2):
