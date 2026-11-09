@@ -9,6 +9,9 @@ right before each step runs:
     {"x": vec} / {"y": vec} / {"z": vec} -> one coordinate of a vector
     {"nearest_free": "cube"}    -> name of the nearest cube nobody has claimed ("brick" and "stone" too)
 A step may carry "repeat": n (up to 12). A new skill is "unproven" until one full run succeeds.
+
+A skill that has worked is forgotten only after it has failed, in a row since it last worked, as many times as it has
+ever worked, and at least three times (ADR-032). A skill that never worked can be forgotten at once.
 """
 import json
 import time
@@ -19,18 +22,25 @@ from .skills import PRIMITIVES, Result
 from .world import PIECE_KINDS
 
 MAX_STEPS = 12
+MIN_FAILS_TO_FORGET = 3  # failures in a row since its last success before even a skill that worked once may go
 
 
 class SkillError(ValueError):
     pass
 
 
+def fails_in_a_row(spec):
+    """Failed runs since the skill last worked. Records saved before ADR-032 have only their last five outcomes."""
+    if "fails_in_a_row" in spec:
+        return spec["fails_in_a_row"]
+    recent = spec.get("recent", [])
+    return len(recent) - max((i + 1 for i, ok in enumerate(recent) if ok), default=0)
+
+
 class SkillLibrary:
-    def __init__(self, path, log=None, protect_proven=False):
+    def __init__(self, path, log=None):
         self.path = Path(path)
         self.log = log or (lambda **kw: None)
-        # Procedural memory like a habit: a skill that has proven itself is not dropped on a whim.
-        self.protect_proven = protect_proven
         self.skills = json.loads(self.path.read_text()) if self.path.exists() else {}
 
     def save(self):
@@ -61,16 +71,22 @@ class SkillLibrary:
         return name
 
     def forget(self, name):
-        """Drop a skill. With protect_proven, a skill with 3+ successes stays unless its last 3 runs failed.
+        """Drop a skill, unless it has worked and has not failed as many times in a row since (ADR-032).
 
-        Returns a reason string when the skill was kept, so the mind learns why."""
+        A skill's steps never change once learned, so after they have worked, a failure says more about the situation
+        (a blocked way, full hands) than about the skill. Returns the reason when the skill was kept, so the mind
+        learns why."""
         spec = self.skills.get(name)
         if spec is None:
             return None
-        recent = spec.get("recent", [])
-        if self.protect_proven and spec["successes"] >= 3 and not (len(recent) >= 3 and not any(recent[-3:])):
-            self.log(kind="forget_refused", name=name, successes=spec["successes"], uses=spec["uses"])
-            return (f"'{name}' was kept: it has worked {spec['successes']} of {spec['uses']} times. "
+        failed, needed = fails_in_a_row(spec), max(MIN_FAILS_TO_FORGET, spec["successes"])
+        if spec["successes"] and failed < needed:
+            self.log(kind="forget_refused", name=name, successes=spec["successes"], uses=spec["uses"],
+                     fails_in_a_row=failed, needed=needed)
+            since = ("its last run worked" if failed == 0 else "only its last run failed" if failed == 1
+                     else f"only its last {failed} runs failed")
+            return (f"'{name}' was kept: it has worked {spec['successes']} of {spec['uses']} times and {since}. "
+                    f"A skill that has worked is forgotten only after {needed} failed runs in a row. "
                     "Redefine it with 'learn' to improve it instead.")
         self.skills.pop(name)
         self.save()
@@ -103,6 +119,7 @@ class SkillLibrary:
                 skills.busy.clear()
         spec["uses"] += 1
         spec["successes"] += ok
+        spec["fails_in_a_row"] = 0 if ok else fails_in_a_row(spec) + 1  # before `recent` holds this run
         spec["recent"] = (spec.get("recent", []) + [bool(ok)])[-5:]
         if ok and spec["status"] == "unproven":
             spec["status"] = "proven"

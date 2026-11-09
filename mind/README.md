@@ -8,7 +8,7 @@ The mind thinks about the past and the future; the body handles walking and gras
 | L3 mind | `godling/mind.py` | An LLM decides projects, narrates its intention, writes lessons, teaches itself skills, and sleeps hourly to consolidate memory |
 | L2 attention | `godling/attention.py` | Notices new objects, damage to things it kept, visitors and sky events; interrupts for salient events (the Jev slot is `decide`); hands events that happen somewhere to the glance reflex |
 | L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy, and keep a standing ladder's top and foot clear (ADR-025). Between steps, and while it waits, the body glances: it turns towards what attention just noticed, without changing the plan |
-| learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted |
+| learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted. A skill that has worked is forgotten only after it has failed, in a row since it last worked, as many times as it has worked (at least 3), under every memory engine; the library refuses other forget requests and tells the mind why (ADR-032) |
 | memory | `godling/memory.py` | Episodes (with world ticks), intentions, kept structures, digest; follows the plan's MemoryAdapter interface (§10.6) |
 | world | `godling/world.py` | HTTP client for Clawblox and a compact reading of observations |
 | LLM | `godling/llm.py` | DeepSeek (OpenAI-compatible endpoint), JSON replies, cost per call |

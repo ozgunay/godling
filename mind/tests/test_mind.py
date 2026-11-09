@@ -216,7 +216,6 @@ def test_prepare_think_adopt(world, tmp_path):
 
 def test_forget_refusals_become_notes(world, tmp_path):
     island, body, library = world
-    library.protect_proven = True
     library.define({"name": "good", "steps": [{"skill": "jump"}]})
     library.skills["good"].update(successes=5, uses=5)
     mind = make_mind(world, tmp_path, FakeLLM())

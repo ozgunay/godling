@@ -7,6 +7,7 @@ from godling.learned import SkillError, SkillLibrary
 from godling.skills import Skills
 from helpers import block, ground
 from island import FakeTime, Island
+from run_live_skills import BEAM_Z_ON_STEP, CUBE_STEP_AT, MEND_AT_HOME, POST_AND_FASTEN, UPRIGHT_NAMED_LOG
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def test_define_rejects_self_calls(setup):
 
 def test_forget_and_protection(tmp_path):
     logs = []
-    library = SkillLibrary(tmp_path / "s.json", log=lambda **k: logs.append(k), protect_proven=True)
+    library = SkillLibrary(tmp_path / "s.json", log=lambda **k: logs.append(k))
     assert library.forget("nothing") is None
     library.define({"name": "good", "steps": [{"skill": "jump"}]})
     library.skills["good"].update(successes=3, uses=4, recent=[True, False, True])
@@ -65,11 +66,91 @@ def test_forget_and_protection(tmp_path):
     assert refusal.startswith("'good' was kept: it has worked 3 of 4 times") and logs[-1]["kind"] == "forget_refused"
     library.skills["good"]["recent"] = [False, False, False]
     assert library.forget("good") is None and "good" not in library.skills and logs[-1]["kind"] == "forget"
-    plain = SkillLibrary(tmp_path / "t.json")
-    plain.define({"name": "x", "steps": [{"skill": "jump"}]})
-    plain.skills["x"]["successes"] = 9
-    assert plain.forget("x") is None
-    plain.log(kind="y")  # the default log takes anything
+    SkillLibrary(tmp_path / "t.json").log(kind="y")  # the default log takes anything
+
+
+# ---- forgetting a skill that has worked (ADR-032), with the live run's own records -----------------------------
+def library_of(tmp_path, **records):
+    """The library as the launcher builds it for every memory engine, over a saved skills.json."""
+    (tmp_path / "skills.json").write_text(json.dumps(records))
+    logs = []
+    return SkillLibrary(tmp_path / "skills.json", log=lambda **k: logs.append(k)), logs
+
+
+def test_a_proven_skill_with_a_few_failures_is_kept(tmp_path):
+    # The live run's native memory forgot mend_at_home at 71 of 81, after two runs its own step log had blocked.
+    library, logs = library_of(tmp_path, mend_at_home=MEND_AT_HOME)
+    refusal = library.forget("mend_at_home")
+    assert "mend_at_home" in library.skills and "mend_at_home" in json.loads((tmp_path / "skills.json").read_text())
+    assert refusal == ("'mend_at_home' was kept: it has worked 71 of 81 times and only its last 2 runs failed. "
+                       "A skill that has worked is forgotten only after 71 failed runs in a row. "
+                       "Redefine it with 'learn' to improve it instead.")
+    assert logs[-1] == {"kind": "forget_refused", "name": "mend_at_home", "successes": 71, "uses": 81,
+                        "fails_in_a_row": 2, "needed": 71}
+
+
+@pytest.mark.parametrize("record,since", [
+    (BEAM_Z_ON_STEP, "its last run worked"),  # forgotten straight after it had worked
+    ({**BEAM_Z_ON_STEP, "uses": 4, "recent": [False, True, True, False]}, "only its last run failed"),
+])
+def test_a_skill_that_worked_twice_is_kept_until_it_keeps_failing(tmp_path, record, since):
+    library, _ = library_of(tmp_path, beam_z_on_step=record)
+    refusal = library.forget("beam_z_on_step")
+    assert "beam_z_on_step" in library.skills
+    assert f"and {since}. A skill that has worked is forgotten only after 3 failed runs in a row." in refusal
+
+
+@pytest.mark.parametrize("name,record,needed", [("cube_step_at", CUBE_STEP_AT, 10),
+                                                ("upright_named_log", UPRIGHT_NAMED_LOG, 19)])
+def test_a_well_proven_skill_outlasts_a_streak_that_would_drop_a_weak_one(tmp_path, name, record, needed):
+    # In the final library: worked 10 (19) times, then its last five runs failed. Five such failures are not enough.
+    library, logs = library_of(tmp_path, **{name: record})
+    assert library.forget(name).startswith(f"'{name}' was kept: it has worked {record['successes']} of "
+                                           f"{record['uses']} times and only its last 5 runs failed.")
+    assert logs[-1]["needed"] == needed
+    library.skills[name]["fails_in_a_row"] = needed  # as many failures in a row as it ever worked
+    assert library.forget(name) is None and name not in library.skills and logs[-1] == {"kind": "forget", "name": name}
+
+
+@pytest.mark.parametrize("record", [
+    {**POST_AND_FASTEN, "fails_in_a_row": 9},  # 2 of 11, then 9 failures in a row
+    {**POST_AND_FASTEN, "uses": 5, "successes": 1, "recent": [True, False, False, False, False]},  # 1 of 5, then 4
+    {**POST_AND_FASTEN, "uses": 3, "successes": 0, "status": "unproven", "recent": [False, False, False]},
+    {**POST_AND_FASTEN, "uses": 0, "successes": 0, "status": "unproven", "recent": []},
+])
+def test_a_skill_that_never_worked_or_has_stopped_working_can_go(tmp_path, record):
+    library, logs = library_of(tmp_path, post_and_fasten=record)
+    assert library.forget("post_and_fasten") is None and "post_and_fasten" not in library.skills
+    assert "post_and_fasten" not in json.loads((tmp_path / "skills.json").read_text())
+    assert logs[-1] == {"kind": "forget", "name": "post_and_fasten"}
+
+
+def test_every_run_counts_the_failures_in_a_row_beyond_the_last_five(setup, tmp_path):
+    island, body, library, logs = setup
+    library.define({"name": "greet", "params": ["who"], "steps": [{"skill": "say", "args": {"text": {"pos": "$who"}}}]})
+    for _ in range(6):
+        assert body.run("greet", {"who": "Block_1"}).ok
+    for _ in range(3):
+        assert not body.run("greet", {"who": "Nothing"}).ok
+    assert body.run("greet", {"who": "Block_1"}).ok  # one success and the count starts again
+    assert library.skills["greet"]["fails_in_a_row"] == 0
+    for _ in range(6):
+        assert not body.run("greet", {"who": "Nothing"}).ok
+    spec = library.skills["greet"]
+    assert spec["recent"] == [False] * 5 and spec["fails_in_a_row"] == 6
+    assert json.loads((tmp_path / "skills.json").read_text())["greet"]["fails_in_a_row"] == 6
+    assert library.forget("greet").startswith("'greet' was kept: it has worked 7 of 16 times and only its last 6 runs")
+    assert not body.run("greet", {"who": "Nothing"}).ok
+    assert library.forget("greet") is None and "greet" not in library.skills
+
+
+def test_a_record_saved_before_the_count_goes_on_from_its_last_five(setup):
+    island, body, library, _ = setup
+    library.skills["greet"] = {"params": ["who"], "steps": [{"skill": "say", "args": {"text": {"pos": "$who"}}}],
+                               "does": "", "status": "proven", "uses": 2, "successes": 1, "recent": [True, False]}
+    assert not body.run("greet", {"who": "Nothing"}).ok
+    assert library.skills["greet"]["fails_in_a_row"] == 2 and library.skills["greet"]["recent"] == [True, False, False]
+    assert library.forget("greet").startswith("'greet' was kept: it has worked 1 of 3 times and only its last 2 runs")
 
 
 def test_execute_runs_steps_with_helpers(setup):
