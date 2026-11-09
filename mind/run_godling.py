@@ -37,6 +37,7 @@ from godling.discovery import Discovery  # noqa: E402
 from godling.memory import NativeMemory  # noqa: E402
 from godling.mind import Mind  # noqa: E402
 from godling.skills import Interrupted, Skills  # noqa: E402
+from godling.speech import Voice  # noqa: E402
 from godling.structures import measure, pieces_of, terrain_of  # noqa: E402
 from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 
@@ -49,7 +50,7 @@ NUMBERED = ("Block", "Stone", "Log", "Mark", "Coconut", "Spear", "Catch", "Iron"
 
 CONSOLE = {"decision": "THINK", "skill": "  DO", "event": "NOTICE", "sleep": "SLEEP", "llm": None, "error": "ERROR",
            "learn": "LEARN", "forget": "FORGET", "reflex": "REFLEX", "memory": None, "thinking": None,
-           "dead": "DIED", "death": "REBORN"}
+           "dead": "DIED", "death": "REBORN", "said": "SAID", "voice": "VOICE"}
 
 
 def main():
@@ -65,6 +66,10 @@ def main():
     ap.add_argument("--persona", type=Path, default=Path(__file__).resolve().parent / "persona/SOUL.md")
     ap.add_argument("--sleep-minutes", type=float, default=60)
     ap.add_argument("--no-narration", action="store_true", help="don't post intentions to world chat")
+    ap.add_argument("--voice", action=argparse.BooleanOptionalAction, default=True,
+                    help="speak by itself at the moments viewers care about: its death and rebirth, losing its house, "
+                         "a viewer's note, the sky hitting it, a big achievement; one small model call each, rate "
+                         "limited (ADR-031)")
     ap.add_argument("--gifted-skills", action="store_true",
                     help="also offer ready-made stack_on/build_tower (comparison arm); default is body moves only")
     ap.add_argument("--agenda", action=argparse.BooleanOptionalAction, default=True,
@@ -98,6 +103,7 @@ def main():
     log_file = (run / "mind/log.jsonl").open("a")
     log_lock = threading.Lock()  # the planner thread logs too
     bubble = None  # the thought bubble hears what happens (ADR-009)
+    voice = None  # and so does its voice (ADR-031)
 
     def log(**entry):
         entry = {"time": round(time.time(), 3), **entry}
@@ -112,6 +118,8 @@ def main():
                 bubble.happens(f"{entry.get('skill')}: {str(entry.get('summary', ''))[:160]}")
             elif entry.get("kind") == "project" and entry.get("phase") == "start":
                 bubble.does(entry.get("intention") or entry.get("goal"))
+        if voice is not None:
+            voice.hears(entry)
 
     (run / "config.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=2))
     home = Path.home()
@@ -163,8 +171,12 @@ def main():
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
-        mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
+        soul = args.persona.read_text()
+        mind = Mind(llm, memory, soul, skills, library, name=args.name, log=log, agenda=args.agenda,
                     discovery=discovery, house_project=args.house_project)
+        if args.voice:  # one voice for all it says aloud: its own say steps keep the gap too (ADR-031)
+            skills.voice = Voice(world, llm, soul=soul, name=args.name, log=log,
+                                 on_said=lambda line: mind.notes.append(f'You said aloud, as it happened: "{line}".'))
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
@@ -194,6 +206,8 @@ def main():
         if args.bubble:
             bubble = Bubble(world, llm, log=log).start()
             mind.on_reasoning = bubble.thought
+        if args.voice:
+            voice = skills.voice.start()
         if args.guest_panel:
             panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
                                       "--world", local_world, "--port", str(args.guest_panel),
@@ -219,6 +233,8 @@ def main():
             save.take()  # first: a container being stopped has seconds, not minutes
         if bubble is not None:
             bubble.stop()
+        if voice is not None:
+            voice.stop()
         memory.save()
         memory.flush()
         try:
@@ -485,7 +501,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         project = state["agenda"].popleft()
         state["doing"] = project["goal"]
         if project["intention"] and not args.no_narration:
-            world.say(project["intention"])
+            skills.voice.narrate(project["intention"])  # in plain words, as all it says (ADR-031)
         log(kind="project", phase="start", goal=project["goal"], intention=project["intention"], steps=len(project["steps"]))
         began = time.time()
         results = []
@@ -637,7 +653,7 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
         for project in decision["projects"][:1]:
             state["doing"] = project["goal"]
             if project["intention"] and not args.no_narration:
-                world.say(project["intention"])
+                skills.voice.narrate(project["intention"])
             results = []
             for step in project["steps"]:
                 result = skills.run(step["skill"], step["args"])
@@ -856,6 +872,11 @@ def print_entry(entry):
         print(f"[{stamp}] REPLAN next plan discarded: {entry['reason']}", flush=True)
     elif kind == "plan_kept":
         print(f"[{stamp}] CARRY  keeping the next plan although {entry['reason']}", flush=True)
+    elif kind == "said":
+        print(f"[{stamp}] SAID   \"{entry['words']}\"" + (f" ({entry['moment']})" if entry.get("moment") else ""),
+              flush=True)
+    elif kind == "voice":
+        print(f"[{stamp}] VOICE  not said ({entry.get('moment')}): {entry.get('why')}", flush=True)
     elif kind == "bubble":
         print(f"[{stamp}] BUBBLE " + (f"{entry['thing']}, {entry['feeling']}" if entry["ok"] else f"unreadable: {entry['reply']}"),
               flush=True)

@@ -604,6 +604,8 @@ thought and in that project's intention."""
             house["built"] = time.time()
             self.log(kind="house", phase="built", inside=house["inside"], door=house["door"])
         elif not found["house"]:
+            if house.get("built"):  # it stood, and stands no more: once, for its voice (ADR-031)
+                self.log(kind="house", phase="lost", next=found["next"])
             house["built"] = None
         return found
 

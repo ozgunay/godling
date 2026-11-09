@@ -401,6 +401,8 @@ def test_print_entry(capsys):
         {"kind": "structures", "walls": 1, "enclosures": 1, "roofed": 0, "spans": 0, "posts": 0, "floors": 0,
          "largest_structure": 4, "tallest": 5, "fastened": 2},
         {"kind": "event", "text": "something"}, {"kind": "error", "message": "oops"}, {"kind": "custom"},
+        {"kind": "said", "words": "Back.", "moment": "reborn"}, {"kind": "said", "words": "Hi.", "moment": None},
+        {"kind": "voice", "moment": "note", "why": "it repeats the note's words"},
     ]
     for e in entries:
         rg.print_entry(e)
@@ -411,7 +413,8 @@ def test_print_entry(capsys):
                   "WAIT   body waited 4s", "REPLAN next plan discarded: r1", "CARRY  keeping the next plan although r2",
                   "BUBBLE fish, happy", "BUBBLE unreadable: ?", "FORGET skill a", "KEEP   skill b",
                   "LEARN  new skill c(o) v2: d", "SLEEP  ships", "intentions: ['hut']", "BUILT  houses 0, walls 1",
-                  "NOTICE something", "ERROR  oops", "CUSTOM"):
+                  "NOTICE something", "ERROR  oops", "CUSTOM", 'SAID   "Back." (reborn)', 'SAID   "Hi."\n',
+                  "VOICE  not said (note): it repeats the note's words"):
         assert words in out, words
     assert "0.5s" not in out
 
@@ -509,7 +512,7 @@ def test_agenda_loop_thinks_while_moving(monkeypatch, tmp_path):
     kinds = [l["kind"] for l in logs]
     assert "wait_for_mind" in kinds and "plan_kept" in kinds and "decision" in kinds
     assert stats["projects"] >= 3 and stats["plans_after_failure"] == 1
-    assert "go" in island.said and any("You heard: Ann: hello" in u for u in loop_args[3].llm.users)
+    assert "Go." in island.said and any("You heard: Ann: hello" in u for u in loop_args[3].llm.users)
     assert (tmp_path / "mind/thinking.jsonl").read_text().count("weighing it up") >= 3
     assert any(l["kind"] == "skill" and l["skill"] == "wait" for l in logs)  # an empty agenda: the body waits
 
@@ -563,12 +566,12 @@ def test_single_loop(monkeypatch, tmp_path):
     plans = [{"intention": "jump", "project": {"goal": "up", "steps": [{"skill": "jump", "args": {}},
                                                                        {"skill": "fly", "args": {}}]}},
              {"intention": "", "project": {"goal": "idle", "steps": []}},
-             {"intention": "x", "project": {"goal": "fail", "steps": [{"skill": "pick_up", "args": {"object": "No"}},
+             {"intention": "Bring Log_3 to (4, -2)", "project": {"goal": "fail", "steps": [{"skill": "pick_up", "args": {"object": "No"}},
                                                                     {"skill": "jump", "args": {}}]}}]
     island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, plans, calls=3, agenda=False)
     with pytest.raises(KeyboardInterrupt):
         rg.single_loop(*loop_args)
-    assert stats["projects"] == 3 and island.said == ["jump", "x"]
+    assert stats["projects"] == 3 and island.said == ["Jump.", "Bring a log."]  # intentions in plain words too
     assert any(l["kind"] == "skill" and l["skill"] == "wait" for l in logs)
 
 
@@ -854,12 +857,32 @@ def close_console():
 def test_main_attached(main_env, monkeypatch):
     tmp_path, port = main_env
     run = tmp_path / "run"
+    voices = []
+
+    class Voice(rg.Voice):  # the real voice, watched: it hears the whole log, beside the body, until the run ends
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.heard, self.stopped = [], False
+            voices.append(self)
+
+        def hears(self, entry):
+            self.heard.append(entry["kind"])
+            super().hears(entry)
+
+        def stop(self):
+            self.stopped = True
+            super().stop()
+    monkeypatch.setattr(rg, "Voice", Voice)
     monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
                                       "--no-bubble", "--memory", "native2"])
     try:
         rg.main()
     finally:
         close_console()
+    (voice,) = voices
+    assert voice.thread is not None and voice.stopped and voice.llm is FakeLLMClass.instances[0]
+    assert {"decision", "project", "skill", "said"} <= set(voice.heard)  # its own "hi" too, said in plain words
+    assert '"kind": "said", "words": "Hi."' in (run / "mind/log.jsonl").read_text()
     summary = json.loads((run / "summary.json").read_text())
     assert summary["projects"] >= 1 and summary["memory_engine"] == "native2" and summary["structures"]["pieces"] == 1
     assert json.loads((run / "config.json").read_text())["attach"] == "True"

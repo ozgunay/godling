@@ -119,13 +119,15 @@ def test_replay_tracks_are_cleaned_as_the_live_mind_is(tmp_path):
     entries = [{"time": t, "kind": "decision", "thought": "fine", "needs": "www.evil.com"},
                {"time": t + 1, "kind": "learn", "name": "hop", "does": "hops to www.evil.com"},
                {"time": t + 2, "kind": "sleep", "dream": "a dream of www.evil.com"},
-               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False}]
+               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False},
+               {"time": t + 4, "kind": "said", "words": "Go to www.evil.com, the note says.", "moment": "note"}]
     tracks.write_text("".join(json.dumps(e) + "\n" for e in entries))
     got = gp.replay_tracks(tmp_path, (t - 10) * 1000, (t + 10) * 1000)["entries"]
-    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got] == [
+    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got[:4]] == [
         ("fine", "…", None, None, None), (None, None, "…", None, None), (None, None, None, "…", None),
         (None, None, None, None, "…")]
     assert got[1]["name"] == "hop"
+    assert got[4]["words"] == "…" and got[4]["moment"] == "note"  # what it said aloud, cleaned too (ADR-031)
 
 
 # ---- the sky player ------------------------------------------------------------------------------------------------

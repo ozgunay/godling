@@ -480,6 +480,20 @@ def test_a_chosen_house_that_stands(monkeypatch, tmp_path):
     assert "house" not in mem.state
 
 
+def test_a_house_that_falls_is_logged_lost_once(monkeypatch, tmp_path):
+    # Run live: its house stood at 00:19 and was gone by morning, and nothing in the log said when (ADR-031: the
+    # voice speaks when the house is lost, and needs the moment).
+    island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, benchmark())
+    mind._choose_house({"inside": [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], "door": [0, -2.5]}, island.snap())
+    for name in ("Log_W0", "Log_W1", "Block_SE"):  # the roof's west side blown off
+        island.ents.pop(name)
+    mind.house_progress(island.snap())
+    mind.house_progress(island.snap())
+    lost = [l for l in logs if l["kind"] == "house" and l["phase"] == "lost"]
+    assert len(lost) == 1 and lost[0]["next"]
+    assert [l["phase"] for l in logs if l["kind"] == "house" and l["phase"] in ("built", "lost")] == ["built", "lost"]
+
+
 def test_planning_ahead_counts_the_agendas_pieces_as_taken(monkeypatch, tmp_path):
     # Run rp3: the plan made while the body raised a column took the column's blocks for a ring round it.
     island, body, library, mem, mind, wall = hut_island(monkeypatch, tmp_path)

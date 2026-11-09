@@ -377,7 +377,7 @@ def moderate_past(tracks):
             if quoted and quoted.group(1) not in sent | shown:
                 e["text"] = HIDDEN_NOTE
                 continue
-        for key in ("text", "thought", "needs", "intention", "goal", "name", "does", "dream"):
+        for key in ("text", "thought", "needs", "intention", "goal", "name", "does", "dream", "words"):
             if pattern and isinstance(e.get(key), str) and pattern.search(e[key]):
                 e[key] = HIDDEN_NOTE if key == "text" else "…"
     return {**tracks, "acts": kept}

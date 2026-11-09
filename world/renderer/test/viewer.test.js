@@ -611,6 +611,18 @@ describe('the viewer screen', () => {
     expect($('.b-feed .learned .open').getAttribute('aria-expanded')).toBe('true')
   })
 
+  it('shows what Godling says aloud as its own line, in plain words (ADR-031)', async () => {
+    const mind = { needs: '', feed: [
+      { time: NOW - 30, who: 'godling', text: 'Roof first.' },
+      { time: NOW - 10, who: 'godling', about: 'said', text: 'Two logs by Log_4 at (3, 4). I came back.' },
+    ] }
+    const { stage, $ } = await boot({ statuses: [panelStatus({ mind })], stored: { 'godling.mind': 'open' } })
+    const texts = [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
+    expect(texts).toEqual(['“Roof first.”', 'Said: “Two logs by a log. I came back.”'])
+    expect($('.b-feed .said svg')).not.toBeNull() // with a speech balloon, not the thought's
+    expect($('.b-feed .said').classList.contains('latest')).toBe(false) // the newest thought stays the thought
+  })
+
   it('folds the feed as a game folds its quest tracker: the newest thought, and each new line for a while', async () => {
     const mind = { needs: '', feed: [
       { time: NOW - 60, who: 'godling', text: 'An older thought.' },

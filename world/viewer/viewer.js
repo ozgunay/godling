@@ -231,14 +231,17 @@ function needsIcon(words) {
   return 'notice'
 }
 
-// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream. Its own words
-// (an intention, what a skill does) follow, with the world's names and coordinates made plain as in its thoughts.
+// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream, what it said
+// aloud. Its own words (an intention, what a skill does) follow, with the world's names and coordinates made plain as
+// in its thoughts.
 const lower = (s) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s)
 const ABOUT = {
   failed: ['close', (f) => `Couldn’t finish: ${lower(f.words)}`],
   stopped: ['pause', (f) => `Stopped to think again: ${lower(f.words)}`],
   learned: ['idea', (f) => `Learned “${String(f.name).replace(/_/g, ' ')}”${f.words ? `: ${f.words.replace(/\$(\w+)/g, 'the $1')}` : ''}`],
   dream: ['moon', (f) => `Dreamt: ${f.words}`],
+  // What it said aloud (ADR-031): the island's page in the frame shows only its picture, so its chat never shows here.
+  said: ['speech', (f) => `Said: “${f.words}”`],
 }
 // A Godling line longer than this may be cut by its clamp however wide the feed is (about 17 characters a line in the
 // narrowest window), so it is a button that opens it in full; it shows its chevron once it is cut (measureCuts).
