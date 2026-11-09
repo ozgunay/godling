@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Compare run_godling.py runs side by side (ADR-002 D5).
 
-Usage (inside WSL):  python3 compare_runs.py ~/godling-runs/m-003 ~/godling-runs/m-004 ...
+Usage (inside WSL):  python3 compare_runs.py [--minute N] ~/godling-runs/m-003 ~/godling-runs/m-004 ...
+
+--minute N compares every run at its Nth minute (ADR-030): the mind's log and the placements are cut there; the rows
+read from the recording's motion and stacks say "(whole run)".
 
 Rows: body busy share, motion share, waiting for the mind, decision speed and reasoning tokens,
 placements per hour (and per hour of the run, to see decay), tallest stack, cost.
@@ -19,27 +22,32 @@ import analyze_run as ar  # noqa: E402
 from stack_timeline import timeline  # noqa: E402
 
 
-def stats(run):
+def stats(run, minute=None):
     run = Path(run).expanduser()
-    m = ar.analyze_mind_log(run / "mind/log.jsonl")
+    m = ar.analyze_mind_log(run / "mind/log.jsonl", until_s=None if minute is None else minute * 60)
     hours = m["span_s"] / 3600 or 1e-9
+    whole = " (whole run)" if minute is not None else ""
     rec = sorted(glob.glob(str(run / "recordings/*.clawrec")), key=lambda p: Path(p).stat().st_size)[-1]
     r = ar.analyze_recording(Path(rec))
     db = sqlite3.connect(f"file:{rec}?mode=ro", uri=True)
     first = db.execute("SELECT MIN(time_ms) FROM inputs").fetchone()[0] or 0
-    per_hour = Counter(int((t - first) // 3600000) for (t,) in db.execute("SELECT time_ms FROM inputs WHERE input_type='Place'"))
+    per_hour = Counter(int((t - first) // 3600000) for (t,) in db.execute("SELECT time_ms FROM inputs WHERE input_type='Place'")
+                       if minute is None or t - first <= minute * 60000)
     stacks = timeline(run)
     cfg = json.loads((run / "config.json").read_text()) if (run / "config.json").exists() else {}
     return {
         "setup": f"{cfg.get('memory', 'native')}, agenda={cfg.get('agenda', 'False')}, walk={cfg.get('walk_speed', '16')}",
         "minutes": f"{m['span_s'] / 60:.0f}",
         "body busy": f"{m['busy_s'] / (m['span_s'] or 1):.0%}",
-        "moving (motion duty)": f"{(r['motion'] or {}).get('duty_cycle') or 0:.0%}",
+        "moving (motion duty)" + whole: f"{(r['motion'] or {}).get('duty_cycle') or 0:.0%}",
         "waited for mind": f"{m['waited_s'] / (m['span_s'] or 1):.0%}" if m["waited_s"] else "n/a",
         "decide latency p50": ar.fmt_s(ar.pct(m["decide_latency"], 50)),
         "decide latency p90": ar.fmt_s(ar.pct(m["decide_latency"], 90)),
         "waits over a minute": str(m["long_waits"]),
         "stop-gaps run / finished": f"{m['stopgaps']} / {m['stopgaps_ok']}",  # ADR-030
+        "first projects finished (after stop-gaps)": "{} ({})".format(
+            *(f"{ok / n:.0%}" if n else "n/a" for ok, n in (m["first_projects"]["otherwise"],
+                                                             m["first_projects"]["after_stopgap"]))),
         "reasoning tokens/decision": f"{sum(m['reasoning']) / len(m['reasoning']):.0f}" if m["reasoning"] else "n/a",
         "decisions/h": f"{m['decisions'] / hours:.0f}",
         "projects/h": f"{m['projects'] / hours:.0f}",
@@ -50,9 +58,13 @@ def stats(run):
         "answers given from the reasoning": str(m["answers_forced"]),
         "placements/h": f"{sum(per_hour.values()) / hours:.0f}",
         "placements by hour": " ".join(str(per_hour[h]) for h in sorted(per_hour)),
-        "tallest stack": str(max((p[1] for p in stacks), default=0)),
+        "tallest stack" + whole: str(max((p[1] for p in stacks), default=0)),
         **structure_rows(m, hours),
         "cost $/h": f"{m['cost'] / hours:.2f}",
+        "cost $/h by purpose": ", ".join(f"{k} {v / hours:.2f}" for k, v in sorted(m["cost_by"].items(),
+                                                                                   key=lambda kv: -kv[1])),
+        "house best score / stood": "n/a" if m["house_best"] is None else
+        f"{m['house_best']} / {'yes' if m['house_built'] else 'no'}",
         "+ memory engine $/h (est.)": hindsight_cost(run, hours),
     }
 
@@ -97,8 +109,12 @@ def hindsight_cost(run, hours):
     return f"{cost / hours:.2f}"
 
 
-runs = sys.argv[1:]
-rows = [stats(r) for r in runs]
+args = sys.argv[1:]
+minute = None
+if args[:1] == ["--minute"]:
+    minute, args = float(args[1]), args[2:]
+runs = args
+rows = [stats(r, minute) for r in runs]
 keys = list(rows[0])
 width = max(len(k) for k in keys)
 print(" " * width + " | " + " | ".join(Path(r).name.ljust(18) for r in runs))

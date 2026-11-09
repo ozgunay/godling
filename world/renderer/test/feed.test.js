@@ -15,6 +15,10 @@ describe('the mind on the screen', () => {
     expect(reduceStatus(crowded.entries, crowded.feed_kept, crowded.world_kept).feed).toEqual(crowded.feed)
   })
 
+  it('shows a stop-gap with no step of the agenda (ADR-030)', () => {
+    expect(reduceStatus(CASE.stopgap.entries).now).toEqual(CASE.stopgap.now)
+  })
+
   it('keeps half of the feed for Godling when the world is busy', () => {
     const entries = [{ time: 1, kind: 'decision', thought: 'Hm.', needs: '' },
       ...Array.from({ length: 20 }, (_, i) => ({ time: 2 + i, kind: 'event', text: `Coconut_${i} appeared` }))]

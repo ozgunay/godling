@@ -68,6 +68,18 @@ def test_compare_runs(tmp_path, monkeypatch, capsys):
     assert rows["tallest stack"][0] == "3" and rows["placements by hour"][0]
 
 
+def test_compare_runs_cuts_every_arm_to_the_same_minute(tmp_path, monkeypatch, capsys):
+    """Review of #80 (80-AB11): `--minute 30` compares the arms at their 30th minute; rows from the recording that are
+    not cut say so."""
+    a = compare_run(tmp_path / "m-030")
+    run_script("compare_runs.py", monkeypatch, "--minute", 30, a)
+    rows = {line.split("|")[0].strip(): [c.strip() for c in line.split("|")[1:]]
+            for line in capsys.readouterr().out.splitlines() if "|" in line}
+    assert rows["minutes"] == ["30"] and rows["pieces built in, by hour"] == ["3"] and rows["placements by hour"] == ["7"]
+    assert "tallest stack (whole run)" in rows and "first projects finished (after stop-gaps)" in rows
+    assert rows["cost $/h by purpose"][0].startswith("decide ")
+
+
 def test_compare_runs_without_measures(tmp_path, monkeypatch):
     run = tmp_path / "plain"
     standard_recording(run)
