@@ -72,6 +72,9 @@ TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"
            "project": ("phase", "goal", "intention", "ok"), "thinking": (), "plan_discarded": (),
            "learn": ("name", "does"), "sleep": ("dream",), "death": ("cause", "feeling"), "said": ("words", "moment"),
            "event": ("text", "sky", "sky_stage", "sky_id"), "glance": ("text", "degrees", "turned")}
+# The words of a tracked entry that viewers read, and so that the guest panel cleans and the site holds back when they
+# quote a hidden note (78-CLEAN8; web/apps/screen/views.py keeps a copy, held to this one by tools/tests).
+SHOWN_WORDS = ("text", "thought", "needs", "intention", "goal", "name", "does", "dream", "words")
 CHUNK_REL = re.compile(r"chunks/\d{4}-\d\d-\d\d/\d\d/\d{13}\.json\.gz")
 ASSET_URL = re.compile(r"^(?:[^?#]*/)?assets/([^/?#]+)$")  # /assets/x.glb, /island/assets/x.glb, …
 # A viewer's words the world keeps on the Clock for the mind (the latest note's text, main.lua). Never in a chunk: a
@@ -627,17 +630,20 @@ def marks_of(entry, best):
             if (stage == "warning") == (mark == "earthquake"):
                 return [(mark, f"{mark}:{entry['sky_id']}" if entry.get("sky_id") is not None else None)]
             return []
+        if entry.get("hit") in ("hurt", "struck"):  # what attention says it is (78-CLEAN11)
+            return [(entry["hit"], None)]
         for start, mark in (("It has started to rain", "rain"), ("Fog has rolled in", "fog"),
-                            ("A ship is passing", "ship"), ("You were hurt", "hurt"),
+                            ("A ship is passing", "ship"), ("You were hurt", "hurt"),  # the last two: older logs
                             ("Lightning struck you", "struck")):
-            if text.startswith(start):
+            if text.startswith(start) and not (mark in ("hurt", "struck") and "hit" in entry):
                 return [(mark, None)]
         if " has gone out" in text:
             return [("fire-out", None)]
     elif kind == "skill" and entry.get("ok"):
-        if "a flame caught" in text:
+        made = str((entry.get("facts") or {}).get("made") or "")  # what it made, not what a summary says (78-CDE1)
+        if made.startswith("Fire_"):
             return [("fire", None)]
-        if text.startswith("speared "):
+        if made.startswith("Catch_"):
             return [("fish", None)]
     elif kind == "structures":
         out = []

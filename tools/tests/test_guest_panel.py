@@ -130,6 +130,18 @@ def test_replay_tracks_are_cleaned_as_the_live_mind_is(tmp_path):
     assert got[4]["words"] == "…" and got[4]["moment"] == "note"  # what it said aloud, cleaned too (ADR-031)
 
 
+def test_the_site_holds_back_the_same_words_the_panel_cleans():
+    """78-CLEAN8: the words of the tracks viewers read are named once (replay.SHOWN_WORDS); the site, which does not
+    import the mind, keeps its own copy, held to it here."""
+    import ast
+    from pathlib import Path
+    views = Path(__file__).resolve().parents[2] / "web/apps/screen/views.py"
+    found = [ast.literal_eval(n.value) for n in ast.parse(views.read_text(encoding="utf-8")).body
+             if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "SHOWN_WORDS" for t in n.targets)]
+    assert found == [gp.replay.SHOWN_WORDS]
+    assert "words" in gp.replay.SHOWN_WORDS and "text" in gp.replay.SHOWN_WORDS
+
+
 # ---- the sky player ------------------------------------------------------------------------------------------------
 def test_sky_call_and_clock(world_server, monkeypatch):
     results = iter(["Ready", "Ready", "SkyDone:Stone:1"])

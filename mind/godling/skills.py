@@ -154,7 +154,7 @@ class Stuck(Interrupted):
 
 class Skills:
     def __init__(self, world, protected=lambda: set(), on_step=None, log=None, gifted=False, library=None,
-                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set()):
+                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set(), voice=None):
         self.world = world
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
@@ -167,7 +167,7 @@ class Skills:
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
         self.log = log or (lambda **kw: None)
-        self.voice = Voice(world, log=lambda **kw: self.log(**kw))  # what it says aloud, in plain words (ADR-031)
+        self.voice = voice or Voice(world, log=self.log)  # what it says aloud, in plain words (ADR-031)
         self.offered = {**PRIMITIVES, **(GIFTED if gifted else {})}
         self.library = library  # skills the mind taught itself (learned.SkillLibrary)
         self.busy = set()  # objects the current skill is handling; attention ignores their movement
@@ -2039,10 +2039,11 @@ class Skills:
     def skill_say(self, text):
         """Said in plain words, whoever chose them (ADR-031): run live spoke "bar at x -115 from z -49.5 to -30" and
         "Night 1245595". What a viewer cannot read is left out and the mind is told so; a line with nothing left is
-        not said, and the mind is told why."""
+        not said, and the mind is told why. Not said is no failed step: the project's building after it still runs
+        (78-CDE2)."""
         said, why = self.voice.say(text)
         if not said:
-            return Result(False, "say", f"not said: {why}")
+            return Result(True, "say", f"not said: {why}", {"said": False})
         try:
             self.world.act("Talk", {})  # the body talks along (the renderer's Talk clip)
         except WorldError:

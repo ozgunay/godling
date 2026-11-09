@@ -37,12 +37,14 @@ lines, and the intention posted to the chat at each project.
   digits or more.
 - **Names are put in words.** `Log_12` becomes "a log", `Log_6 and Log_7` becomes "two logs", `WestTower` becomes
   "west tower", and `arch_beam_115` becomes "arch beam".
-- **A line keeps at most 200 characters**, cut at a sentence end.
-- **If nothing readable is left, nothing is said, and the body says why.** The `say` step then fails with "not said:
+- **A bare pair of whole numbers is a place only where a place would be**: "at 15, 27" goes, "health 60, 47% fed"
+  stays. A size stays a size: "2 x 2", "two x two".
+- **A line keeps at most 200 characters**, cut at a sentence end, and the mind is told what came after was left out.
+- **If nothing readable is left, nothing is said, and the body says why.** The `say` step's summary is then "not said:
   it was all places as numbers, which the strangers who watch cannot read; say where in words (the west beach, by my
-  house)". When something was left out, its summary quotes what was said and names what was left out: `said "…"; left
-  out the world's counts and places: the strangers who watch read words, not your map`. The mind learns from its own
-  results, as it does from any refusal.
+  house)". The step does not fail: a project's building after it still runs. When something was left out, its summary
+  quotes what was said and names what was left out: `said "…"; left out the world's counts and places: the strangers
+  who watch read words, not your map`. The mind learns from its own results, as it does from any refusal.
 
 All 25 lines from the run, through it: none keeps a coordinate, a tick or a numbered name. For example:
 - "West sand, midday. My house stands at x -85 to -77.5, z -30 to -22.5, walls three high, roof on, door at -80,-30.
@@ -63,20 +65,29 @@ each kind of moment, a global gap between lines and a cap. Here the voice hears 
 
 | Moment | From the log | Priority | Cooldown |
 |---|---|---|---|
-| Its death (last words) | event `death: died` | 5 | none |
-| Its rebirth | the reflection's `feeling` (kind `death`); else 45 s after event `death: reborn` | 5 | none |
-| The sky hitting it | "Lightning struck you", "You were hurt by…", a meteor blast that threw it down, an earthquake's rumble | 4 | 120 s |
+| Its death (last words) | event `death: died`, while its body lies dead (`back` false) | 5 | none |
+| Its rebirth | the reflection's `feeling` (kind `death`), when it is a sentence; else 45 s after event `death: reborn`, or after a death seen only once it was back | 5 | none |
+| The sky hitting it | an event's `hit` (`struck`, `hurt`, `thrown` by a meteor's blast), or an earthquake's rumble; none while it lies dead, when the blow is the one that killed it | 4 | 120 s |
 | Losing its house | `house` phase `lost` with `was_house` (ADR-028, `Mind._house_lost`: once, when a house that stood is no house); its `text` is what it is told | 4 | 600 s |
-| A viewer's note arriving | event `sky: Note`, stage `arrived`: it answers the note | 3 | 90 s |
-| A big achievement | its house first stands, a flame catches, a fish speared, a new roof or enclosure (`structures`, after this run's first measure) | 2 | 300 s |
+| A viewer's note arriving | event `sky: Note`, stage `arrived`, its `note`: it answers the note | 3 | 90 s |
+| A big achievement | its house first stands, a step made a fire or a catch (`facts.made`: `Fire_…`, `Catch_…`), a new roof or enclosure (`structures`, after this run's first measure) | 2 | 300 s |
+
+The moments come from what the entries say they are (`death`, `back`, `hit`, `note`, `facts.made`), never from their
+wording: a `say` step quoting "a flame caught" is no fire. The timeline's markers (`replay.marks_of`) read the same
+fields, with the old wording kept only for logs from before them.
 
 Limits:
-- **A gap between lines.** There are 45 s between any two lines, its own `say` steps included, so a viewer can read
-  one before the next comes.
+- **A gap between lines.** The voice waits 45 s after any line, the `say` steps' too, so a viewer can read one before
+  the next comes. The `say` steps are the mind's own choice and are not held. A line said while the voice's words are
+  on their way puts the voice's line back a gap later, with its words: no second call.
 - **Death and rebirth wait only a breath** (8 s), and do not count toward the cap. There is one of each per death.
 - **A cap of 20 lines an hour** from the voice. Each takes one model call at most, so cost is bounded.
 - **A moment not spoken within 90 s is dropped**, since the news has moved on.
-- **A death drops whatever the last life still had waiting.** A line whose words come back after a death is not said.
+- **A death drops whatever the last life still had waiting.** A line whose words come back after a death is not said,
+  and the blow that killed it, seen in the same look as the death, is not spoken after the rebirth.
+- **One line about coming back.** It counts as said only once it is: a failed call leaves the reflection's line to say.
+- **The limits run on a clock that never steps back** (`time.monotonic`), so a resync of the host's clock cannot hold
+  its last words or drop what waits.
 - **The most important moment goes first.**
 
 The words are its own. Each line comes from one short model call (`LLM.quick_json`, no reasoning, the bubble's kind of
@@ -88,8 +99,10 @@ another log." The voice's prompt treats a note as the mind's prompt does: a stra
 check backs this up: an answer that repeats four or more words of the note in a row is not said. Every line passes
 `plain`.
 
-The mind is told what its voice said, in its next plan's notes ("You said aloud, as it happened: …"). That way what it
-plans and what it said stay one story.
+The mind is told what its voice said, in its next plan's notes ("You said aloud, as it happened: …",
+`Mind.said_aloud`). That way what it plans and what it said stay one story. The voice tells it from its own thread, so
+a note told while a plan's prompt is being built waits for the next plan instead of being dropped with the notes that
+plan delivered.
 
 The voice runs in a thread of its own, beside the bubble, so a model call never holds the body up. It does not play the
 Talk gesture. In the world, Talk writes `LastActionResult`, which the body's own steps read. The bubble's `Think` was
@@ -101,7 +114,10 @@ Each spoken line is logged as `{"kind": "said", "words", "moment", "left_out"}`.
   checked against the same cases (`mind/tests/feed.json`, `spoken`).
 - The packer keeps it in the tracks (`TRACKED["said"]`).
 - The screen draws it as `Said: “…”` with a speech-balloon icon. The words go through the screen's own plain-names
-  pass too.
+  pass too. That pass now also takes out places as the mind writes them (`x -115`, `z=-7.5`, `-85 to -77.5`, `8.75 over
+  -7.5`) and the world's tick counts from every line the screen shows: its thoughts and what it does now as well (run
+  live: 119 of 857 intentions and 79 of 193 thoughts showed places as numbers). It runs in the browser, after the
+  site's moderation, which has to see a hidden note's words as they were written.
 - The words are under `words`, not `text`, so moderation treats them as Godling's own. In replays (`moderate_past`)
   a line quoting a hidden note becomes "…". Live, `moderate_mind` already covers every feed line, and the guest panel
   cleans links and slurs from it (`clean_shown`).
@@ -153,7 +169,11 @@ New and changed tests:
   feed, read the same way live and in replay.
 - `world/renderer/test/viewer.test.js`: the screen draws `Said: “…”` in plain words, with its icon.
 - `tools/tests/test_guest_panel.py`, `web/apps/screen/tests.py`: spoken lines are cleaned and moderated in replays.
-- Suites, run locally (CI is not running): the mind (390), the tools (62), the site (202), the renderer (220, with
+- After the review of #78 (29 findings, fixed in their own PR): a test for each one fixed, in `test_speech.py`,
+  `test_mind.py`, `test_attention.py`, `test_replay_restore.py`, `test_run_godling.py` (a note coming down through
+  `main()`, its line in the chat and the mind told), `test_guest_panel.py` (the site's moderated words held to the
+  panel's) and `viewer.test.js` (the now line and thoughts). Run against the code before the fixes, 25 of them fail.
+- Suites, run locally (CI is not running): the mind (407), the tools (63), the site (202), the renderer (221, with
   coverage) and the world (99; `main.lua` is untouched).
 
 ## Not checked
@@ -165,6 +185,8 @@ New and changed tests:
   the real cost.
 - **Whether its own `say` lines get plainer.** The body tells the mind what it left out. Whether the mind writes
   differently afterwards is not known.
+- **The screen's pass is its own, simpler copy** of the place rules, in JavaScript: it takes out a place and the
+  word that led to it, but does not drop what is left of a clause as `plain` does, so a thought can keep a stray word.
 - **The filter is English-shaped.** A coordinate written another way (say "at -115/-30") can slip through, and an
   unusual sentence can lose a little more than it should.
 - **The chat panel on the bare island page** (the guest panel's view) still shows every intention, now in plain words.

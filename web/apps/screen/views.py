@@ -319,6 +319,9 @@ def api_report(request):
 
 
 HIDDEN_NOTE = "A note drifted down; moderators have hidden it."
+# The words of a replay's entries that viewers read: mind/godling/replay.py SHOWN_WORDS, which the site does not import
+# (tools/tests/test_guest_panel.py holds the two the same).
+SHOWN_WORDS = ("text", "thought", "needs", "intention", "goal", "name", "does", "dream", "words")
 REPLAY_PARTS = ("index", "tracks", "marks", "sky")
 REPLAY_TIMEOUT = 5  # seconds: a replay request waits no longer than this for the panel (no request waits long)
 REPLAY_INDEX_KEY = "godling:replay-index"
@@ -377,7 +380,7 @@ def moderate_past(tracks):
             if quoted and quoted.group(1) not in sent | shown:
                 e["text"] = HIDDEN_NOTE
                 continue
-        for key in ("text", "thought", "needs", "intention", "goal", "name", "does", "dream", "words"):
+        for key in SHOWN_WORDS:
             if pattern and isinstance(e.get(key), str) and pattern.search(e[key]):
                 e[key] = HIDDEN_NOTE if key == "text" else "…"
     return {**tracks, "acts": kept}
