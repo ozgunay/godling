@@ -163,8 +163,10 @@ def main():
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
+        skills.on_reflex = attention.notice  # a reflex it took (taking shelter, ADR-028) is news for the next plan
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
                     discovery=discovery, house_project=args.house_project)
+        mind.on_news = attention.notice  # so is its house lost (ADR-028)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
@@ -529,6 +531,7 @@ def watch_while_thinking(future, world, attention, skills):
     """No idle behaviours: the body waits for its mind. But it keeps watching, so what happens meanwhile still
     gets a glance, and the next plan hears of it."""
     while not future.done():
+        snap = None
         try:
             snap = observe_body(world, attention)
             if snap.dead or getattr(attention, "death_pending", False):
@@ -536,6 +539,7 @@ def watch_while_thinking(future, world, attention, skills):
         except WorldError:
             pass  # the plan on its way is worth more than one missed look
         skills.steady()  # braced through an earthquake, if the ground rumbles
+        skills.take_shelter(snap=snap)  # under a roof, if cold and hurt with nothing over it (ADR-028)
         skills.glance()
         time.sleep(0.25)
 

@@ -43,6 +43,15 @@ class BrainMemory(NativeMemory):
     def note(self, text, about="", importance=3, tick=0):
         """Store the episode, and fold the conclusion into semantic memory under its subject."""
         episode = super().note(text, about, importance, tick)
+        self._fold(about, text, tick)
+        return episode
+
+    def amend(self, text, about="house", tick=0, entities=()):
+        """Also correct what it believes about the subject (a house it believes finished broke)."""
+        super().amend(text, about, tick, entities)
+        self._fold(about, text, tick)
+
+    def _fold(self, about, text, tick):
         subject = self._subject(about)
         facts = self.facts.setdefault(subject, [])
         for fact in facts:
@@ -54,7 +63,6 @@ class BrainMemory(NativeMemory):
             if len(facts) > MAX_FACTS_PER_SUBJECT:
                 facts.sort(key=lambda f: (f["seen"], f["last_tick"]))
                 facts.pop(0)
-        return episode
 
     def recall_for(self, entities, text, limit=8):
         """Facts about what is in view or named in the cue, plus a few relevant episodes."""

@@ -82,6 +82,21 @@ GLANCE_IN_VIEW = 45  # degrees: something this close to straight ahead is alread
 GLANCE_HOLD = 0.4  # seconds the body keeps looking before it goes on
 BRACE_LONGEST = 90  # seconds: a quake's rumble, shaking and fade take 33; the world lets go when it is over
 LOOK_BEFORE_BRACE = 0.15  # the rumble reaches this strength 2 s in (main.lua); until then the body looks around
+# The shelter reflex (ADR-028): chilled with nothing over it and its health below COLD_HEALTH, the body goes to the
+# nearest roof it knows before it carries on. Once it has, it lets the mind take it out again (for food, say) until its
+# health has fallen COLD_AGAIN further; the danger is over at WARM_AGAIN, or once it stands in the open unchilled.
+COLD_HEALTH = 35  # about 14 minutes from death by cold in the open (main.lua HARM.coldDrainSeconds)
+COLD_AGAIN = 10
+WARM_AGAIN = 50  # half: fed, it mends from here
+SOAKED = 50  # main.lua WEATHER: soaked this far out in the rain, the body is cold
+COLD_DRAIN_SECONDS = 2400  # main.lua HARM.coldDrainSeconds: the cold takes a whole body's health in 40 minutes
+SHELTER_REACH = 80.0  # how far it goes for a roof: under half a minute's walk in the rain
+SHELTER_TRIES = 3  # roofs walked to in one go, when the world finds no shelter under the one it reached
+SHELTER_SETTLE = 1.2  # seconds for the world to say what is over the body (it looks twice a second, a house once)
+ROOF_HIGHEST = 15.0  # main.lua shelterOf: something overhead within ten above the crown keeps the rain off
+FELT_KEPT = 200  # spots where the body felt a roof over it, the latest kept
+ROOF_KINDS = SNAPPED_KINDS + ("Brick_", "Boulder_")  # building pieces: what a roof is made of
+SHELTER_LETS = ("eat", "say")  # steps over at once that take the body nowhere: eating is what lets it mend
 
 
 def _quarter(turn):
@@ -169,11 +184,19 @@ class Skills:
         self.busy = set()  # objects the current skill is handling; attention ignores their movement
         self._depth = 0
         self._lifting = False  # in the middle of lifting a way out of a pen (no second one inside it)
+        self.on_reflex = lambda text, salience: None  # attention hook: what a reflex did, news for the mind
+        self.felt = {}  # cell -> (x, z, "house", "enclosed" or "roof"): where the body felt a roof over it (ADR-028)
+        self._chill = None  # one spell of danger from the cold: when it took shelter, what kept nothing off, said
 
     # ---- entry point -------------------------------------------------------------------
     def run(self, skill, args):
         if self._depth == 0:
             self.steady()
+            urgent = self.take_shelter(skill, args)
+            if urgent:  # an urgent need breaks into the work: the step waits, and the mind plans from where it is
+                self.log(kind="skill", skill=skill, args=args, ok=False, summary=f"interrupted: {urgent}", facts={},
+                         seconds=0.0)
+                return Result(False, skill, f"interrupted: {urgent}")
             self.glance()
         started = time.time()
         if self.library is not None and any(isinstance(v, dict) for v in args.values()):
@@ -274,6 +297,147 @@ class Skills:
         except WorldError as err:
             self.log(kind="error", message=f"brace: {err}")
 
+    def take_shelter(self, skill=None, args=None, snap=None):
+        """Reflex (ADR-028), like bracing: chilled (cold, or soaked out in the rain) with nothing over it and its health
+        below COLD_HEALTH, the body goes to the nearest roof it knows before it carries on with `skill`: one it felt
+        over it before or one it sees, which the world must then find keeps the rain off. As in survival games (in
+        RimWorld a freezing pawn goes to a warm room by itself), an urgent need breaks into the work; what to do next
+        stays the mind's. Returns what it did, in words for the mind, when it took shelter or found none (which it says
+        once); None when there was nothing to do. A walk to a roof is let go, the mind is already taking it there, and
+        so is a step that takes it nowhere and is over at once (SHELTER_LETS).
+        `snap` is an observation just made, if there is one (a quake it braced through since is still in it)."""
+        try:
+            snap = snap or self.world.observe()
+        except WorldError as err:
+            self.log(kind="error", message=f"shelter: {err}")
+            return None
+        self._feel(snap)
+        if snap.health is None or snap.dead or not snap.has_world:
+            return None
+        covered = snap.in_house or bool(snap.sheltered)
+        chilled = snap.cold or (snap.in_rain and snap.wet >= SOAKED)
+        if snap.health >= WARM_AGAIN or not (covered or chilled):
+            self._chill = None  # the danger is over: the next one is a new one
+            return None
+        if covered or not chilled or snap.health >= COLD_HEALTH or snap.drowning or snap.quake_phase:
+            return None
+        bout = self._chill = self._chill or {"took": None, "tried": set(), "said": False}
+        if bout["took"] is not None and snap.health > bout["took"] - COLD_AGAIN:
+            return None  # it took shelter, and the mind has taken it out again: not until it is worse
+        if skill in SHELTER_LETS:
+            return None
+        if skill == "walk_to" and isinstance(args, dict):
+            try:
+                if self._roof_over(snap, float(args["x"]), float(args["z"])) is not None:
+                    return None
+            except (KeyError, TypeError, ValueError):
+                pass
+        try:
+            return self._seek_shelter(snap, bout)
+        except WorldError as err:
+            self.log(kind="error", message=f"shelter: {err}")
+            return None
+
+    def _seek_shelter(self, snap, bout):
+        health, start = snap.health, f"({snap.me[0]:.1f}, {snap.me[2]:.1f})"
+        chill = ("cold and soaked in the rain" if snap.cold and snap.in_rain and snap.wet >= SOAKED
+                 else "cold" if snap.cold else "soaked in the rain")
+        minutes = health / 100 * COLD_DRAIN_SECONDS / 60 * (2 if snap.by_fire else 1)
+        tried = []
+        for far, name, (x, z), _ in self._shelters(snap, bout["tried"])[:SHELTER_TRIES]:
+            try:
+                self.skill_walk_to(x, z)
+            except Stuck:
+                here = None
+            except Interrupted as why:
+                text = (f"You were {chill}, your health down to {health:.0f} of 100, with nothing over you at {start}. "
+                        f"Your body set off for the roof at ({x:.1f}, {z:.1f}), {far:.0f} units away, but stopped: {why}.")
+                self._tell(text, ok=False, health=health, to=[round(x, 1), round(z, 1)], tried=tried)
+                return text
+            else:
+                time.sleep(SHELTER_SETTLE)
+                here = self.world.observe()
+                self._feel(here)
+            if here is not None and (here.in_house or here.sheltered):
+                bout["took"] = health
+                text = (f"You were {chill}, your health down to {health:.0f} of 100, with nothing over you at {start}: "
+                        f"out there the cold would take the rest of it in about {minutes:.0f} minutes. Your body went by "
+                        f"itself to the nearest roof it knows, {far:.0f} units away, and stands under it at "
+                        f"({here.me[0]:.1f}, {here.me[2]:.1f}){_weather_here(here)}.")
+                self._tell(text, ok=True, health=health, to=[round(x, 1), round(z, 1)], tried=tried)
+                return text
+            bout["tried"].add(name)  # the world keeps nothing off under it: not that one again while the danger lasts
+            tried.append(name)
+        if bout["said"]:
+            return None
+        bout["said"] = True
+        went = (f" It went under {' and '.join(tried)}, but the rain still reached it there." if tried else "")
+        text = (f"You are {chill}, your health down to {health:.0f} of 100, with nothing over you at {start}, and your "
+                f"body knows no roof within {SHELTER_REACH:.0f} units to shelter under: out here the cold takes the rest "
+                f"of your health in about {minutes:.0f} minutes.{went}")
+        self._tell(text, ok=False, health=health, to=None, tried=tried)
+        return text
+
+    def _tell(self, text, **facts):
+        self.log(kind="reflex", reflex="shelter", text=text, **facts)
+        self.on_reflex(text, 4)
+
+    def _feel(self, snap):
+        """Where the body feels a roof over it, it knows a shelter; where it stands in the open, that there is none."""
+        if not snap.has_world or snap.dead:
+            return
+        cell = (round(snap.me[0] / CUBE), round(snap.me[2] / CUBE))
+        self.felt.pop(cell, None)
+        if snap.in_house or snap.sheltered:
+            self.felt[cell] = (snap.me[0], snap.me[2], "house" if snap.in_house else snap.sheltered)
+            if len(self.felt) > FELT_KEPT:
+                self.felt.pop(next(iter(self.felt)))
+
+    @staticmethod
+    def _roof_over(snap, x, z):
+        """The name of the piece over (x, z) that would keep the rain off a body standing there (main.lua shelterOf:
+        something held overhead, within ten above the crown), with room under it to stand; or None. As the body sees
+        it: the world has the last word."""
+        floor = snap.ground_top(x, z)
+        if floor is None:
+            return None
+        over = None
+        for *_, top, e, terrain in snap._standable_index().at(x, z, strict=True):
+            if terrain or not e.anchored or not e.name.startswith(ROOF_KINDS) or top <= floor + STEP:
+                continue
+            bottom = e.pos[1] - e.size[1] / 2
+            if bottom < floor + BODY_HEIGHT + 0.05:
+                return None  # in the way: no room to stand there
+            if bottom <= floor + ROOF_HIGHEST and (over is None or bottom < over[0]):
+                over = (bottom, e.name)
+        return over[1] if over else None
+
+    def _shelters(self, snap, tried):
+        """The roofs the body knows within reach, but those in `tried`, nearest first: one spot under each, from where
+        it felt a roof over it and the cells under pieces lying high over the ground. [(distance, roof, (x, z), kind)]"""
+        spots = list(self.felt.values())
+        held = snap.held()
+        for e in snap.movables():
+            if (e is held or not e.anchored or not e.name.startswith(ROOF_KINDS)
+                    or hdist(e.pos, snap.me) > SHELTER_REACH + max(e.size[0], e.size[2]) / 2
+                    or e.pos[1] - e.size[1] / 2 < (snap.ground_top(e.pos[0], e.pos[2]) or 0.0) + BODY_HEIGHT):
+                continue  # most pieces lie on the ground
+            for ix in range(math.ceil((e.pos[0] - e.size[0] / 2) / CUBE - 1e-9),
+                            math.ceil((e.pos[0] + e.size[0] / 2) / CUBE - 1e-9)):
+                for iz in range(math.ceil((e.pos[2] - e.size[2] / 2) / CUBE - 1e-9),
+                                math.ceil((e.pos[2] + e.size[2] / 2) / CUBE - 1e-9)):
+                    spots.append((ix * CUBE, iz * CUBE, "roof"))
+        best = {}
+        for x, z, kind in spots:
+            far = math.hypot(x - snap.me[0], z - snap.me[2])
+            name = self._roof_over(snap, x, z) if far <= SHELTER_REACH else None
+            if name is None or name in tried:
+                continue
+            rank = (round(far, 1), kind != "house")  # as near, a house it stood in first: only a house is warm
+            if name not in best or rank < best[name][0]:
+                best[name] = (rank, (x, z), kind)
+        return [(rank[0], name, xz, kind) for name, (rank, xz, kind) in sorted(best.items(), key=lambda b: b[1][0])]
+
     def take_placed(self):
         """The pieces the body set down (place_at, put_down) since the last call, at any depth: inside a learned
         skill too, where most building happens (run hut1: every block went down through stack_block or haul_to)."""
@@ -283,6 +447,7 @@ class Skills:
     # ---- helpers -----------------------------------------------------------------------
     def _observe(self):
         snap = self.world.observe()
+        self._feel(snap)
         if self.on_step:
             self.on_step(snap)
         return snap
@@ -2047,5 +2212,8 @@ class Skills:
             time.sleep(1.0)
             snap = self._observe()
             self.steady()
+            urgent = self.take_shelter(snap=snap)
+            if urgent:
+                return Result(False, "wait", f"interrupted: {urgent}")
             self.glance()
         return Result(True, "wait", f"waited {seconds}s" + _weather_here(snap or self._observe()))

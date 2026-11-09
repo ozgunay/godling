@@ -129,6 +129,16 @@ class Attention:
         events, self.pending = self.pending, []
         return events
 
+    def notice(self, text, salience=4, **extra):
+        """What it is told rather than sees (ADR-028): its body took shelter by itself, its house is lost. News for the
+        next plan and for a death report, like what it sees. It interrupts nothing by itself: a reflex that tells it has
+        already stopped the step in progress."""
+        event = {"text": text, "salience": salience, "entities": list(extra.pop("entities", [])),
+                 "tick": self.prev.tick if self.prev is not None else 0, **extra}
+        self.pending.append(event)
+        self.noticed.append((time.time(), text))
+        self.log(kind="event", **event)
+
     def death_report(self, snap, doing=None):
         """What the mind is told once it is born again: what killed it, how its body was over the minutes before,
         what it was doing and what it noticed. Facts only: the lesson is the mind's own to draw (run_godling.py)."""
