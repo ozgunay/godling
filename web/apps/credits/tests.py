@@ -576,7 +576,8 @@ class LogReachTests(TestCase):
         self.assertEqual(log["rule"], "Within 60 of Godling: an aim further out lands at the edge")
         self.assertEqual(log["does"], self.migration.NEW)
         self.assertIn("beside Godling's house and never on it", log["does"])
-        self.assertEqual(services.powers()["Stone"]["rule"], "")  # the other powers are as they were
+        stone = services.powers()["Stone"]  # a stone keeps off the house too (the review of #79); its rule is as it was
+        self.assertEqual((stone["does"], stone["rule"]), (self.migration.STONE_NEW, ""))
 
     def test_words_written_in_the_admin_stay_and_the_seeded_ones_go_back(self):
         Power.objects.filter(key="Log").update(rule="Mine", description="Mine too")
@@ -587,6 +588,7 @@ class LogReachTests(TestCase):
         self.migration.backward(django_apps, None)
         self.assertEqual((Power.objects.get(key="Log").rule, Power.objects.get(key="Log").description),
                          ("", self.migration.OLD))
+        self.assertEqual(Power.objects.get(key="Stone").description, self.migration.STONE_OLD)
 
 
 class StripeErrorTests(TestCase):

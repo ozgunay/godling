@@ -3,22 +3,30 @@
 The world cannot tell a house from its pieces until it stands (main.lua houseAt): while it goes up, its room is open
 grass and its walls are a few pieces. In the live run of 2026-11-08/09, logs viewers dropped from the sky landed on
 its walls and round its room, and the clutter stopped Godling building. So the mind tells the world, with the input
-HouseSite, every cell the house needs: its room, its walls all round (corners too), its doorway and the way out. The
-sky keeps viewers' logs off those cells (main.lua sky.aim.keeper). It tells the world nothing new about building and
-places nothing: a site, as a colony game keeps a zone, not a step towards guided construction.
+HouseSite, every cell the house needs: its room, its walls all round (corners too), its doorway, the way out and the
+cells round the way out (its apron). The sky keeps viewers' gifts off those cells (main.lua sky.aim.offSite). It tells
+the world nothing new about building and places nothing: a site, as a colony game keeps a zone, not a step towards
+guided construction.
 """
-from .house import outside_of, ring
+from .house import outside_of, ring, sides
 from .world import WorldError
 
 
 def house_cells(memory):
-    """Every cell (ix, iz) the house the mind is building needs, sorted; none without a house or the house project."""
-    house = (memory.state.get("house") or {}) if getattr(memory, "house_project_enabled", False) else {}
-    if not house.get("inside") or not house.get("door"):
+    """Every cell (ix, iz) the house the mind is building needs, sorted; none without a house or the house project.
+
+    What the body keeps clear (NativeMemory.reserved_cells: the room, the doorway, the way out), so that one rule says
+    which cells a house needs, with two more for the sky: the walls, where a log would be in the way of building them,
+    and the apron round the way out, its flanks and the cell beyond, where one log across it and another beside it
+    would close it (review of #79, 79-AB2)."""
+    reserved = memory.reserved_cells()
+    if not reserved:
         return []
+    house = memory.state["house"]
     room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
     out = outside_of(room, door)
-    return sorted(set(room) | set(ring(room)) | {door} | ({out} if out is not None else set()))
+    apron = set(sides([out])) - {door} if out is not None else set()
+    return sorted(set(reserved) | set(ring(room)) | apron)
 
 
 class HouseSite:
