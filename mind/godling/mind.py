@@ -7,6 +7,7 @@ A decision is split in three so the mind can think while the body moves (ADR-002
   only if the plan is actually used.
 """
 import json
+import threading
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -54,7 +55,9 @@ arguments may use your parameters ("$object") and these helpers, worked out at t
   {"x": vector}, {"y": vector}, {"z": vector} -> one coordinate
   {"nearest_free": "cube"} -> the nearest block nobody has claimed; also "stone" (quarried blocks), "log" or "boulder"
 A step may have "repeat": n. Example: {"skill": "place_at", "args": {"x": {"x": {"pos": "$o"}}, "y": 3, "z": {"z": {"pos": "$o"}}}}
-New skills are "unproven" until one full run succeeds. Fix or forget skills that keep failing."""
+New skills are "unproven" until one full run succeeds. Fix or forget skills that keep failing. A skill that has worked
+keeps its steps until it has failed as many times in a row as it has worked (at least 3) or gone 2 hours without
+working; to try other steps before then, teach them under a new name."""
 
 AGENDA_RULES = """Plan an agenda: 1-6 projects in order, each with 1-12 steps. While your body works through the agenda
 you are already thinking about what comes after it, so give it enough to do: if your body runs out of
@@ -204,9 +207,12 @@ class Mind:
         self.last_outcome = "You just woke up."
         self.failures = []  # recent failed goals, to break loops
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
+        self.notes_lock = threading.Lock()  # its voice tells it from a thread of its own (told, ADR-031)
+        self._noted = 0  # how many notes the prompt being built holds: delivered once it is
         self.think_s = None  # running estimate of how long a plan takes to think up
         self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
         self.memory.house_project_enabled = house_project
+        self.on_news = lambda text, salience: None  # attention hears what the mind finds out (run_godling: notice)
         self.skills.on_placed = self.record_placement
         on_step = self.skills.on_step
 
@@ -335,8 +341,8 @@ the spot, if there is something. To stand
 under something it needs more room than its own height: an underside two blocks up, exactly as tall as you, is too low.
 You can build. A building block is 2.5 units on every side, half your height, and whatever you set down
 settles into a grid of cells 2.5 apart. Things you can build with: stone blocks, which a hammer breaks
-off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back) and
-which sometimes wash up on the beach; boulders, which are very heavy. The ladder is three blocks tall; your hands
+off the quarry; logs, beams three blocks long and one thick: an axe fells a tree into one, and the tree grows back;
+boulders, which are very heavy. The ladder is three blocks tall; your hands
 set nothing on a standing ladder or at its foot, since that would close the way up it.
 Pieces you set down can be turned a quarter round or stood on end, and fastened in place, like mortar.
 Your body grows hungry. With nothing left in you, you lose health, and with no health you die. You come back to life
@@ -357,7 +363,8 @@ close by halves it too. Only inside a house are you warm, whatever the night. A 
 two, clear to stand in on one floor; walls all round it, corners too, filled from the ground up to the roof, but for one
 doorway on a side, open up to the roof and onto open ground; and a roof over all of it, the walls and the doorway too,
 with more room under it than your height (on walls three blocks high).
-Inside your house a fed body mends twice as fast.
+Inside your house a fed body mends twice as fast. Cold and badly hurt with nothing over you, your body goes by itself
+to the nearest roof it knows.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before. It lands
 glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like metal, unlike the island's
@@ -562,8 +569,11 @@ thought and in that project's intention."""
                          + (": those pieces will be where it puts them, not loose." if moves or unnamed else "."))
         if self.agenda and self.think_s:
             lines.append(f"You take about {self.think_s:.0f}s to think up a plan. {BUSY_HINT}")
-        if self.notes:
-            lines.append("Notes: " + " ".join(self.notes))
+        with self.notes_lock:
+            notes = list(self.notes)
+        self._noted = len(notes)
+        if notes:
+            lines.append("Notes: " + " ".join(notes))
         if events:
             lines.append("You noticed: " + "; ".join(e["text"] for e in events[-8:]))
         if chat:
@@ -576,6 +586,8 @@ thought and in that project's intention."""
             lines.append("Memories that may matter:\n" + "\n".join(f"- [tick {m['tick']}] {m['text']}" for m in recalled["episodes"]))
         if self.memory.state["digest"]:
             lines.append("Your story so far:\n" + self.memory.state["digest"])
+        if self.memory.state.get("amendments"):  # what has made that story wrong since it was written (ADR-028)
+            lines.append("Since you wrote that: " + " ".join(self.memory.state["amendments"]))
         intentions = self.memory.open_intentions()
         if intentions:
             lines.append("Your intentions for later: " + "; ".join(i["text"] for i in intentions))
@@ -597,15 +609,74 @@ thought and in that project's intention."""
         if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
             house["installed"] = len(found["pieces"])
             self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
+        if snap.quake_phase or self._settling(house, observed):
+            return found  # pieces the shaking woke stand where they did, not yet settled: judged once they are still
+        was_house = bool(house.get("built"))
+        had = house.get("had")  # the pieces it had at the last look at this layout, and where; None at the first
+        gone = self._house_gone(had, found, observed) if had is not None else []
+        house["had"] = {n: [round(v, 2) for v in observed.entities[n].pos] for n in found["pieces"]
+                        if n in observed.entities}
+        if had is not None and (gone or (was_house and not found["house"])):
+            unhoused = was_house and not found["house"]
+            if unhoused:  # rebuilding it is progress, and no stall is reckoned from the house it was (run live: "no
+                house["best"], house["best_at"] = found["score"], time.time()  # further in 381 minutes")
+            self._house_lost(snap, house, found, gone, len(had), unhoused)
         if found["score"] > house.get("best", -1):
             house["best"], house["best_at"] = found["score"], time.time()
             self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
         if found["house"] and not house.get("built"):
             house["built"] = time.time()
             self.log(kind="house", phase="built", inside=house["inside"], door=house["door"])
+            if house.pop("lost", None):
+                text = f"Your house at {at(house['inside'][0])} stands as a house again: it keeps the rain and the cold off you."
+                self.memory.amend(text, tick=snap.tick)
+                self.on_news(text, 4)
         elif not found["house"]:
             house["built"] = None
         return found
+
+    @staticmethod
+    def _house_gone(had, found, observed):
+        """The pieces of the house it had at the last look (`had`: name -> where it stood) that are not in it now and
+        are gone from where they stood (ADR-028). A piece still where it stood but no longer reckoned the house's own
+        (now in its way) is not gone. A house kept from before ADR-028, or one the mind changed (_choose_house), has
+        no record: its first look only takes note of its pieces."""
+        now = set(found["pieces"])
+        return sorted(n for n, was in had.items() if n not in now and (
+            n not in observed.entities or hdist(observed.entities[n].pos, was) > 0.5
+            or abs(observed.entities[n].pos[1] - was[1]) > 0.5))
+
+    @staticmethod
+    def _settling(house, observed):
+        """Whether a piece of the house stands where it stood but is not yet settled: woken by a quake (main.lua wakes
+        loose pieces as it shakes and lets them settle once it is still), it does not count as a wall or roof."""
+        return any(n in observed.entities and hdist(observed.entities[n].pos, was) <= 0.5
+                   and (not observed.entities[n].anchored or observed.entities[n].attrs.get("Settled") is False)
+                   for n, was in (house.get("had") or {}).items())
+
+    def _house_lost(self, snap, house, found, gone, had, unhoused):
+        """Its house stopped being a house (`unhoused`), or lost pieces it had: the mind hears it plainly and at once
+        (ADR-028), as news (the death report keeps it too) and in memory, and once it was a house, in the line about it
+        and after its story so far until it is a house again."""
+        where = at(house["inside"][0])
+        names = ", ".join(gone[:6]) + (f" and {len(gone) - 6} more" if len(gone) > 6 else "")
+        if unhoused:
+            roofed = "the roof is over the room" in found["done"]  # main.lua: any roof keeps the rain off
+            text = (f"Your house at {where} is no longer a house: "
+                    + (f"{len(gone)} of the {had} pieces in its walls and roof are gone or knocked out of place ({names})"
+                       if gone else "something in it has changed; the line about your house says what it is short of")
+                    + (". Its roof still keeps the rain off, but no longer the cold." if roofed else
+                       ". It no longer keeps the cold off you, nor the rain where its roof is gone."))
+            house["lost"] = {"at": time.time()}
+            self.memory.amend(text, tick=snap.tick, entities=gone)
+        else:
+            text = (f"Part of your house at {where} came down: {' and '.join(gone) if len(gone) <= 2 else names} "
+                    f"{'is' if len(gone) == 1 else 'are'} gone or knocked out of place ({len(found['pieces'])} of its "
+                    "pieces stand).")
+            self.memory.store_experience(text, kind="house", tick=snap.tick, entities=["house", *gone], importance=4)
+        self.on_news(text, 5 if unhoused else 4)
+        self.log(kind="house", phase="lost", was_house=unhoused, house=found["house"], had=had,
+                 pieces=len(found["pieces"]), gone=gone, score=found["score"], text=text)
 
     def _house_line(self, snap):
         house = self.memory.state["house"]
@@ -619,6 +690,10 @@ thought and in that project's intention."""
         line = (f"Your house, the one project you keep across your plans (chosen "
                 f"{int((time.time() - house['since']) / 60)} minutes ago{after}): inside {cells}, the doorway at "
                 f"{at(house['door'])}. ")
+        lost = house.get("lost")
+        if lost and not found["house"]:  # ADR-028: said while it lasts, not only once
+            line += (f"It stood as a house until {int((time.time() - lost['at']) / 60)} minutes ago; now it is no house, "
+                     "and keeps neither the cold off you nor, where its roof is gone, the rain. ")
         if (self.discovery is not None and found["pieces"]
                 and not any(n in self.discovery.visible for n in found["pieces"])):
             line += "Last observed. "
@@ -670,8 +745,10 @@ thought and in that project's intention."""
                 return
             self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
                      was=now["inside"])
-            if same_site:  # its progress is measured afresh: the old best was scored against another layout
-                self.memory.set_house({**now, "inside": room, "door": door, "best": -1, "best_at": time.time()})
+            if same_site:  # its progress is measured afresh: the old best was scored against another layout, and its
+                # pieces too, from a first look (ADR-028: what changes with the layout is the mind's doing, not a loss)
+                self.memory.set_house({**{k: v for k, v in now.items() if k != "had"}, "inside": room, "door": door,
+                                       "best": -1, "best_at": time.time()})
                 self.house_progress(snap)
                 return
             moves = now.get("moves", 0) + 1
@@ -697,8 +774,19 @@ thought and in that project's intention."""
         """Main thread: build the prompt (reads memory). Returns what think() needs."""
         prepared = {"system": self.system_prompt(snap), "user": self.situation(snap, events, chat, doing),
                     "tick": snap.tick, "assumes": " -> ".join(p["goal"] for p in doing) if doing else None}
-        self.notes = []  # delivered in this prompt
+        with self.notes_lock:  # delivered in this prompt; one told meanwhile, from another thread, waits for the next
+            del self.notes[:self._noted]
+        self._noted = 0
         return prepared
+
+    def told(self, text):
+        """A note for the next plan from another thread (its voice): kept even while a plan is being prepared."""
+        with self.notes_lock:
+            self.notes.append(text)
+
+    def said_aloud(self, line):
+        """Its voice said a line by itself (ADR-031): what it plans and what it said stay one story."""
+        self.told(f'You said aloud, as it happened: "{line}".')
 
     def think(self, prepared, on_reasoning=None):
         """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in."""
@@ -820,8 +908,9 @@ json object: {{"lessons": [{{"about": "subject", "text": "a durable lesson in yo
         self.notes.append(f"You died of {cause} and came back to life at the start"
                           + (f"; your lesson: {lessons[0]['text']}" if lessons else "") + ".")
         self.last_outcome = f"You died of {cause}, and have come back to life at the start."
+        feeling = reply.get("feeling")  # its voice says it aloud (ADR-031): a sentence, or nothing (78-SWEEP2)
         self.log(kind="death", cause=snap.died_of, deaths=snap.deaths, lessons=lessons,
-                 feeling=str(reply.get("feeling", ""))[:300])
+                 feeling=feeling.strip()[:300] if isinstance(feeling, str) else "")
         return lessons
 
     def sleep(self, snap):
@@ -838,9 +927,11 @@ json object: {{"lessons": [{{"about": "subject", "text": "a durable lesson in yo
                          + '\n\nAlso rewrite your beliefs: "facts": {"subject": ["at most 3 clear, non-contradictory '
                            'conclusions"]} for every subject that needs merging or correcting. Drop beliefs '
                            'that experience proved wrong.')
+        amended = " ".join(self.memory.state.get("amendments") or [])
         user = f"""It is time to sleep and consolidate your memory.
 Your story so far:
 {self.memory.state['digest'] or '(nothing yet; this is your first sleep)'}
+{f"Since you wrote that: {amended}" if amended else ""}
 
 What happened since you last slept:
 {listing}

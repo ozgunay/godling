@@ -120,4 +120,17 @@ def test_a_storm_and_a_strike_on_godling_are_marked():
     assert replay.marks_of(storm, {}) == []  # marked when it breaks, as a meteor when it lands
     assert replay.marks_of({**storm, "sky_stage": "arrived"}, {}) == [("storm", "storm:4")]
     struck = {"kind": "event", "text": "Lightning struck you: you are burned and hurt, your health is 5 of 100"}
-    assert replay.marks_of(struck, {}) == [("struck", None)]
+    assert replay.marks_of(struck, {}) == [("struck", None)]  # an older log's line, by its words
+    assert replay.marks_of({"kind": "event", "text": "Zapped.", "hit": "struck"}, {}) == [("struck", None)]
+    assert replay.marks_of({"kind": "event", "text": "Ouch.", "hit": "hurt"}, {}) == [("hurt", None)]
+
+
+def test_a_fire_is_marked_by_what_was_made_not_by_words_that_mention_one():
+    """78-CDE1: a say step's summary quotes its words, and "a flame caught" in them is no fire."""
+    said = {"kind": "skill", "skill": "say", "ok": True, "summary": 'said "I rubbed and a flame caught."', "facts": {}}
+    assert replay.marks_of(said, {}) == []
+    rub = {"kind": "skill", "skill": "rub", "ok": True, "summary": "rubbed Spear_2 against Log_60 14 times, and a flame "
+           "caught: Fire_1 burns on Log_60", "facts": {"made": "Fire_1"}}
+    assert replay.marks_of(rub, {}) == [("fire", None)]
+    assert replay.marks_of({"kind": "skill", "skill": "strike", "ok": True, "summary": "speared Fish_1; ...",
+                            "facts": {"made": "Catch_2"}}, {}) == [("fish", None)]

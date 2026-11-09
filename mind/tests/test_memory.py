@@ -176,3 +176,59 @@ def test_hindsight_default_log(tmp_path, hindsight):
     mem = memory_hindsight.HindsightMemory(tmp_path, "http://h", "bank")
     mem.log(kind="x")  # the default log takes anything
     assert memory_hindsight._get({"a": 1}, "a") == 1 and memory_hindsight._get(object(), "a", 2) == 2
+
+
+# Lessons from the 2026-11-08 run (run-live/memory/episodes.jsonl), written before ADR-026 changed the world.
+STALE = ["Logs wash up on far beaches: Log_8 (55, 152), Log_12 (-22, 170). Only worth the walk if the near palms fail.",
+         "Logs wash up on the sand near (-60,-2); Log_54 and Log_55 appeared overnight, so I can get logs without an axe.",
+         "Felling a palm takes 4 strikes with the axe and leaves 2 logs plus a stump.",
+         "Palm_36 at (-60,-2) took three axe strikes; the fourth fells it and leaves two logs and a stump.",
+         "Fell palms for two logs each (four axe strikes) and take fallen coconuts.",
+         "Driftwood is the easiest wood."]
+STILL_TRUE = ["A log washed up on the west beach at (-120.4, 2.11, -38.1); lifting it gives a three-block beam.",
+              "Laid flat a log covers three cells in a line, so two logs cover a four-cell row.",
+              "At dawn two logs and one dark stone fell from the sky near the house: Log_56 (-82,-38)."]
+
+
+def test_lessons_the_world_made_untrue_are_retired_once(tmp_path):
+    """ADR-026: no log washes up any more, and the axe fells a palm into one log. A run resumed on memory from before
+    never recalls the lessons that say otherwise; history (a log that did wash up) and other truths are kept, and a
+    lesson learnt afterwards is never retired, even if it reads like an old one."""
+    root = tmp_path / "m"
+    old = NativeMemory(root)
+    for text in STALE + STILL_TRUE:
+        old.note(text, about="logs")
+    old.store_experience("Project 'know the shore and where logs wash up' did not finish.", kind="project")
+    old.state.pop("retired", None)  # as memory written before ADR-026 has it
+    old.save()
+    mem = NativeMemory(root)
+    lessons = {ep["text"]: ep for ep in mem.episodes if ep["kind"] == "lesson"}
+    for text in STALE:
+        assert lessons[text]["invalid"].startswith("untrue since ADR-026"), text
+    for text in STILL_TRUE:
+        assert not lessons[text].get("invalid"), text
+    assert not mem.episodes[-1].get("invalid"), "a project is what happened, not a lesson"
+    recalled = [ep["text"] for ep in mem.retrieve(text="logs wash up palm axe two logs", limit=20)]
+    assert not set(STALE) & set(recalled) and set(STILL_TRUE) <= set(recalled)
+    assert "adr-026-logs" in json.loads((root / "state.json").read_text())["retired"]
+    mem.note("Lightning felled Palm_3 into two logs.", about="logs")  # still true: lightning splits a palm
+    again = NativeMemory(root)
+    assert not again.episodes[-1].get("invalid"), "retired once, not every start"
+    assert sum(bool(ep.get("invalid")) for ep in again.episodes) == len(STALE)
+
+
+def test_a_fresh_memory_has_nothing_to_retire(tmp_path):
+    mem = NativeMemory(tmp_path / "m")
+    mem.note("Felling a palm with the axe gives one log, and lightning splits one into two logs.")
+    assert not NativeMemory(tmp_path / "m").episodes[0].get("invalid")
+
+
+def test_brain_memory_retires_facts_too(tmp_path):
+    root = tmp_path / "m"
+    (root).mkdir()
+    (root / "facts.json").write_text(json.dumps({"logs": [
+        {"text": STALE[2], "seen": 3, "first_tick": 1, "last_tick": 9},
+        {"text": STILL_TRUE[1], "seen": 1, "first_tick": 2, "last_tick": 2}]}))
+    mem = BrainMemory(root)
+    assert [f["text"] for f in mem.facts["logs"]] == [STILL_TRUE[1]]
+    assert [f["text"] for f in json.loads((root / "facts.json").read_text())["logs"]] == [STILL_TRUE[1]]

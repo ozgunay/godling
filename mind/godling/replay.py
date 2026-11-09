@@ -12,7 +12,7 @@ Under <run>/replay/:
     index.json                               the segments (one per world start) and the gaps between them
     chunks/<YYYY-MM-DD>/<HH>/<t0>.json.gz    10 s each, named by their start in UTC milliseconds
     tracks/<YYYY-MM-DD>/<HH>.jsonl           the mind's log entries the screen shows (TRACKED: decision, bubble,
-                                             project, thinking, learn, sleep, event, glance…), as the guest panel
+                                             project, thinking, learn, sleep, said, event…), as the guest panel
                                              reads them live
     marks/<YYYY-MM-DD>.jsonl                 markers for the timeline
     sky/<YYYY-MM-DD>.jsonl                   once a minute: the island's hour, day, rain and fog, to shade the timeline
@@ -70,8 +70,11 @@ DISK_WARN = 0.8  # warn when the disk is this full
 ROWS_AT_ONCE = 1800  # recording rows read per step: about 30 s of the world
 TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"),
            "project": ("phase", "goal", "intention", "ok"), "thinking": (), "plan_discarded": (),
-           "learn": ("name", "does"), "sleep": ("dream",), "death": ("cause", "feeling"),
+           "learn": ("name", "does"), "sleep": ("dream",), "death": ("cause", "feeling"), "said": ("words", "moment"),
            "event": ("text", "sky", "sky_stage", "sky_id"), "glance": ("text", "degrees", "turned")}
+# The words of a tracked entry that viewers read, and so that the guest panel cleans and the site holds back when they
+# quote a hidden note (78-CLEAN8; web/apps/screen/views.py keeps a copy, held to this one by tools/tests).
+SHOWN_WORDS = ("text", "thought", "needs", "intention", "goal", "name", "does", "dream", "words")
 CHUNK_REL = re.compile(r"chunks/\d{4}-\d\d-\d\d/\d\d/\d{13}\.json\.gz")
 ASSET_URL = re.compile(r"^(?:[^?#]*/)?assets/([^/?#]+)$")  # /assets/x.glb, /island/assets/x.glb, …
 # A viewer's words the world keeps on the Clock for the mind (the latest note's text, main.lua). Never in a chunk: a
@@ -627,17 +630,20 @@ def marks_of(entry, best):
             if (stage == "warning") == (mark == "earthquake"):
                 return [(mark, f"{mark}:{entry['sky_id']}" if entry.get("sky_id") is not None else None)]
             return []
+        if entry.get("hit") in ("hurt", "struck"):  # what attention says it is (78-CLEAN11)
+            return [(entry["hit"], None)]
         for start, mark in (("It has started to rain", "rain"), ("Fog has rolled in", "fog"),
-                            ("A ship is passing", "ship"), ("You were hurt", "hurt"),
+                            ("A ship is passing", "ship"), ("You were hurt", "hurt"),  # the last two: older logs
                             ("Lightning struck you", "struck")):
-            if text.startswith(start):
+            if text.startswith(start) and not (mark in ("hurt", "struck") and "hit" in entry):
                 return [(mark, None)]
         if " has gone out" in text:
             return [("fire-out", None)]
     elif kind == "skill" and entry.get("ok"):
-        if "a flame caught" in text:
+        made = str((entry.get("facts") or {}).get("made") or "")  # what it made, not what a summary says (78-CDE1)
+        if made.startswith("Fire_"):
             return [("fire", None)]
-        if text.startswith("speared "):
+        if made.startswith("Catch_"):
             return [("fish", None)]
     elif kind == "structures":
         out = []
@@ -1032,7 +1038,7 @@ def _makes_line(e):
     """Whether this entry adds one of Godling's own lines to the feed, as reduce_status reads it."""
     kind = e.get("kind")
     return bool(kind == "decision" and e.get("thought") or kind == "learn" and e.get("name")
-                or kind == "sleep" and e.get("dream")
+                or kind == "sleep" and e.get("dream") or kind == "said" and e.get("words")
                 or kind == "project" and e.get("phase") == "end" and e.get("ok") is False)
 
 
@@ -1042,9 +1048,9 @@ def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=No
 
     `now` is what Godling is doing at this moment, with the time it began: a project ({"text": its intention, "step",
     "of": where it is in the agenda}), or {"thinking": True} while the body stands until its mind has thought; None
-    between them. The feed holds its thoughts, what it could not finish, what it learned and dreamt (`about` says
-    which), and what it noticed; at most `world_kept` of its lines (half, unless said) are the world's, so they never
-    crowd Godling out."""
+    between them. The feed holds its thoughts, what it could not finish, what it learned, dreamt and said aloud
+    (`about` says which), and what it noticed; at most `world_kept` of its lines (half, unless said) are the world's,
+    so they never crowd Godling out."""
     world_kept = feed_kept // 2 if world_kept is None else world_kept
     out = {"thought": "", "needs": "", "intention": "", "now": None}
     feed, agenda, step, said = [], 0, 0, None  # said: the last thought in the feed, which is not said again
@@ -1081,6 +1087,8 @@ def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=No
             say(e, "learned", clean(e.get("does") or ""), name=clean(e["name"]))
         elif kind == "sleep" and e.get("dream"):
             say(e, "dream", clean(e["dream"]))
+        elif kind == "said" and e.get("words"):  # what it said aloud (ADR-031): the world chat never reached the screen
+            say(e, "said", clean(e["words"]))
         elif kind == "event":
             feed.append({"time": e.get("time"), "who": "sky" if e.get("sky") else "notice", "text": clean(e["text"]),
                          "glance": None})

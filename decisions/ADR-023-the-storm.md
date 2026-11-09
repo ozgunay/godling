@@ -11,7 +11,8 @@ aims, and asked that a strike on Godling truly hurt it, visibly, but never kill 
 
 ## Decisions (the user's, 2026-11-06)
 1. **The Storm replaces Lightning on the panel, at 400 credits** (a disaster: it can hurt Godling). Lightning stays a
-   power the world knows, and storms of the weather's own still strike palms near Godling, harmlessly, as before.
+   power the world knows, and storms of the weather's own still strike palms near Godling, harmlessly, as before
+   (since ADR-026 most of their bolts strike the ground instead).
 2. **The viewer picks three strike spots**; the sky picks any left out (palms 12 to 45 from Godling, else open ground
    there). **The world picks when, and in which order.**
 3. **The sequence:** 30 s of warning (the sky darkens, a gale, the three spots crackle on the ground, and Godling

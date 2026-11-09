@@ -209,6 +209,21 @@ const ABOUT_GODLING = [
   [/^The ground is rumbling under you: /, 'The ground is rumbling: '],
 ]
 const article = (name) => (/^[AEIOU]/.test(name) ? 'an ' : 'a ') + name.toLowerCase()
+// Places as the mind writes them beside its map (x -115, z=-7.5, -85 to -77.5, 8.75 over -7.5), with the word that
+// leads to them, and the world's tick counts: viewers do not see the map (78-CLEAN10; what it says aloud passes
+// mind/godling/speech.py plain first). No lookbehind: Safari before 16.4 cannot read one, and the screen would not load.
+const COORD = String.raw`(?:[xyz]\s*=?\s*[-−+]?\d+(?:\.\d+)?|[-−]\d+(?:\.\d+)?|\d+\.\d+)`
+const PLACES = new RegExp(String.raw`(^|[^\w.])(?:(?:at|to|from|along|near|by|around|over|on|in|into|onto|past|towards?|across)\s+)?`
+  + String.raw`${COORD}(?:\s*(?:,|to|and|or|\.\.|over|from)\s*${COORD})*(?!\w|\.\d)`, 'gi')
+const A_NUMBER = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)$/i
+function noPlaces(s) {
+  return s.replace(PLACES, (match, before, at, text) => {
+    const prior = text.slice(0, at + before.length).trim().split(/\s+/).pop() || ''
+    return /^[xyz]/i.test(match.slice(before.length)) && A_NUMBER.test(prior) ? match : before // "2 x 2": a size
+  }).replace(/\b(?:world\s+)?tick\s+\d+/gi, '').replace(/\b\d{4,}\b/g, '')
+    .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/[,;:]\s*([.!?]|$)/g, '$1')
+    .replace(/\s{2,}/g, ' ').trim()
+}
 function plain(words, who = 'notice') {
   let s = String(words || '')
   for (const [from, to] of ABOUT_GODLING) s = s.replace(from, to)
@@ -216,6 +231,7 @@ function plain(words, who = 'notice') {
     .replace(/\s*\(-?\d+(\.\d+)?, ?-?\d+(\.\d+)?\)/g, '')
     .replace(/: \w+_\d+( and \w+_\d+)* (landed|lies|lie)\b.*$/, '') // "a log dropped from the sky: Log_3 landed"
     .replace(/\b([A-Z][a-z]+)_\d+\b/g, (_, name) => article(name))
+  s = noPlaces(s)
   s = s.charAt(0).toUpperCase() + s.slice(1)
   return who !== 'godling' && /\byou(r)?\b/i.test(s) ? '' : s
 }
@@ -235,14 +251,17 @@ function needsIcon(words) {
   return 'notice'
 }
 
-// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream. Its own words
-// (an intention, what a skill does) follow, with the world's names and coordinates made plain as in its thoughts.
+// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream, what it said
+// aloud. Its own words (an intention, what a skill does) follow, with the world's names and coordinates made plain as
+// in its thoughts.
 const lower = (s) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s)
 const ABOUT = {
   failed: ['close', (f) => `Couldn’t finish: ${lower(f.words)}`],
   stopped: ['pause', (f) => `Stopped to think again: ${lower(f.words)}`],
   learned: ['idea', (f) => `Learned “${String(f.name).replace(/_/g, ' ')}”${f.words ? `: ${f.words.replace(/\$(\w+)/g, 'the $1')}` : ''}`],
   dream: ['moon', (f) => `Dreamt: ${f.words}`],
+  // What it said aloud (ADR-031): the island's page in the frame shows only its picture, so its chat never shows here.
+  said: ['speech', (f) => `Said: “${f.words}”`],
 }
 // A Godling line longer than this may be cut by its clamp however wide the feed is (about 17 characters a line in the
 // narrowest window), so it is a button that opens it in full; it shows its chevron once it is cut (measureCuts).

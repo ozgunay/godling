@@ -9,6 +9,7 @@ Procedural memory (protected proven skills) lives in learned.SkillLibrary.
 """
 import json
 import re
+from pathlib import Path
 
 from .files import write_atomic
 from .memory import NativeMemory
@@ -28,9 +29,15 @@ def _similar(a, b):
 
 class BrainMemory(NativeMemory):
     def __init__(self, root):
-        super().__init__(root)
-        self.facts_path = self.root / "facts.json"
+        self.facts_path = Path(root) / "facts.json"  # read first: opening the memory may retire some (RETIRED)
         self.facts = json.loads(self.facts_path.read_text()) if self.facts_path.exists() else {}
+        super().__init__(root)
+
+    def _retire_more(self, pattern):
+        kept = {subject: [f for f in facts if not pattern.search(f["text"])] for subject, facts in self.facts.items()}
+        if kept != self.facts:
+            self.facts = kept
+            write_atomic(self.facts_path, json.dumps(self.facts, indent=2))
 
     def save(self):
         super().save()
@@ -43,18 +50,29 @@ class BrainMemory(NativeMemory):
     def note(self, text, about="", importance=3, tick=0):
         """Store the episode, and fold the conclusion into semantic memory under its subject."""
         episode = super().note(text, about, importance, tick)
+        self._fold(about, text, tick)
+        return episode
+
+    def amend(self, text, about="house", tick=0, entities=()):
+        """Also correct what it believes about the subject (a house it believes finished broke): the correction counts
+        as more confirmed than any belief it corrects, so it is recalled first and never the one evicted, until sleep
+        rewrites the subject's beliefs."""
+        super().amend(text, about, tick, entities)
+        self._fold(about, text, tick, first=True)
+
+    def _fold(self, about, text, tick, first=False):
         subject = self._subject(about)
         facts = self.facts.setdefault(subject, [])
+        top = max((f["seen"] for f in facts), default=0) + 1
         for fact in facts:
             if _similar(fact["text"], text):
-                fact.update(text=text.strip()[:300], seen=fact["seen"] + 1, last_tick=tick)
+                fact.update(text=text.strip()[:300], seen=top if first else fact["seen"] + 1, last_tick=tick)
                 break
         else:
-            facts.append({"text": text.strip()[:300], "seen": 1, "first_tick": tick, "last_tick": tick})
+            facts.append({"text": text.strip()[:300], "seen": top if first else 1, "first_tick": tick, "last_tick": tick})
             if len(facts) > MAX_FACTS_PER_SUBJECT:
                 facts.sort(key=lambda f: (f["seen"], f["last_tick"]))
                 facts.pop(0)
-        return episode
 
     def recall_for(self, entities, text, limit=8):
         """Facts about what is in view or named in the cue, plus a few relevant episodes."""
