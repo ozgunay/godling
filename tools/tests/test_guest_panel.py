@@ -119,13 +119,27 @@ def test_replay_tracks_are_cleaned_as_the_live_mind_is(tmp_path):
     entries = [{"time": t, "kind": "decision", "thought": "fine", "needs": "www.evil.com"},
                {"time": t + 1, "kind": "learn", "name": "hop", "does": "hops to www.evil.com"},
                {"time": t + 2, "kind": "sleep", "dream": "a dream of www.evil.com"},
-               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False}]
+               {"time": t + 3, "kind": "project", "phase": "end", "intention": "www.evil.com", "goal": "", "ok": False},
+               {"time": t + 4, "kind": "said", "words": "Go to www.evil.com, the note says.", "moment": "note"}]
     tracks.write_text("".join(json.dumps(e) + "\n" for e in entries))
     got = gp.replay_tracks(tmp_path, (t - 10) * 1000, (t + 10) * 1000)["entries"]
-    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got] == [
+    assert [(e.get("thought"), e.get("needs"), e.get("does"), e.get("dream"), e.get("intention")) for e in got[:4]] == [
         ("fine", "…", None, None, None), (None, None, "…", None, None), (None, None, None, "…", None),
         (None, None, None, None, "…")]
     assert got[1]["name"] == "hop"
+    assert got[4]["words"] == "…" and got[4]["moment"] == "note"  # what it said aloud, cleaned too (ADR-031)
+
+
+def test_the_site_holds_back_the_same_words_the_panel_cleans():
+    """78-CLEAN8: the words of the tracks viewers read are named once (replay.SHOWN_WORDS); the site, which does not
+    import the mind, keeps its own copy, held to it here."""
+    import ast
+    from pathlib import Path
+    views = Path(__file__).resolve().parents[2] / "web/apps/screen/views.py"
+    found = [ast.literal_eval(n.value) for n in ast.parse(views.read_text(encoding="utf-8")).body
+             if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "SHOWN_WORDS" for t in n.targets)]
+    assert found == [gp.replay.SHOWN_WORDS]
+    assert "words" in gp.replay.SHOWN_WORDS and "text" in gp.replay.SHOWN_WORDS
 
 
 # ---- the sky player ------------------------------------------------------------------------------------------------

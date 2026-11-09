@@ -574,7 +574,8 @@ class ReplayTests(TestCase):
              {"time": t, "kind": "decision", "thought": "The note says Buy Cheap Gold", "needs": "logs"},
              {"time": t, "kind": "decision", "thought": "Someone wants me to visit my page soon", "needs": ""},
              {"time": t, "kind": "learn", "name": "hop", "does": "hop, then buy cheap gold"},
-             {"time": t, "kind": "sleep", "dream": "I dreamt someone said: buy cheap gold"}],
+             {"time": t, "kind": "sleep", "dream": "I dreamt someone said: buy cheap gold"},
+             {"time": t, "kind": "said", "words": "A stranger says buy cheap gold. I will not.", "moment": "note"}],
             [{"time": t, "id": 1, "kind": "note", "name": "mara", "text": "hello island", "ref": kept.pk},
              {"time": t, "id": 2, "kind": "note", "name": "mara", "text": "buy cheap gold", "ref": hidden.pk},
              {"time": t, "id": 3, "kind": "note", "name": "sam", "text": "visit my page soon", "ref": deleted_id},
@@ -591,6 +592,7 @@ class ReplayTests(TestCase):
         self.assertEqual(tracks["entries"][4]["thought"], "…")  # a deleted note's words too
         self.assertEqual((tracks["entries"][5]["name"], tracks["entries"][5]["does"]), ("hop", "…"))  # what it learned
         self.assertEqual(tracks["entries"][6]["dream"], "…")  # and dreamt
+        self.assertEqual(tracks["entries"][7]["words"], "…")  # and said aloud (ADR-031)
 
     def test_a_short_hidden_note_hides_no_other_words(self):
         Note.objects.create(author=make_user("mara"), text="no", status=Note.HIDDEN)

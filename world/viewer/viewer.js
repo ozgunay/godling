@@ -22,12 +22,16 @@ const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Arro
 // What a viewer can call, in hotbar order. `id` is the world's name for it (main.lua SKY_POWERS).
 // Viewers aim every power but the earthquake and the note. The meteor and a storm's strikes can land on Godling; only
 // the meteor breaks what it built (main.lua sky.aim, the user's rule). The rest go to the nearest clear spot, and a gift
-// aimed at Godling lands at its feet. Both are priced as the disasters they are.
+// aimed at Godling lands at its feet. Both are priced as the disasters they are. A log (ADR-029, `reach`) is aimed
+// within 60 of Godling, shown as a ring round it (renderer aim.js): an aim past it lands on the ring, never refused for
+// it. A stone and a log land beside Godling's house, never on it, and aimed at Godling, at its feet or as near as
+// there is room (the review of #79).
 const POWERS = [
   { id: 'Stone', name: 'Stone', icon: 'stone', price: 4, kind: 'Gift', aim: true, did: 'dropped a stone', after: 'from the sky',
-    does: 'A stone block drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },
-  { id: 'Log', name: 'Log', icon: 'log', price: 4, kind: 'Gift', aim: true, did: 'dropped a log', after: 'from the sky',
-    does: 'A log beam drops where you aim. Aimed at Godling, it lands at its feet; it never lands on its walls.' },
+    does: "A stone block drops where you aim, beside Godling's house and never on it. Aimed at Godling, it lands at its feet, or as near as there is room." },
+  { id: 'Log', name: 'Log', icon: 'log', price: 4, kind: 'Gift', aim: true, reach: true, did: 'dropped a log',
+    after: 'from the sky', rule: 'Within 60 of Godling: an aim further out lands at the edge',
+    does: "A log beam drops where you aim, beside Godling's house and never on it. Aimed at Godling, it lands at its feet, or as near as there is room." },
   { id: 'Regrow', name: 'Regrow a palm', icon: 'sapling', price: 6, kind: 'Gift', aim: true, did: 'regrew a palm',
     after: 'from its stump', does: 'The stump nearest your aim grows back at once.' },
   // Lightning's place (ADR-023): a storm, its three strikes aimed one by one (`spots`), the world picking when.
@@ -205,6 +209,21 @@ const ABOUT_GODLING = [
   [/^The ground is rumbling under you: /, 'The ground is rumbling: '],
 ]
 const article = (name) => (/^[AEIOU]/.test(name) ? 'an ' : 'a ') + name.toLowerCase()
+// Places as the mind writes them beside its map (x -115, z=-7.5, -85 to -77.5, 8.75 over -7.5), with the word that
+// leads to them, and the world's tick counts: viewers do not see the map (78-CLEAN10; what it says aloud passes
+// mind/godling/speech.py plain first). No lookbehind: Safari before 16.4 cannot read one, and the screen would not load.
+const COORD = String.raw`(?:[xyz]\s*=?\s*[-−+]?\d+(?:\.\d+)?|[-−]\d+(?:\.\d+)?|\d+\.\d+)`
+const PLACES = new RegExp(String.raw`(^|[^\w.])(?:(?:at|to|from|along|near|by|around|over|on|in|into|onto|past|towards?|across)\s+)?`
+  + String.raw`${COORD}(?:\s*(?:,|to|and|or|\.\.|over|from)\s*${COORD})*(?!\w|\.\d)`, 'gi')
+const A_NUMBER = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)$/i
+function noPlaces(s) {
+  return s.replace(PLACES, (match, before, at, text) => {
+    const prior = text.slice(0, at + before.length).trim().split(/\s+/).pop() || ''
+    return /^[xyz]/i.test(match.slice(before.length)) && A_NUMBER.test(prior) ? match : before // "2 x 2": a size
+  }).replace(/\b(?:world\s+)?tick\s+\d+/gi, '').replace(/\b\d{4,}\b/g, '')
+    .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/[,;:]\s*([.!?]|$)/g, '$1')
+    .replace(/\s{2,}/g, ' ').trim()
+}
 function plain(words, who = 'notice') {
   let s = String(words || '')
   for (const [from, to] of ABOUT_GODLING) s = s.replace(from, to)
@@ -212,6 +231,7 @@ function plain(words, who = 'notice') {
     .replace(/\s*\(-?\d+(\.\d+)?, ?-?\d+(\.\d+)?\)/g, '')
     .replace(/: \w+_\d+( and \w+_\d+)* (landed|lies|lie)\b.*$/, '') // "a log dropped from the sky: Log_3 landed"
     .replace(/\b([A-Z][a-z]+)_\d+\b/g, (_, name) => article(name))
+  s = noPlaces(s)
   s = s.charAt(0).toUpperCase() + s.slice(1)
   return who !== 'godling' && /\byou(r)?\b/i.test(s) ? '' : s
 }
@@ -231,14 +251,17 @@ function needsIcon(words) {
   return 'notice'
 }
 
-// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream. Its own words
-// (an intention, what a skill does) follow, with the world's names and coordinates made plain as in its thoughts.
+// Godling's lines that are not thoughts: what came of a project, a skill it taught itself, a dream, what it said
+// aloud. Its own words (an intention, what a skill does) follow, with the world's names and coordinates made plain as
+// in its thoughts.
 const lower = (s) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s)
 const ABOUT = {
   failed: ['close', (f) => `Couldn’t finish: ${lower(f.words)}`],
   stopped: ['pause', (f) => `Stopped to think again: ${lower(f.words)}`],
   learned: ['idea', (f) => `Learned “${String(f.name).replace(/_/g, ' ')}”${f.words ? `: ${f.words.replace(/\$(\w+)/g, 'the $1')}` : ''}`],
   dream: ['moon', (f) => `Dreamt: ${f.words}`],
+  // What it said aloud (ADR-031): the island's page in the frame shows only its picture, so its chat never shows here.
+  said: ['speech', (f) => `Said: “${f.words}”`],
 }
 // A Godling line longer than this may be cut by its clamp however wide the feed is (about 17 characters a line in the
 // narrowest window), so it is a button that opens it in full; it shows its chevron once it is cut (measureCuts).
@@ -592,16 +615,18 @@ aimBar.append(aimWords, skyChooses, aimCancel)
 dock.prepend(aimBar)
 const aimTap = matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click'
 
+const AT_FEET = 'At Godling: at its feet, or as near as there is room' // in its room, say (main.lua sky.aim.spot)
 function aimHint(p, spot) {
   aimWords.replaceChildren()
   aimWords.insertAdjacentHTML('afterbegin', icon(p.icon, 2))
   let words = p.spots ? `${aimTap} where strike ${aimedSpots.length + 1} of ${p.spots} should land`
-    : `${aimTap} the island where the ${p.name.toLowerCase()} should land`
+    : `${aimTap} ${p.reach ? 'within the ring' : 'the island'} where the ${p.name.toLowerCase()} should land`
   let tone = ''
   skyChooses.textContent = aimedSpots.length ? 'Let the sky choose the rest' : 'Let the sky choose'
   if (spot?.atGodling && p.id === 'Meteor') [words, tone] = ['On Godling: the blast will hit it', 'harm']
   else if (spot?.atGodling && p.id === 'Storm') [words, tone] = ['On Godling: a strike here leaves it with half a heart', 'harm']
-  else if (spot?.atGodling && (p.id === 'Stone' || p.id === 'Log')) [words, tone] = ['At Godling: it lands at its feet', 'feet']
+  else if (spot?.atGodling && (p.id === 'Stone' || p.id === 'Log')) [words, tone] = [AT_FEET, 'feet']
+  else if (spot?.beyond && p.reach) [words, tone] = ["Past Godling's reach: it lands on the ring", 'reach']
   else if (spot) words = p.spots ? `${aimTap} to strike here (${aimedSpots.length + 1} of ${p.spots})` : `${aimTap} to call it here`
   aimWords.append(text('span', tone, words))
 }

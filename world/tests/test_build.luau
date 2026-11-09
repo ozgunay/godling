@@ -73,7 +73,7 @@ T.test("the quarry gives a stone every third blow, into its yard, until the yard
     T.eq(strikeAt(w, g, "Quarry"), "StrikeYardFull")
 end)
 
-T.test("an axe fells a palm into two logs, away from the axe, and it grows back", function()
+T.test("an axe fells a palm into one log, away from the axe, and it grows back", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling()
@@ -83,7 +83,8 @@ T.test("an axe fells a palm into two logs, away from the axe, and it grows back"
         T.eq(strikeAt(w, g, "Palm_2"), "StrikeHit:" .. n .. "/4")
     end
     local felled = strikeAt(w, g, "Palm_2")
-    T.starts(felled, "StrikeFelled:Log_")
+    T.eq(felled, "StrikeFelled:Log_1", "one log, the trunk (ADR-026: it was two, and the island filled with logs)")
+    T.eq(e.find("Log_2"), nil, "and no second beside it")
     T.eq(g:GetAttribute("Gesture"), "Chop")
     T.eq(palm:GetAttribute("RenderRole"), "Stump")
     T.near(palm.Size.Y, 1.25, 1e-9, "a stump half a block high")
@@ -105,6 +106,25 @@ T.test("an axe fells a palm into two logs, away from the axe, and it grows back"
     solid(e, "Wall", V.new(0, 10, 0), V.new(200, 40, 200))
     local fallback = x.freeSpawn(CF.new(V.new(0, 1, 0)), V.new(2, 2, 2), V.new(1, 0, 0))
     T.near(fallback.Position.Y, 6, 1e-9, "everywhere taken: dropped from above")
+end)
+
+T.test("a palm part-chopped, then felled by lightning, grows back whole: its next chop is the first of four", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local g = w.godling()
+    local palm = e.find("Palm_2")
+    holding(w, g, "Axe_1", palm.Position + V.new(-3, -7.45, 0))
+    for n = 1, 3 do
+        T.eq(strikeAt(w, g, "Palm_2"), "StrikeHit:" .. n .. "/4")
+    end
+    local t
+    for _, tree in ipairs(x.trees) do
+        t = tree.name == "Palm_2" and tree or t
+    end
+    x.lightningOn(t, e.hrp(g).Position) -- 77-AB4: it kept its three chops
+    T.eq(palm:GetAttribute("RenderRole"), "Stump")
+    x.regrowStump(t)
+    T.eq(strikeAt(w, g, "Palm_2"), "StrikeHit:1/4")
 end)
 
 T.test("a hammer knocks a fastened piece loose; a set-up ladder stays standing", function()

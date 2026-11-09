@@ -87,5 +87,23 @@
       {"time": 24.0, "kind": "project", "phase": "start", "goal": "fetch", "intention": "Meanwhile, fetch", "stopgap": true}
     ],
     "now": {"time": 24.0, "text": "Meanwhile, fetch"}
+  },
+  "spoken": {
+    "about": "What Godling says aloud is a line of its own, and its newest thought still stays (ADR-031)",
+    "feed_kept": 4, "world_kept": 1,
+    "entries": [
+      {"time": 1.0, "kind": "decision", "thought": "Roof first.", "needs": ""},
+      {"time": 2.0, "kind": "said", "words": "Sixteen posts now.", "moment": null},
+      {"time": 3.0, "kind": "event", "text": "You died of the cold.", "death": "died"},
+      {"time": 3.5, "kind": "said", "words": "Too cold. I cannot hold on.", "moment": "died"},
+      {"time": 4.0, "kind": "said", "words": "", "moment": "note"},
+      {"time": 5.0, "kind": "said", "words": "I came back with the rain still on me.", "moment": "reborn"}
+    ],
+    "feed": [
+      {"time": 1.0, "who": "godling", "text": "Roof first."},
+      {"time": 3.0, "who": "notice", "text": "You died of the cold.", "glance": null},
+      {"time": 3.5, "who": "godling", "about": "said", "text": "Too cold. I cannot hold on."},
+      {"time": 5.0, "who": "godling", "about": "said", "text": "I came back with the rain still on me."}
+    ]
   }
 }

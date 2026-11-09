@@ -19,6 +19,11 @@ describe('the mind on the screen', () => {
     expect(reduceStatus(CASE.stopgap.entries).now).toEqual(CASE.stopgap.now)
   })
 
+  it('shows what Godling says aloud as a line of its own (ADR-031)', () => {
+    const { spoken } = CASE
+    expect(reduceStatus(spoken.entries, spoken.feed_kept, spoken.world_kept).feed).toEqual(spoken.feed)
+  })
+
   it('keeps half of the feed for Godling when the world is busy', () => {
     const entries = [{ time: 1, kind: 'decision', thought: 'Hm.', needs: '' },
       ...Array.from({ length: 20 }, (_, i) => ({ time: 2 + i, kind: 'event', text: `Coconut_${i} appeared` }))]

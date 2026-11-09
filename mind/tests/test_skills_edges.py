@@ -171,6 +171,29 @@ def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
     assert r.summary.endswith("; so your hands set it along x with its ends on Block_2 and Block_12 instead)")
 
 
+def test_a_scorch_or_a_storm_spot_on_a_post_does_not_stop_a_beam_settling_across_it(make):
+    """Markers the world never collides with: a bolt's scorch (ADR-026 leaves one at most ground bolts) and a storm's
+    crackling spot. The hands snap the beam onto the posts as if they were bare."""
+    marks = [ent("Scorch_18", (-2.5, 5.03, 0), (3, 0.04, 3), role="Scorch"),
+             ent("StormSpot_1_1", (2.5, 5.05, 0), (4, 0.06, 4), role="StormSpot")]
+    island, body = holding_log(make, posts() + marks)
+    r = body.run("place_at", {"x": 2.5, "y": 6.25, "z": 0, "turn": 0})
+    assert r.ok
+    place = [d for a, d in island.acts if a == "Place"][-1]
+    assert place["position"] == pytest.approx([0, 5.0 + 1.25 + 0.03, 0])
+    assert r.summary.endswith("; so your hands set it along x with its ends on Block_2 and Block_12 instead)")
+
+
+def test_a_piece_aimed_a_hair_low_onto_scorched_ground_is_lifted_onto_it(make):
+    island, body = make([block("Block_1", 3, 1.25, 3), ent("Scorch_17", (10, 0.03, 0), (3, 0.04, 3), role="Scorch")])
+    island.held = "Block_1"
+    island.results["Place"] = ["PlaceFailed:Occupied", "PlaceSuccess"]
+    r = body.run("place_at", {"x": 10, "y": 1.195, "z": 0})
+    assert r.ok, r.summary
+    assert island.acts[-1][1]["position"][1] == pytest.approx(1.195 + 0.055 + 0.03)
+    assert "Scorch" not in r.summary
+
+
 def test_a_beam_aimed_right_goes_where_it_was_aimed(make):
     island, body = holding_log(make, posts())
     r = body.run("place_at", {"x": 0, "y": 6.25, "z": 0})

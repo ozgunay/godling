@@ -93,6 +93,14 @@ deadline stays off (`--think-deadline 0`) until arm B passes. The live deploy ru
   - **Something salient during a stop-gap ends the stop-gap and leaves the plan be** (80-CDE1), as it does while the
     body stands waiting. Until then, each stop-gap opened a window in which the plan was thrown away and thought up
     again. The idle wait never had that window.
+  - **The shelter reflex (ADR-028) is the exception, by #76's rule for the wait.** When it walks the body under a
+    roof, during the wait or during a stop-gap, the plan in flight and any stop-gap being chosen are dropped. They were
+    thought for where the body stood. The next plan is thought from under the roof, told why the body moved: a stop-gap's
+    outcome is no "What just happened", so the reflex's words go to attention as news (integration finding INT-3).
+  - **No stop-gap is asked while the cold is a danger**: while the cold is killing the body, or after its reflex
+    sheltered it and before that danger is over (`Skills.sheltering`). The log says `stopgap` phase held. A stop-gap
+    chosen without thinking walked the sheltered body back out into the rain, and the reflex lets the mind do that.
+    The plan, which thinks, still may.
   - **A plan is never dropped for being late.**
   - **A stop-gap that comes after the plan is dropped:** the plan comes first. A plan whose provider call fails has
     not come first: the stop-gap being chosen is still taken, and the failure is handled as before (80-AB7).
@@ -103,7 +111,8 @@ deadline stays off (`--think-deadline 0`) until arm B passes. The live deploy ru
   project at once, without thinking, from what you have thought so far, and go on thinking." Off, the prompt is
   today's.
 - **Time and counts.** The deadline and the idle time run on the monotonic clock (80-CDE12).
-  - `waited_for_mind_s` still counts only the time the body stood idle.
+  - `waited_for_mind_s` still counts only the time the body stood idle, not a shelter walk (INT-3). After the walk,
+    the idle time starts again with the plan thought under the roof.
   - Stop-gaps are not counted among the projects (80-CDE6). `summary.json` has `stopgaps` and `stopgap_s` of their
     own, and the analysis counts them apart.
   - The log's `stopgap` entries have the phases asked, chosen, none and dropped.
@@ -263,6 +272,12 @@ If C passes, confirm it in a second run before low becomes the default, in a PR 
 - **#80:** run against the code from before ADR-030, the 15 tests it added fail and the other 82 in those three files
   pass. For example: "At index 0 diff: ('decision', None, None) != ('stopgap', 'asked', None)": the body waited and
   no stop-gap came.
+- **Integration with #76 and #78** (`test_run_godling.py`):
+  - A shelter walk during the wait drops the plan and asks no stop-gap while the danger lasts. The next plan is told
+    why the body moved.
+  - A shelter that stops a stop-gap drops the plan too.
+  - Each test fails with its rule taken out.
+  - The stop-gap test expects #78's plain narration ("Meanwhile, fetch.", INT-6).
 - **The review fixes:** run against #80's code, the 27 tests the fixes added or changed fail, and the other 422 tests
   in the mind and tools suite pass.
 - **Suites:** the mind and tools suite passes (pytest, Windows Python 3.14), and so does the renderer's (vitest). The

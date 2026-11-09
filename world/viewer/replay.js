@@ -93,6 +93,7 @@ export function reduceStatus(entries, feedKept = 8, worldKept = Math.floor(feedK
       if (last?.about === 'failed') last.about = 'stopped'
     } else if (e.kind === 'learn' && e.name) say(e, 'learned', e.does || '', { name: e.name })
     else if (e.kind === 'sleep' && e.dream) say(e, 'dream', e.dream)
+    else if (e.kind === 'said' && e.words) say(e, 'said', e.words) // what it said aloud (ADR-031)
     else if (e.kind === 'event') feed.push({ time: e.time, who: e.sky ? 'sky' : 'notice', text: e.text, glance: null })
     else if (e.kind === 'glance') {
       const seen = lastOf(feed, (n) => n.text === e.text && n.glance === null)

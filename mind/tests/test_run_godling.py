@@ -23,6 +23,7 @@ from godling.skills import Interrupted, Skills
 from godling.world import WorldError
 from helpers import block, ent, ground, raw_obs
 from island import FakeTime, Island
+from run_live_skills import MEND_AT_HOME
 
 
 # ---- the island's save ----------------------------------------------------------------------------------------
@@ -407,6 +408,8 @@ def test_print_entry(capsys):
         {"kind": "stopgap", "phase": "dropped", "reason": "the plan came first"},
         {"kind": "stopgap", "phase": "none", "why": "5 steps, more than 4"}, {"kind": "answer_forced", "purpose": "decide",
                                                                            "ok": True},
+        {"kind": "said", "words": "Back.", "moment": "reborn"}, {"kind": "said", "words": "Hi.", "moment": None},
+        {"kind": "voice", "moment": "note", "why": "it repeats the note's words"},
     ]
     for e in entries:
         rg.print_entry(e)
@@ -421,7 +424,8 @@ def test_print_entry(capsys):
                   "WAIT   body waited 4s", "REPLAN next plan discarded: r1", "CARRY  keeping the next plan although r2",
                   "BUBBLE fish, happy", "BUBBLE unreadable: ?", "FORGET skill a", "KEEP   skill b",
                   "LEARN  new skill c(o) v2: d", "SLEEP  ships", "intentions: ['hut']", "BUILT  houses 0, walls 1",
-                  "NOTICE something", "ERROR  oops", "CUSTOM"):
+                  "NOTICE something", "ERROR  oops", "CUSTOM", 'SAID   "Back." (reborn)', 'SAID   "Hi."\n',
+                  "VOICE  not said (note): it repeats the note's words"):
         assert words in out, words
     assert "0.5s" not in out
 
@@ -525,7 +529,7 @@ def test_agenda_loop_thinks_while_moving(monkeypatch, tmp_path):
     kinds = [l["kind"] for l in logs]
     assert "wait_for_mind" in kinds and "plan_kept" in kinds and "decision" in kinds
     assert stats["projects"] >= 3 and stats["plans_after_failure"] == 1
-    assert "go" in island.said and any("You heard: Ann: hello" in u for u in loop_args[3].llm.users)
+    assert "Go." in island.said and any("You heard: Ann: hello" in u for u in loop_args[3].llm.users)
     assert (tmp_path / "mind/thinking.jsonl").read_text().count("weighing it up") >= 3
     assert any(l["kind"] == "skill" and l["skill"] == "wait" for l in logs)  # an empty agenda: the body waits
 
@@ -626,7 +630,8 @@ def test_the_body_does_a_stopgap_instead_of_standing_while_its_mind_is_late(monk
     assert seq[:2] == [("stopgap", "asked", None), ("stopgap", "chosen", None)]
     assert seq.index(("project", "start", "fetch")) < seq.index(("project", "end", "fetch")) \
         < seq.index(("decision", None, None)) < seq.index(("project", "start", "build"))
-    assert island.said[:2] == ["Meanwhile, fetch", "Build now"] and stats["stopgaps"] == 1 and stats["stopgap_s"] >= 0
+    # In plain words, as all it says (ADR-031, skills.voice.narrate): integration finding INT-6.
+    assert island.said[:2] == ["Meanwhile, fetch.", "Build now."] and stats["stopgaps"] == 1 and stats["stopgap_s"] >= 0
     assert stats["projects"] == 1  # 80-CDE6: the planned ones; stop-gaps are counted apart
     user, options = llm.asked[0]
     assert user.startswith(llm.planned[0]) and "so: a wall" in user and options["effort"] == "none"
@@ -766,6 +771,82 @@ def test_a_stopgap_sees_where_the_agenda_left_the_body(monkeypatch, tmp_path):
     assert "Since you began thinking: Project 'walk' succeeded." in user
 
 
+def in_the_rain(island, health):
+    """Cold rain on a soaked body, a roof 20 off (test_skills_shelter's world)."""
+    from test_skills_shelter import roof, weather
+    island.ents["Log_R"] = roof("Log_R", 20, 0)
+    island.clock = {"Rain": 0.8}
+    island.attrs.update(Health=health, Hunger=60, Wet=80)
+    island.feel = weather(island)
+
+
+def test_no_stopgap_takes_the_body_out_of_the_shelter_its_reflex_found(monkeypatch, tmp_path):
+    """Integration finding INT-3 (#76 with ADR-030): the shelter reflex walks the cold, hurt body under a roof while
+    the mind thinks. The plan thought for the body out in the rain is dropped, as #76 drops it, and the next one is
+    thought from under the roof, told why. While that danger lasts no stop-gap is asked: one chosen without thinking
+    walked the body back out into the rain, and the reflex let it, as it lets the mind."""
+    plans = [{"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
+    sheltered, calls, rg_sleep = threading.Event(), [], rg.time.sleep
+
+    class UnderTheRoof(LateLLM):
+        def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+            if purpose == "decide" and self.left > 0:
+                calls.append(user)
+                if len(calls) == 1:
+                    sheltered.wait(3)  # the first plan is late until the body has taken shelter
+                else:
+                    rg_sleep(1.0)  # the one made under the roof is late too: well past the deadline
+                self.released.release()
+            return super().complete_json(system, user, purpose, on_reasoning, **options)
+
+    llm = UnderTheRoof(plans, [stopgap("back to work", ("walk_to", {"x": 0, "z": 0}))], calls=2)
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [], llm=llm, no_narration=True)
+    in_the_rain(island, health=30)
+    skills, attention = loop_args[4], loop_args[1]
+
+    def on_reflex(text, salience, pending=True):
+        attention.notice(text, salience, pending=pending)
+        sheltered.set()
+    skills.on_reflex = on_reflex
+    loop_args[5].think_deadline = 0.2
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args)
+    shelter = next(e for e in logs if e["kind"] == "reflex" and e.get("ok"))
+    assert next(e for e in logs if e["kind"] == "plan_discarded")["reason"] == rg.SHELTERED
+    assert shelter["text"] in llm.planned[1]  # thought from under the roof, told why the body moved
+    assert llm.asked == [] and any(e["kind"] == "stopgap" and e["phase"] == "held" for e in logs)
+    assert island.attrs["Sheltered"] and not any(e["kind"] == "skill" and e["args"] == {"x": 0, "z": 0} for e in logs)
+    assert ("decision", None, None) in phases(logs)
+
+
+def test_a_stopgap_the_shelter_reflex_stops_drops_the_plan_it_was_waiting_for(monkeypatch, tmp_path):
+    """INT-3: the cold gets worse during a stop-gap, and the reflex stops it to walk the body under a roof. As in the
+    wait (#76), the plan thought for where the body stood is dropped; the reflex's words reach the next plan, which a
+    stop-gap's outcome would not carry ("What just happened" is the agenda's own, 80-AB10)."""
+    plans = [{"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
+    llm = LateLLM(plans, [stopgap("fetch", ("walk_to", {"x": 5, "z": 0}), ("wait", {"seconds": 1}))], calls=2)
+
+    def hook(entry):
+        if entry["kind"] == "plan_discarded":
+            for _ in range(2):
+                llm.released.release()
+
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [], llm=llm, hook=hook, no_narration=True)
+    in_the_rain(island, health=40)  # cold, not yet in danger: the stop-gap is asked
+    island.on_act["MoveTo"] = lambda d: island.attrs.update(Health=30) if not island.attrs.get("Sheltered") else None
+    skills, attention = loop_args[4], loop_args[1]
+    skills.on_reflex = attention.notice
+    loop_args[5].think_deadline = 0.1
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args)
+    seq = phases(logs)
+    shelter = next(e for e in logs if e["kind"] == "reflex" and e.get("ok"))
+    dropped = next(e for e in logs if e["kind"] == "plan_discarded")
+    assert dropped["reason"] == rg.SHELTERED and stats["plans_discarded"] == 1
+    assert seq.index(("project", "end", "fetch")) < seq.index(("plan_discarded", None, None))
+    assert shelter["text"] in llm.planned[1] and island.attrs["Sheltered"]
+
+
 def test_without_a_deadline_the_body_waits_as_before(monkeypatch, tmp_path):
     plans = [{"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
     llm = LateLLM(plans, [stopgap("fetch")])
@@ -788,12 +869,12 @@ def test_single_loop(monkeypatch, tmp_path):
     plans = [{"intention": "jump", "project": {"goal": "up", "steps": [{"skill": "jump", "args": {}},
                                                                        {"skill": "fly", "args": {}}]}},
              {"intention": "", "project": {"goal": "idle", "steps": []}},
-             {"intention": "x", "project": {"goal": "fail", "steps": [{"skill": "pick_up", "args": {"object": "No"}},
+             {"intention": "Bring Log_3 to (4, -2)", "project": {"goal": "fail", "steps": [{"skill": "pick_up", "args": {"object": "No"}},
                                                                     {"skill": "jump", "args": {}}]}}]
     island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, plans, calls=3, agenda=False)
     with pytest.raises(KeyboardInterrupt):
         rg.single_loop(*loop_args)
-    assert stats["projects"] == 3 and island.said == ["jump", "x"]
+    assert stats["projects"] == 3 and island.said == ["Jump.", "Bring a log."]  # intentions in plain words too
     assert any(l["kind"] == "skill" and l["skill"] == "wait" for l in logs)
 
 
@@ -1081,12 +1162,32 @@ def close_console():
 def test_main_attached(main_env, monkeypatch):
     tmp_path, port = main_env
     run = tmp_path / "run"
+    voices = []
+
+    class Voice(rg.Voice):  # the real voice, watched: it hears the whole log, beside the body, until the run ends
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.heard, self.stopped = [], False
+            voices.append(self)
+
+        def hears(self, entry):
+            self.heard.append(entry["kind"])
+            super().hears(entry)
+
+        def stop(self):
+            self.stopped = True
+            super().stop()
+    monkeypatch.setattr(rg, "Voice", Voice)
     monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
                                       "--no-bubble", "--memory", "native2", "--reasoning-effort", "low"])
     try:
         rg.main()
     finally:
         close_console()
+    (voice,) = voices
+    assert voice.thread is not None and voice.stopped and voice.llm is FakeLLMClass.instances[0]
+    assert {"decision", "project", "skill", "said"} <= set(voice.heard)  # its own "hi" too, said in plain words
+    assert '"kind": "said", "words": "Hi."' in (run / "mind/log.jsonl").read_text()
     summary = json.loads((run / "summary.json").read_text())
     assert summary["projects"] >= 1 and summary["memory_engine"] == "native2" and summary["structures"]["pieces"] == 1
     assert summary["stopgaps"] == 0 and summary["answers_forced"] == 2 and summary["think_deadline"] == 0
@@ -1108,6 +1209,84 @@ def test_main_refuses_reasoning_options_that_cannot_run(main_env, monkeypatch, b
     with pytest.raises(SystemExit) as stopped:
         rg.main()
     assert stopped.value.code == 2 and not (tmp_path / "bad").exists()
+
+
+def test_main_speaks_by_itself_when_a_note_comes_down(main_env, monkeypatch, tmp_path, world_server):
+    """78-CDE10: the voice as the launcher builds it. A viewer's note comes down; the voice asks the model with
+    Godling's persona and name, its line reaches the world chat in plain words, and the mind is told it said it."""
+    from godling import speech
+    _, port = main_env
+    run = tmp_path / "run7"
+    monkeypatch.setattr(speech, "EVERY", 0.01)
+    monkeypatch.setattr(speech, "GAP", 0)  # its own "hi" was just said: no waiting here
+    told, lines, voiced = threading.Event(), [], []
+
+    class Speaking(FakeLLMClass):
+        def quick_json(self, system, user, purpose, max_tokens=80):
+            if purpose == "voice":
+                voiced.append((system, user))
+                return {"say": "A note from beyond the sea, at (3, 4)."}
+            return super().quick_json(system, user, purpose, max_tokens)
+
+        def complete_json(self, *a, **kw):
+            if self.left <= 0:  # the run ends with this plan: not before its voice has spoken
+                told.wait(5)
+            return super().complete_json(*a, **kw)
+
+    class Told(rg.Mind):
+        def said_aloud(self, line):
+            super().said_aloud(line)
+            lines.append(line)
+            told.set()
+    monkeypatch.setattr(rg, "LLM", Speaking)
+    monkeypatch.setattr(rg, "Mind", Told)
+    looks = []
+
+    def observe(request):  # a note's glider lands from the second look on
+        looks.append(1)
+        clock = {"NoteId": 1, "NoteText": "hello island", "NoteX": 3, "NoteZ": 4} if len(looks) > 1 else {}
+        return raw_obs([ground(), block("Block_1", 5, 1.25, 0)], clock=clock, tick=len(looks))
+    world_server.replies[("GET", "/observe")] = observe
+    world_server.replies[("POST", "/input")] = observe
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
+                                      "--no-bubble"])
+    try:
+        rg.main()
+    finally:
+        close_console()
+    assert lines == ["A note from beyond the sea."]
+    chat = [r["body"]["content"] for r in world_server.requests if r["path"] == "/chat"]
+    assert "A note from beyond the sea." in chat
+    system, user = voiced[0]
+    assert "I am Godling." in system and "You are Godling." in system and '"hello island"' in user
+    log = (run / "mind/log.jsonl").read_text()
+    assert '"kind": "said", "words": "A note from beyond the sea.", "moment": "note"' in log
+
+
+def test_the_live_default_memory_keeps_a_skill_that_has_proven_itself(main_env, monkeypatch):
+    # The live run (native memory, the default) forgot mend_at_home at 71 of 81 when its mind asked (ADR-032).
+    tmp_path, port = main_env
+    run = tmp_path / "run"
+    (run / "memory").mkdir(parents=True)
+    (run / "memory" / "skills.json").write_text(json.dumps({"mend_at_home": MEND_AT_HOME}))
+
+    class ForgetfulLLM(FakeLLMClass):
+        def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+            reply = super().complete_json(system, user, purpose, on_reasoning, **options)  # max_tokens, effort...
+            return {**reply, "forget": ["mend_at_home"]} if purpose == "decide" else reply
+    monkeypatch.setattr(rg, "LLM", ForgetfulLLM)
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
+                                      "--no-bubble"])
+    try:
+        rg.main()
+    finally:
+        close_console()
+    assert json.loads((run / "config.json").read_text())["memory"] == "native"
+    assert json.loads((run / "memory" / "skills.json").read_text())["mend_at_home"]["successes"] == 71
+    log = [json.loads(line) for line in (run / "mind/log.jsonl").read_text().splitlines()]
+    assert [e["kind"] for e in log if e["kind"] in ("forget", "forget_refused")][:1] == ["forget_refused"]
+    assert "forget" not in [e["kind"] for e in log]
+    assert "KEEP   skill mend_at_home" in (run / "console.log").read_text()
 
 
 def test_main_starts_the_world(main_env, monkeypatch, tmp_path):
