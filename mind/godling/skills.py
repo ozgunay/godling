@@ -8,6 +8,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from .house import WALL_LINE, ring
+from .house import at as cell_at
 from .world import (BODY_CENTRE_Y, BUILDING_KINDS, CUBE, FASTEN_SECONDS, LADDER_HEIGHT, LIFT_SECONDS, PICKUP_RANGE,
                     PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, SPEAR_THRUST, STEP, STRIKE_RANGE, STRIKE_SECONDS,
                     TOOL_KINDS, TURN_RATE, WALK_SPEED, BoxIndex, WorldError, grid, hdist, turned_size)
@@ -73,6 +75,18 @@ STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block
 LADDER_FOOT = 2.45  # out from a standing ladder's middle, the room its foot needs: climbing down, the world steps the
 #                     body off 1.5 out and wants room for it there, 1.9 wide (main.lua climb, bodyFits)
 LADDER_KEPT_CLEAR = "anything there closes the way up it. Set it a cell further off, or move the ladder first"
+SITE_KEPT_CLEAR = "Your hands keep the site clear: a piece goes in a wall along its line, or off the site"
+ON_THE_SITE = {  # where on the house's site a piece would lie (house.site_of), in words; "kept clear": a plain set
+    "room": "in your house's room", "doorway": "in your house's doorway",
+    "way out": "in the way out of your house's doorway",
+    "strip": "beside your house's walls, on the ground a cell wide round them where you stand to build (only a "
+             "block on its own, as a step, goes there)",
+    "kept clear": "on your house's site"}
+INTO = {"room": "in the room", "doorway": "in the doorway", "way out": "in the way out", "strip": "beside the walls",
+        "kept clear": "on the site"}
+CARRY_CELLS = 12  # how far off (in cells) the body looks for clear floor to carry a piece to, with nowhere in reach
+CARRY_TRIES = 12  # of the nearest spots there, how many it works out the way to
+NEAR_SEARCH = 20000  # cells the way to somewhere near is searched over (a square some 70 across), not the whole island
 RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
 RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
 TINDER_RANGE = 3.0  # main.lua TINDER_RANGE: tinder this close to the log catches from it
@@ -344,7 +358,7 @@ class Skills:
             return bool(walls.at(x, z, strict=True) or things.at(x, z, strict=True))
         return blocked
 
-    def _route(self, snap, start, goal, ignore=(), escaped=False):
+    def _route(self, snap, start, goal, ignore=(), escaped=False, limit=120000):
         """Waypoints from start to goal (x, z), or None when no way round is known: A* over half-unit cells, then
         smoothed into straight legs. Half units, because a one-block doorway between grid cells is only just wider
         than the clearance the body keeps, and on whole units half the doorways fall between cells."""
@@ -377,7 +391,7 @@ class Skills:
                 out = [p for p in out if not blocked(*p) and open_line(start, p)]
                 if out:
                     escape = min(out, key=lambda p: math.dist(p, goal))
-                    rest = self._route(snap, escape, goal, ignore, escaped=True)
+                    rest = self._route(snap, escape, goal, ignore, escaped=True, limit=limit)
                     return None if rest is None else [escape] + rest
         res = 0.5
         s, g = (round(start[0] / res), round(start[1] / res)), (round(goal[0] / res), round(goal[1] / res))
@@ -397,7 +411,7 @@ class Skills:
             if cell == g or (not goal_free and math.dist(cell, g) * res <= 1.5):
                 reached = cell
                 break
-            if len(came) > 120000:
+            if len(came) > limit:  # cells searched: past this, no way round is known
                 break
             if so_far > cost.get(cell, math.inf):
                 continue
@@ -442,7 +456,7 @@ class Skills:
             if replans <= 0:
                 if route is None:  # say what pens the body in, or closes off the goal, so the mind can clear a way
                     raise Stuck(f"{why}; {self._closed_by(self._observe(), ignore, (x, z))}") from None
-                raise
+                raise Stuck(f"{why}; {self._what_stopped(self._observe(), ignore, (x, z))}") from None  # ADR-027
             # Something moved or the body was pushed off its route: look again and find another way, once.
             self.log(kind="reflex", text=f"{why}; looking for another way")
             time.sleep(0.3)
@@ -511,6 +525,34 @@ class Skills:
                                        key=lambda e: hdist(e.pos, (x, 0, z)))][:5]
         return f"no way round: the way to ({x:.1f}, {z:.1f}) is closed off" + (f" by {', '.join(near)}" if near else "")
 
+    def _what_stopped(self, snap, ignore, goal):
+        """Why a walk with a way round stuck, in words: what closes the way now, if nothing is left open, else what
+        presses on the body where it stopped and what lies across the way on from there. What the walk goes up to is
+        named as well: the body snags on it too. In the live run of 2026-11-08, 31 failures said only "stuck N short"."""
+        me = (snap.me[0], snap.me[2])
+        if self._route(snap, me, goal, ignore) is None:
+            return self._closed_by(snap, ignore, goal)
+        things = self._in_the_way(snap) + self._walls(snap)
+
+        def gap(e):
+            return math.hypot(max(abs(me[0] - e.pos[0]) - e.size[0] / 2, 0), max(abs(me[1] - e.pos[2]) - e.size[2] / 2, 0))
+        far = math.dist(me, goal) or 1.0
+        on = [(me[0] + (goal[0] - me[0]) * d / far, me[1] + (goal[1] - me[1]) * d / far)
+              for d in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0) if d <= far]
+        pressing = sorted((e for e in things if gap(e) <= BODY_RADIUS + 0.6), key=gap)
+        across = sorted((e for e in things if any(e.footprint_contains(x, z, margin=BODY_RADIUS) for x, z in on)), key=gap)
+        names = list(dict.fromkeys(e.name for e in pressing + across))[:4]
+        return f"snagged by {', '.join(names)}" if names else "nothing you can see stood in the way there"
+
+    def _can_walk_to(self, snap, obj):
+        """Whether the body can walk from where it stands to a spot within reach of `obj` on its own floor, going round
+        it as round anything else."""
+        stand = self._stand_point(snap, obj.pos, PICKUP_RANGE, 1.6 + min(obj.size[0], obj.size[2]) / 2,
+                                  ignore={obj.name}, avoid=obj)
+        me = (snap.me[0], snap.me[2])
+        return stand is not None and (math.dist(me, stand) < 0.6
+                                      or self._route(snap, me, stand, limit=NEAR_SEARCH) is not None)
+
     def _lift_through(self, snap, goal, ignore, pen):
         """Reflex, as a person does: penned in by its own pieces, the body lifts one out of the way, steps out
         through the gap and sets it back where it was. What it held it first rests on the pen's wall (or sets down
@@ -571,8 +613,14 @@ class Skills:
         return self.skill_pick_up(piece.name).ok
 
     def _rest_on(self, snap, held, walls):
-        """Rest what the hands hold on top of one of `walls` (bare pieces beside the body). Its name, or None."""
-        for wall in sorted(walls, key=lambda e: hdist(e.pos, snap.me)):
+        """Rest what the hands hold on top of one of `walls` (bare pieces beside the body). Its name, or None. First on
+        one low enough for the hands to take it back from the ground outside: on a house's wall three blocks high it
+        lies over the body's reach, and stays up there (ADR-027, the site of the live run at 07:49 on 2026-11-09)."""
+        level = self._level(snap)
+
+        def out_of_reach(wall):
+            return wall.top + held.local_size[1] / 2 - (level + BODY_CENTRE_Y) > PICKUP_RANGE - 0.5
+        for wall in sorted(walls, key=lambda e: (out_of_reach(e), hdist(e.pos, snap.me))):
             top = (wall.pos[0], wall.top + held.local_size[1] / 2 + 0.02, wall.pos[2])
             if self.world.act("Place", {"position": list(top), "rotation": _rotation(0, False)}).last_result == "PlaceSuccess":
                 self._settle(PLACE_SECONDS + 0.4)
@@ -876,6 +924,54 @@ class Skills:
         return next((e for e in self._standing_ladders(snap) if e is not obj and abs(e.top - bottom) < 0.3
                      and abs(obj.pos[0] - e.pos[0]) < (obj.size[0] + e.size[0]) / 2 - 0.05
                      and abs(obj.pos[2] - e.pos[2]) < (obj.size[2] + e.size[2]) / 2 - 0.05), None)
+
+    # ---- the house's site, kept clear (ADR-027) ------------------------------------------------------------------
+    # In the live run of 2026-11-08 the hands-full reflex set 47 logs down at the house's site, on its walls and the
+    # ground round them, and in the last hour Godling could not build there. A builder keeps a site clear, as colony
+    # games keep a blueprint's cells and the spot its builder stands on free, and haul off what lies there: the hands set
+    # nothing down in the house's room, doorway or way out, nor on the ground a cell wide round its walls, and in a
+    # wall's cells only a piece that stays in the walls' line. They say why. The roof, laid over the walls and out past
+    # them, is not the site's business, nor is a ladder set against a wall.
+    def _site(self):
+        """The house's site as the mind keeps it (memory.reserved_cells): {cell: what it is}. A plain set of cells is
+        kept clear as a whole."""
+        cells = self.reserved()
+        return dict(cells) if isinstance(cells, dict) else dict.fromkeys(cells, "kept clear")
+
+    @staticmethod
+    def _cells_under(centre, size):
+        """The cells a box at `centre`, world-aligned `size`, reaches into: any part of it."""
+        x, z = centre[0], centre[2]
+        return [(ix, iz) for ix in range(math.floor((x - size[0] / 2) / CUBE), math.ceil((x + size[0] / 2) / CUBE) + 1)
+                for iz in range(math.floor((z - size[2] / 2) / CUBE), math.ceil((z + size[2] / 2) / CUBE) + 1)
+                if abs(x - ix * CUBE) < (size[0] + CUBE) / 2 - 1e-9 and abs(z - iz * CUBE) < (size[2] + CUBE) / 2 - 1e-9]
+
+    def _on_the_site(self, snap, centre, size, name, site=None, step=False):
+        """Where a piece set at `centre`, its world-aligned box `size`, would lie on the house's site off its walls'
+        line, in words ("in your house's room"), or "". With `step`, a block alone on the ground beside the walls is a
+        step to build from, and may go there: the house's roof is set from one (house.plan)."""
+        site = self._site() if site is None else site
+        if not site:
+            return ""
+        room = [c for c, kind in site.items() if kind == "room"]
+        floors = [snap.ground_top(ix * CUBE, iz * CUBE) for ix, iz in room] or [snap.ground_top(centre[0], centre[2])]
+        floor = min((f for f in floors if f is not None), default=0.0)
+        if centre[1] - size[1] / 2 >= floor + WALL_LINE - 0.05:
+            return ""  # roof work: over the walls, and out past them
+        cells = self._cells_under(centre, size)
+        touched = sorted(c for c in cells if c in site)
+        if not touched:
+            return ""
+        doorway = {c for c, kind in site.items() if kind == "doorway"}
+        across = sorted(c for c in cells if c in set(ring(room)) - doorway)
+        if across:
+            into = " and ".join(f"{cell_at(c)} {INTO[site[c]]}" for c in touched)
+            return (f"across your house's wall at {cell_at(across[0])}: {name} there would stick out of the walls' line, "
+                    f"into {into}")
+        if step and all(site[c] == "strip" for c in touched) and max(size) <= CUBE + 0.1 \
+                and centre[1] - size[1] / 2 < floor + 0.3:
+            return ""  # a block alone on the ground beside the walls: a step to build from, as scaffolding stands there
+        return ON_THE_SITE[min((site[c] for c in touched), key=list(ON_THE_SITE).index)]
 
     def _describe(self, snap, name):
         obj = snap.entities.get(name)
@@ -1360,9 +1456,9 @@ class Skills:
         if held:
             freed = self._set_down_nearby(snap, held, obj.pos)
             if freed is None:
-                return Result(False, "pick_up", f"hands are full: holding {held.name}, and there is no clear spot nearby to "
-                                                "set it down" + (" outside your house's room, doorway and way out"
-                                                                 if self._kept_clear else ""))
+                return Result(False, "pick_up", f"hands are full: holding {held.name}, and there is no clear floor near "
+                                                "enough to set it down" + (" off your house's site"
+                                                                           if self._kept_clear else ""))
             note = f" (first {freed.summary.replace('put', 'set', 1)}, to free your hands)"
             snap = self._observe()
             obj = snap.entities.get(object)
@@ -1416,23 +1512,20 @@ class Skills:
                  if on_our_floor(x, z)
                  and hdist((x, 0, z), away_from) > CUBE + 0.5 and all(hdist((x, 0, z), e.pos) > CUBE for e in kept)]
         long = max(held.local_size) > CUBE + 0.1 and not held.name.startswith("Ladder_")
-        reserved = set(self.reserved())
+        site = self._site()
         self._kept_clear = False
 
-        def clear_of_reserved(x, z, turn):  # the whole of it as it would lie, not only where its middle goes
-            if not reserved:
-                return True
+        def off_the_site(x, z, turn):  # the whole of it as it would lie, not only where its middle goes
             if held.name.startswith(SNAPPED_KINDS):
                 x, z = grid(x), grid(z)
             size = turned_size(held.local_size, turn, False)
-            if any(abs(x - ix * CUBE) < (size[0] + CUBE) / 2 - 1e-9
-                   and abs(z - iz * CUBE) < (size[2] + CUBE) / 2 - 1e-9 for ix, iz in reserved):
+            if self._on_the_site(snap, (x, level + size[1] / 2, z), size, held.name, site):
                 self._kept_clear = True
                 return False
             return True
-        # The house's room, doorway and way out stay clear (run hp-full2), before the nearest few are tried.
+        # The house's site stays clear (run hp-full2; ADR-027), before the nearest few are tried.
         tries = [(x, z, turn) for x, z in sorted(spots, key=lambda p: -hdist((p[0], 0, p[1]), away_from))
-                 for turn in ((0, 90) if long else (0,)) if clear_of_reserved(x, z, turn)]
+                 for turn in ((0, 90) if long else (0,)) if off_the_site(x, z, turn)]
         for x, z, turn in tries[:16]:
             setting_aside, self._setting_aside = self._setting_aside, True
             try:
@@ -1442,6 +1535,78 @@ class Skills:
             if result.ok:
                 self.log(kind="reflex", text=f"hands full: {result.summary} to pick up something else")
                 return result
+        return None if self._lifting else self._carry_off(snap, held, away_from, site)
+
+    def _carry_off(self, snap, held, away_from, site):
+        """Reflex, as a hauler in a colony game carries what lies on a blueprint off to clear ground: with nowhere clear
+        within reach to set down what the hands hold, carry it to the nearest clear floor beyond the house's site (the
+        nearest by the way there, of the nearest few) and set it down. Before ADR-027 the hands stayed full and every
+        pick-up failed: in the live run of 2026-11-08 Godling held Log_7 from 07:11 to 07:19, through 29 failures.
+        A Result saying where it went, or None."""
+        level = self._level(snap)
+        room = [c for c, kind in site.items() if kind == "room"]
+        taken = set(site) | set(ring(room))  # the site, and the walls in it
+        protected = set(self.protected())
+        me = (snap.me[0], snap.me[2])
+
+        def near(e):  # within the square searched, and a log's length round it
+            return abs(e.pos[0] - me[0]) <= CARRY_CELLS * CUBE + e.size[0] / 2 + 4 * CUBE                 and abs(e.pos[2] - me[1]) <= CARRY_CELLS * CUBE + e.size[2] / 2 + 4 * CUBE
+        kept = [e for name, e in snap.entities.items() if name in protected and near(e)]
+        obstacles = [e for e in self._obstacles(snap, ignore={held.name}) if near(e)]
+        rock = [t for t in snap.terrain() if t.top > level + 0.3 and near(t)]
+        long = max(held.local_size) > CUBE + 0.1 and not held.name.startswith("Ladder_")
+
+        def clear(x, z, size):  # off the site, on our floor, and nothing there: what put_down would take
+            if set(self._cells_under((x, 0, z), size)) & taken or snap.ground_top(x, z) is None:
+                return False
+            top = snap.surface(x, z, below=level + STEP)[0]
+            if top is None or abs(top - level) > 0.3:
+                return False
+            hx, hz = size[0] / 2, size[2] / 2
+            if any(abs(x - t.pos[0]) < t.size[0] / 2 + hx and abs(z - t.pos[2]) < t.size[2] / 2 + hz for t in rock):
+                return False
+            if any(abs(e.pos[0] - x) < hx + e.size[0] / 2 + 0.05 and abs(e.pos[2] - z) < hz + e.size[2] / 2 + 0.05
+                   and e.top > level + 0.05 and e.pos[1] - e.size[1] / 2 < level + 3 for e in obstacles):
+                return False
+            if any(hdist((x, 0, z), e.pos) <= CUBE for e in kept):
+                return False
+            return not self._crowds_a_ladder(snap, (x, level + size[1] / 2, z), size)
+        spots = []
+        ox, oz = round(me[0] / CUBE), round(me[1] / CUBE)
+        for ix in range(ox - CARRY_CELLS, ox + CARRY_CELLS + 1):
+            for iz in range(oz - CARRY_CELLS, oz + CARRY_CELLS + 1):
+                x, z = ix * CUBE, iz * CUBE
+                far = math.hypot(x - me[0], z - me[1])
+                if far > CARRY_CELLS * CUBE or hdist((x, 0, z), away_from) <= 2 * CUBE + 1.0:
+                    continue  # not where it would crowd what the hands go to take next
+                for turn in (0, 90) if long else (0,):
+                    size = turned_size(held.local_size, turn, False)
+                    if clear(x, z, size):
+                        spots.append((far, x, z, turn, size))
+        ways = []
+        for _, x, z, turn, size in sorted(spots, key=lambda spot: spot[:4])[:CARRY_TRIES]:
+            target = (x, level + size[1] / 2, z)
+            stand = self._stand_point(snap, target, PLACE_RANGE, 1.0 + min(size[0], size[2]) / 2 + 0.5,
+                                      ignore={held.name}, avoid=_Box(target, size))
+            path = None if stand is None else ([stand] if math.dist(me, stand) < 0.6
+                                               else self._route(snap, me, stand, ignore={held.name}, limit=NEAR_SEARCH))
+            if path:
+                ways.append((sum(math.dist(a, b) for a, b in zip([me] + path, path)), x, z, turn))
+        # Penned in, there is no way to any of them yet: to the nearest, and the walk lifts a way out of the pen first.
+        ways = sorted(ways) or [(far, x, z, turn) for far, x, z, turn, _ in sorted(spots, key=lambda spot: spot[:4])]
+        where = "off your house's site" if site else "further off"
+        for _, x, z, turn in ways[:3]:
+            setting_aside, self._setting_aside = self._setting_aside, True
+            try:
+                result = self.skill_put_down(x, z, turn)
+            except Stuck:
+                continue
+            finally:
+                self._setting_aside = setting_aside
+            if result.ok:
+                summary = result.summary.replace(f"put {held.name} down", f"carried {held.name} {where} and put it down", 1)
+                self.log(kind="reflex", text=f"hands full, and nowhere clear in reach: {summary} to pick up something else")
+                return Result(True, "put_down", summary, result.facts)
         return None
 
     def skill_put_down(self, x, z, turn=0, upright=False):
@@ -1451,20 +1616,24 @@ class Skills:
         if not held:
             return Result(False, "put_down", "hands are empty")
         self.busy.add(held.name)
+        if held.name.startswith(SNAPPED_KINDS):  # it will settle into the grid: plan for the cell it lands in
+            x, z = grid(x), grid(z)  # first: at the sand's edge, the cell it lands in can be over the sea
         ground = snap.ground_top(x, z)
         if ground is None:
             return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is open sea; it would sink and be lost")
         ladder = held.name.startswith("Ladder_")  # the world stands a ladder up by itself
-        if held.name.startswith(SNAPPED_KINDS):  # it will settle into the grid: plan for the cell it lands in
-            x, z = grid(x), grid(z)
         size = turned_size(held.local_size, turn, upright and not ladder)
         hx, hz = size[0] / 2, size[2] / 2
         level = self._level(snap)
         floor = snap.surface(x, z, below=level + STEP)[0]  # the ground, or a floor we built at our own level
         floor = ground if floor is None else floor
-        covering = max((t for t in snap.terrain() if t.footprint_contains(x, z)), key=lambda t: t.top)
-        if covering.role == "Tree":
+        covering = max((t for t in snap.terrain() if t.footprint_contains(x, z)), key=lambda t: t.top, default=None)
+        if covering is not None and covering.role == "Tree":
             return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is inside the trunk of {covering.name}")
+        on_site = "" if ladder or self._lifting else self._on_the_site(snap, (x, floor + size[1] / 2, z), size, held.name,
+                                                                      step=not self._setting_aside)
+        if on_site:  # ADR-027
+            return Result(False, "put_down", f"({x:.1f}, {z:.1f}) is {on_site}. {SITE_KEPT_CLEAR}")
         if not ladder:  # a ladder is meant to stand against something
             for t in snap.terrain():  # a mesa wall or a trunk right beside the spot leaves no room for the object
                 if t.top > floor + 0.3 and abs(x - t.pos[0]) < t.size[0] / 2 + hx and abs(z - t.pos[2]) < t.size[2] / 2 + hz:
@@ -1599,6 +1768,10 @@ class Skills:
         if crowds:
             where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
             return Result(False, "place_at", f"{where} is {crowds}: {LADDER_KEPT_CLEAR}", {"object": held.name})
+        on_site = "" if self._lifting else self._on_the_site(snap, target, size, held.name, step=not self._setting_aside)
+        if on_site:  # ADR-027
+            where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
+            return Result(False, "place_at", f"{where} is {on_site}. {SITE_KEPT_CLEAR}", {"object": held.name})
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
         stepped, floor = "", None

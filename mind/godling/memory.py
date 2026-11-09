@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from .files import write_atomic
-from .house import at, outside_of
+from .house import at, site_of
 
 
 def house_title(house):
@@ -138,15 +138,15 @@ class NativeMemory:
                     None)
 
     def reserved_cells(self):
-        """The cells the house the mind is building needs clear (Mind.house_project): its room, its doorway and the
-        way out of it. The body sets nothing down there to free its hands (run hp-full2: three pieces it set down in
-        the house stopped the house being finished)."""
+        """The cells the house the mind is building needs clear (Mind.house_project), each with what it is: its room,
+        its doorway, the way out of it, and the strip of ground a cell wide round its walls (house.site_of). The body
+        sets nothing down there but the walls' own pieces, in their line (run hp-full2: three pieces it set down in the
+        house stopped the house being finished; ADR-027: in the live run of 2026-11-08 the reflex set 47 logs down at
+        the site, on its walls and the ground round them). {cell: "room" | "doorway" | "way out" | "strip"}."""
         house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         if not house.get("inside") or not house.get("door"):
-            return set()
-        room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
-        out = outside_of(room, door)
-        return set(room) | {door} | ({out} if out else set())
+            return {}
+        return site_of([tuple(c) for c in house["inside"]], tuple(house["door"]))
 
     def set_house(self, house):
         """The house the mind is building (Mind.house_project), or None once it gives it up."""

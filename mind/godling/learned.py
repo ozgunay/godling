@@ -7,7 +7,8 @@ right before each step runs:
     {"top": "$object"}          -> [x, y, z] of the top surface of the stack the object is in
     {"add": [a, b]}             -> element-wise sum of two vectors, e.g. {"add": [{"top": "$o"}, [0, 0.4, 0]]}
     {"x": vec} / {"y": vec} / {"z": vec} -> one coordinate of a vector
-    {"nearest_free": "cube"}    -> name of the nearest cube nobody has claimed ("brick" and "stone" too)
+    {"nearest_free": "cube"}    -> name of the nearest cube nobody has claimed ("brick" and "stone" too): the one in
+                                   the hands if it is one, else the nearest the body can walk to (ADR-027)
 A step may carry "repeat": n (up to 12). A new skill is "unproven" until one full run succeeds.
 """
 import json
@@ -19,6 +20,7 @@ from .skills import PRIMITIVES, Result
 from .world import PIECE_KINDS
 
 MAX_STEPS = 12
+NEAREST_TRIES = 6  # nearest_free: of the nearest pieces, how many it works out a way to before taking the nearest
 
 
 class SkillError(ValueError):
@@ -167,8 +169,17 @@ class SkillLibrary:
                 kind = self._resolve(arg, bound, skills)
                 if kind not in PIECE_KINDS:
                     raise SkillError(f"nearest_free looks for one of {', '.join(PIECE_KINDS)}, not {kind!r}")
-                free = [e for e in skills._free_pieces(snap) if PIECE_KINDS[kind](e)]
+                held = snap.held()
+                if held is not None and PIECE_KINDS[kind](held):
+                    # The one in the hands is the nearest (ADR-027): in the live run of 2026-11-08 the wall skill
+                    # upright_log_at, used 283 times, reached past the log in its hands for another, and with nowhere
+                    # to set the held one down every wall step failed.
+                    return held.name
+                free = sorted((e for e in skills._free_pieces(snap) if PIECE_KINDS[kind](e)),
+                              key=lambda c: (c.pos[0] - snap.me[0]) ** 2 + (c.pos[2] - snap.me[2]) ** 2)
                 if not free:
                     raise SkillError(f"no free {kind} left")
-                return min(free, key=lambda c: (c.pos[0] - snap.me[0]) ** 2 + (c.pos[2] - snap.me[2]) ** 2).name
+                # The nearest the body can walk to, of the nearest few (in that run it took the same log it could not
+                # reach five times); if none of those, the nearest, and pick_up says why.
+                return next((e.name for e in free[:NEAREST_TRIES] if skills._can_walk_to(snap, e)), free[0].name)
         return {k: self._resolve(v, bound, skills) for k, v in value.items()}

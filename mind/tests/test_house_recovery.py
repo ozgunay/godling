@@ -134,7 +134,8 @@ RESERVED = set(ROOM) | {DOOR, (0, -2)}  # the room, the doorway and the way out
 def test_hands_full_sets_nothing_down_in_the_house(monkeypatch, held, start):
     # Run hp-full2: to free its hands the body set a stone, another stone and a log down in the house it was
     # building, wherever floor was clear beside it. Now the whole of what it sets down, a log three cells long too,
-    # stays off the room, the doorway and the way out; with nowhere else in reach it keeps hold and says so.
+    # stays off the room, the doorway and the way out; with nowhere else in reach it carries it further off (ADR-027),
+    # and with nowhere clear at all (here only the hammer's own corner of the strip is left) it keeps hold and says so.
     piece = (block("Block_held", 0, 1.25, 30) if held == "stone" else ent("Log_held", (0, 1.25, 30), (7.5, 2.5, 2.5)))
     island = Island([*platform(), *benchmark(), piece, ent("Hammer_1", (0, 0.2, -11), (0.6, 0.4, 2.0))],
                     me=(start[0] * C, BODY_CENTRE_Y, start[1] * C))
@@ -146,8 +147,8 @@ def test_hands_full_sets_nothing_down_in_the_house(monkeypatch, held, start):
         assert island.held == "Hammer_1" and not footprint(island.ents[piece["name"]]) & RESERVED, r.summary
     else:
         assert island.held == piece["name"] and r.summary == (
-            f"hands are full: holding {piece['name']}, and there is no clear spot nearby to set it down outside your "
-            "house's room, doorway and way out")
+            f"hands are full: holding {piece['name']}, and there is no clear floor near enough to set it down off your "
+            "house's site")
     if start != (1, 1):  # from the doorway or the room, the strip beyond the way out is in reach
         assert r.ok
 
@@ -170,9 +171,16 @@ def test_hands_full_keeps_unsnapped_objects_wholly_out_of_the_room(monkeypatch, 
 def test_the_cells_a_house_needs_clear(tmp_path):
     from godling.memory import NativeMemory
     mem = NativeMemory(tmp_path / "mem")
-    assert mem.reserved_cells() == set()
+    assert mem.reserved_cells() == {}
     mem.set_house({"inside": [list(c) for c in ROOM], "door": list(DOOR)})
-    assert mem.reserved_cells() == RESERVED
+    site = mem.reserved_cells()
+    assert {c for c, kind in site.items() if kind != "strip"} == RESERVED
+    assert site[DOOR] == "doorway" and site[(0, -2)] == "way out" and all(site[c] == "room" for c in ROOM)
+    # ADR-027: and the ground a cell round the walls, where the body stands to build them; not the walls themselves.
+    walls = {(x, z) for x in range(-1, 3) for z in range(-1, 3)} - set(ROOM) - {DOOR}
+    assert {c for c, kind in site.items() if kind == "strip"} == (
+        {(x, z) for x in range(-2, 4) for z in range(-2, 4)} - walls - set(ROOM) - {DOOR, (0, -2)})
+    assert not walls & set(site)
 
 
 def walls_only(caps=()):

@@ -29,6 +29,8 @@ GAP = 0.15  # pieces this close are touching: a column with no gap wider than th
 MOST = 64  # cells: a room bigger than this is open ground under something wide, not a house
 SQUARE = 2  # the room holds a square of cells at least this many on a side
 ROOF_AT = 3 * LAYER  # where the roof's underside goes when none is up yet: on walls three blocks high
+WALL_LINE = ROOF_AT - LAYER / 2  # a piece whose underside is lower than this above the floor is in a wall's courses (or
+#                                  in the way); from here up it is roof work, laid over the walls and out past them
 EIGHT = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
 
 
@@ -76,6 +78,21 @@ def outside_of(room, door):
     return None if inner is None else (2 * door[0] - inner[0], 2 * door[1] - inner[1])
 
 
+def site_of(room, door):
+    """The cells a house being built needs clear, each with what it is (ADR-027): its room, its doorway, the way out of
+    the doorway, and the strip of ground a cell wide round its walls and doorway, where the body stands to build them.
+    Its walls are not in it: their own pieces go there. {cell: "room" | "doorway" | "way out" | "strip"}."""
+    room = set(room)
+    walls = set(ring(room))  # the doorway too
+    site = {c: "strip" for c in ring(room | walls)}
+    site.update({c: "room" for c in room})
+    site[tuple(door)] = "doorway"
+    out = outside_of(room, tuple(door))
+    if out is not None:
+        site[out] = "way out"
+    return site
+
+
 class Grid:
     """The building pieces by cell, and the floor under each cell."""
 
@@ -111,11 +128,11 @@ class Grid:
         actual = self.floor(c)
         return actual is not None and abs(actual - floor) <= FLAT and not self.filling(c, floor, up_to)
 
-    def standing(self, c, floor):
-        """How high the pieces in the cell stand from its floor, stacked without a gap."""
+    def standing(self, c, floor, without=()):
+        """How high the pieces in the cell stand from its floor, stacked without a gap (leaving out those `without`)."""
         level = floor
-        for b, t, _ in sorted(self.supports.get(c, ())):
-            if b <= level + GAP:
+        for b, t, name in sorted(self.supports.get(c, ())):
+            if b <= level + GAP and name not in without:
                 level = max(level, t)
         return level - floor
 
@@ -430,11 +447,26 @@ def plan(pieces, terrain, inside, door):
         return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": []}
     top = v["top"]
     walls = [c for c in v["ring"] if c != door]
-    low = [c for c in walls if grid.standing(c, floor) < top - GAP]
+    # ADR-027: a piece in a wall's cell is one of its courses only if it lies in the walls' line, wholly in their cells.
+    # One that sticks out of it (a log lying across a wall, half on the ground outside) is in the way, not the house's
+    # own: kept, the body would never lift it, and every piece set in that cell is refused as occupied. Nor does it
+    # count as the wall standing there. The ground a cell round the walls is where the body stands to build them, so
+    # what lies on it is in the way too. A house that stands has nothing in its way.
+    finished = v["house"] and v["doors"] == [door]
+    line = floor + WALL_LINE
+    spans = {}  # each piece: its underside, and the cells it lies in
+    for c, column in grid.columns.items():
+        for b, _, name in column:
+            spans.setdefault(name, [b, set()])[1].add(c)
+    strays = set() if finished else {name for name, (b, cells) in spans.items()
+                                     if b < line and cells & set(walls) and not cells <= set(walls)}
+    beside = set() if finished else {name for c, kind in site_of(room, door).items() if kind == "strip"
+                                     for b, t, name in grid.columns.get(c, ()) if b < line and t > floor + GAP}
+    low = [c for c in walls if grid.standing(c, floor, strays) < top - GAP]
     out = outside_of(room, door)
     door_open = grid.clear(door, floor, up_to=top - GAP)
     out_open = out is not None and grid.clear(out, floor)
-    capped = [c for c in walls if grid.standing(c, floor) >= top + LAYER - 2 * GAP]
+    capped = [c for c in walls if grid.standing(c, floor, strays) >= top + LAYER - 2 * GAP]
     lintel = grid.roof(door, floor)
     lintel = lintel is not None and lintel <= floor + top + GAP
     bare = v["bare"]
@@ -456,7 +488,7 @@ def plan(pieces, terrain, inside, door):
     in_the_way = ({name for c in room for _, name in grid.filling(c, floor)}
                   | {name for _, name in grid.filling(door, floor, up_to=top - GAP)}
                   | ({name for _, name in grid.filling(out, floor)} if out is not None else set())
-                  | set(blockers) | {n for _, found in beds.values() for n in found})
+                  | set(blockers) | {n for _, found in beds.values() for n in found} | strays | beside)
     own = sorted(({name for c in walls for b, _, name in grid.columns.get(c, ()) if b < floor + top + LAYER}
                   | {name for c in room + [door] for b, _, name in grid.columns.get(c, ())
                      if floor + top - GAP <= b < floor + top + LAYER}) - in_the_way)
@@ -466,10 +498,14 @@ def plan(pieces, terrain, inside, door):
             + ([f"the doorway at {at(door)} is open up to the roof"] if door_open else [])
             + (["the roof is over the room"] if not bare else [])
             + (["the roof covers the walls and the doorway"] if len(capped) == len(walls) and lintel else []))
+    def wall_now(c):  # how high it stands, and what lies across it out of the walls' line
+        lying = sorted(n for n in strays if c in spans[n][1])
+        return f"{at(c)} stands {grid.standing(c, floor, strays):.1f}" + (
+            f" ({' and '.join(lying)} {'lies' if len(lying) == 1 else 'lie'} across it, out of the walls' line)"
+            if lying else "")
     if low:
         step = ("walls three blocks high all round the room, corners too, but for the doorway at " + at(door) + ": "
-                + ", ".join(f"{at(c)} stands {grid.standing(c, floor):.1f}" for c in low[:8])
-                + (f" and {len(low) - 8} more" if len(low) > 8 else ""))
+                + ", ".join(wall_now(c) for c in low[:8]) + (f" and {len(low) - 8} more" if len(low) > 8 else ""))
     elif v["filled"]:
         step = "clear the room: " + ", ".join(
             f"{at(c)} ({name} {'hangs too low over it' if b >= floor + LAYER - GAP else 'fills it'})"
@@ -506,6 +542,15 @@ def plan(pieces, terrain, inside, door):
                 "the doorway or the way out): " + "; ".join(needs))
     else:
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
+    where = {p["name"]: p["pos"] for p in pieces}
+    sizes = {p["name"]: p["size"] for p in pieces}
+    # What the body set down there before ADR-027, or what fell there: named, as the room's are. A block alone on the
+    # ground there is a step to build from, and the hands may set one there.
+    lying_beside = sorted(n for n in beside - strays if max(sizes[n]) > CELL + 0.1 or spans[n][0] > floor + 0.3)
+    if lying_beside:
+        step += ("; lying on the ground a cell round the walls, where you stand to build them: "
+                 + ", ".join(f"{n} ({where[n][0]:.1f}, {where[n][2]:.1f})" for n in lying_beside[:6])
+                 + (f" and {len(lying_beside) - 6} more" if len(lying_beside) > 6 else ""))
     score = ((len(walls) - len(low)) + (len(room) - len(v["filled"])) + door_open + out_open + (len(room) - len(bare))
              + len(capped) + bool(lintel))
     return {"house": v["house"] and v["doors"] == [door], "next": step, "done": done, "score": score, "pieces": own,

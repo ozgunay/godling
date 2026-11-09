@@ -542,7 +542,7 @@ def test_resuming_without_house_project_releases_only_its_ownership(monkeypatch,
                   reserved=resumed.reserved_cells)
     mind = Mind(FakeLLM(), resumed, "", body, body.library, house_project=False)
     assert '"house": {' not in mind.system_prompt(island.snap())
-    assert resumed.reserved_cells() == set() and resumed.protected_cubes() == {"Log_1"}
+    assert resumed.reserved_cells() == {} and resumed.protected_cubes() == {"Log_1"}
     assert resumed.built_into("Block_w001") is None
     assert body.run("pick_up", {"object": "Block_w001"}).ok
     resumed.save()
