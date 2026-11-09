@@ -69,7 +69,7 @@ GIVE_UP_AFTER = 5  # failed passes in a row before an old recording that will no
 DISK_WARN = 0.8  # warn when the disk is this full
 ROWS_AT_ONCE = 1800  # recording rows read per step: about 30 s of the world
 TRACKED = {"decision": ("thought", "needs"), "bubble": ("ok", "thing", "feeling"),
-           "project": ("phase", "goal", "intention", "ok"), "thinking": (), "plan_discarded": (),
+           "project": ("phase", "goal", "intention", "ok", "stopgap"), "thinking": (), "plan_discarded": (),
            "learn": ("name", "does"), "sleep": ("dream",), "death": ("cause", "feeling"), "said": ("words", "moment"),
            "event": ("text", "sky", "sky_stage", "sky_id"), "glance": ("text", "degrees", "turned")}
 # The words of a tracked entry that viewers read, and so that the guest panel cleans and the site holds back when they
@@ -1071,6 +1071,9 @@ def reduce_status(entries, clean=lambda s: s, feed_kept=FEED_KEPT, world_kept=No
         elif kind == "thinking":
             if not (out["now"] or {}).get("thinking"):  # thinking since the first time it said so
                 out["now"] = {"time": e.get("time"), "thinking": True}
+        elif kind == "project" and e.get("phase") == "start" and e.get("stopgap"):  # no step of the agenda (ADR-030)
+            out["intention"] = clean(e.get("intention") or e.get("goal", ""))
+            out["now"] = {"time": e.get("time"), "text": out["intention"]}
         elif kind == "project" and e.get("phase") == "start":
             out["intention"] = clean(e.get("intention") or e.get("goal", ""))
             step += 1

@@ -279,21 +279,33 @@ def analyze_transcripts(paths):
     }
 
 
-def analyze_mind_log(path):
-    """Stats from the layered mind's own log (mind/log.jsonl), when the run used run_godling.py."""
+def analyze_mind_log(path, until_s=None):
+    """Stats from the layered mind's own log (mind/log.jsonl), when the run used run_godling.py.
+
+    `until_s`: only the run's first seconds, so arms are compared at the same elapsed minute (ADR-030, 80-AB11)."""
     entries = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    span = (entries[-1]["time"] - entries[0]["time"]) if len(entries) > 1 else 0
+    if until_s is not None and entries:
+        entries = [e for e in entries if e["time"] - entries[0]["time"] <= until_s]
+        span = min(span, until_s)
     llm = [e for e in entries if e["kind"] == "llm"]
     skills = [e for e in entries if e["kind"] == "skill"]
-    span = (entries[-1]["time"] - entries[0]["time"]) if len(entries) > 1 else 0
     by_skill = {}
     for s in skills:
         ok, total = by_skill.get(s["skill"], (0, 0))
         by_skill[s["skill"]] = (ok + bool(s["ok"]), total + 1)
-    projects = [e for e in entries if e["kind"] == "project" and e.get("phase") == "end"]
-    busy = sum(e["seconds"] for e in projects)
-    if not projects:  # older runs (m-001..m-003) have no project entries: approximate with top-level skills
+    ends = [e for e in entries if e["kind"] == "project" and e.get("phase") == "end"]
+    busy = sum(e["seconds"] for e in ends)  # the body at work, on stop-gaps too
+    if not ends:  # older runs (m-001..m-003) have no project entries: approximate with top-level skills
         busy = sum(s["seconds"] for s in skills if s.get("learned") or s["skill"] not in ("wait",))
     decide = [e for e in llm if e["purpose"] == "decide"]
+    stopgaps = [e for e in ends if e.get("stopgap")]  # ADR-030: counted apart from the planned projects (80-CDE6)
+    projects = [e for e in ends if not e.get("stopgap")]
+    forced = [e for e in entries if e["kind"] == "answer_forced"]
+    cost_by = Counter()
+    for e in llm:
+        cost_by[e["purpose"]] += e["cost"]
+    house = [e for e in entries if e["kind"] == "house"]
     return {
         "span_s": span,
         "busy_s": min(busy, span),
@@ -308,17 +320,46 @@ def analyze_mind_log(path):
         "reasoning": [e.get("reasoning", 0) for e in decide if "reasoning" in e],
         "decide_latency": [e["latency"] for e in decide],
         "cut_off": sum(1 for e in llm if e.get("finish") == "length"),
+        "answers_forced": sum(1 for e in forced if e.get("ok")),  # given from the reasoning (80-CDE5)
+        "answers_forced_failed": sum(1 for e in forced if not e.get("ok")),
+        "long_waits": sum(1 for e in entries if e["kind"] == "wait_for_mind" and e["seconds"] > 60),
+        "stopgaps": len(stopgaps),
+        "stopgaps_ok": sum(1 for e in stopgaps if e.get("ok")),
+        "stopgap_s": sum(e["seconds"] for e in stopgaps),
+        "stopgaps_dropped": sum(1 for e in entries if e["kind"] == "stopgap" and e.get("phase") == "dropped"),
         "calls": len(llm),
         "purposes": Counter(e["purpose"] for e in llm),
         "latency": [e["latency"] for e in llm],
         "tokens": Counter({"cache_hit": sum(e["cache_hit"] for e in llm), "cache_miss": sum(e["cache_miss"] for e in llm),
                            "output": sum(e["output"] for e in llm)}),
         "cost": sum(e["cost"] for e in llm),
+        "cost_by": dict(cost_by),  # the experiment's criteria (ADR-030, 80-SWEEP2)
+        "house_best": max((e["score"] for e in house if e.get("phase") == "progress"), default=None),
+        "house_built": any(e.get("phase") == "built" for e in house),
+        "first_projects": first_projects(entries),
         "decisions": sum(1 for e in entries if e["kind"] == "decision"),
         "events": sum(1 for e in entries if e["kind"] == "event"),
         "sleeps": sum(1 for e in entries if e["kind"] == "sleep"),
         "skills": by_skill,
     }
+
+
+def first_projects(entries):
+    """How often the first planned project of each plan finished: {"after_stopgap": (finished, of),
+    "otherwise": (...)}. A plan taken up after stop-gaps did not know what they did (ADR-030, criterion B4)."""
+    out = {"after_stopgap": [0, 0], "otherwise": [0, 0]}
+    stopgap_since, waiting = False, None
+    for e in entries:
+        if e["kind"] == "decision":
+            waiting, stopgap_since = ("after_stopgap" if stopgap_since else "otherwise"), False
+        elif e["kind"] == "project" and e.get("phase") == "end":
+            if e.get("stopgap"):
+                stopgap_since = True
+            elif waiting:
+                out[waiting][0] += bool(e.get("ok"))
+                out[waiting][1] += 1
+                waiting = None
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def mind_report(m):
@@ -335,7 +376,18 @@ def mind_report(m):
         f"kept after a failure: {m['kept_after_failure']}",
         f"- Reasoning tokens per decision: avg {sum(m['reasoning']) / len(m['reasoning']):.0f}" if m["reasoning"] else
         "- Reasoning tokens per decision: not logged in this run",
-        f"- Answers cut off by the output cap: {m['cut_off']}",
+        f"- Answers cut off by the output cap: {m['cut_off']}"
+        + (f" ({m['answers_forced']} given from the reasoning so far, {m['answers_forced_failed']} attempt"
+           f"{'s' if m['answers_forced_failed'] != 1 else ''} failed)"
+           if m["answers_forced"] or m["answers_forced_failed"] else ""),
+        f"- Waits for the mind over a minute: {m['long_waits']}; stop-gaps run while it thought: "
+        f"{m['stopgaps']} ({m['stopgaps_ok']} finished, {m['stopgap_s'] / 60:.1f} min), dropped unused: "
+        f"{m['stopgaps_dropped']}",
+        "- First projects of a plan finished: {}/{}; after stop-gaps {}/{}".format(
+            *m["first_projects"]["otherwise"], *m["first_projects"]["after_stopgap"]),
+        f"- House: best score {m['house_best']}, {'stood' if m['house_built'] else 'never stood'}"
+        if m["house_best"] is not None else "- House: no progress logged",
+        "- Cost by purpose: " + ", ".join(f"{k} ${v:.3f}" for k, v in sorted(m["cost_by"].items(), key=lambda kv: -kv[1])),
         f"- Decisions: {m['decisions']}; projects run: {m['projects']} ({m['projects_ok']} finished); "
         f"events noticed: {m['events']}; sleeps: {m['sleeps']}",
         "- Skill success: " + ", ".join(f"{k} {ok}/{n}" for k, (ok, n) in sorted(m["skills"].items())),

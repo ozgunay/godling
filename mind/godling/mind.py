@@ -70,6 +70,21 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
              "one of your own skills, which can repeat steps and work out their targets as it goes, keeps your "
              "body busy far longer for the same thought.")
 
+# While the body stands waiting for a late plan, the mind gives it one short project at once (ADR-030).
+STOPGAP_STEPS = 4
+STOPGAP_THOUGHTS = 6000  # characters: the end of what it has thought so far
+STOPGAP_TOKENS = 2048  # no thinking: the answer only, a one-project agenda of about 300 tokens
+# The reply's shape is the plan's own (80-CLEAN3). A stop-gap is a few of the body's own moves, never a learned skill,
+# which can run for minutes (80-AB3); a longer one is refused, never cut short (80-SWEEP1).
+STOPGAP_ASK = (f"Go on thinking about your plan. Meanwhile give your body ONE short project to do right now, at most "
+               f"{STOPGAP_STEPS} steps, each one of your body's moves (not a skill you taught yourself), that fits what "
+               "you are thinking and that your plan can build on. Reply with ONE json object: "
+               + json.dumps({"thought": ANSWER_SHAPE["thought"], "agenda": ANSWER_SHAPE["agenda"]})
+               + ". Only the thought and that one project count now: what you remember, learn, forget, keep or "
+               "release, and your house, wait for your finished plan.")
+STOPGAP_RULE = ("If your body has stood still for {after:.0f}s while you are still thinking, you give it a short project "
+                "at once, without thinking, from what you have thought so far, and go on thinking.")
+
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
 TOUCHING = 0.3  # pieces closer than this face to face are built together
 BUILT_PREFIX = "build at "  # the name of a build kept by itself (see Mind.keep_builds)
@@ -193,7 +208,7 @@ class _Seen:
 
 class Mind:
     def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None,
-                 house_project=False):
+                 house_project=False, effort=None, budget=None, stopgap_after=None):
         self.llm = llm
         self.discovery = discovery  # what Godling has seen of the island; None: it knows everything (ADR-008)
         self.memory = memory
@@ -210,6 +225,9 @@ class Mind:
         self.notes_lock = threading.Lock()  # its voice tells it from a thread of its own (told, ADR-031)
         self._noted = 0  # how many notes the prompt being built holds: delivered once it is
         self.think_s = None  # running estimate of how long a plan takes to think up
+        # How hard a decision thinks, and the tokens it may spend (ADR-030); None: as the provider and the client have
+        # it (effort high, llm.DECIDE_TOKENS). `stopgap_after`: the decision deadline, said in the plan's rules when on.
+        self.effort, self.budget, self.stopgap_after = effort, budget, stopgap_after
         self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
         self.memory.house_project_enabled = house_project
         self.on_news = lambda text, salience: None  # attention hears what the mind finds out (run_godling: notice)
@@ -322,6 +340,8 @@ class Mind:
             **{k: v for k, v in ANSWER_SHAPE.items() if k != "agenda"}, "intention": ANSWER_SHAPE["agenda"][0]["intention"],
             "project": {k: v for k, v in ANSWER_SHAPE["agenda"][0].items() if k != "intention"}}
         plan_rule = AGENDA_RULES if self.agenda else "Plan one project with 1-8 steps."
+        if self.agenda and self.stopgap_after:  # ADR-030: the body no longer only stands still (80-SWEEP3)
+            plan_rule += " " + STOPGAP_RULE.format(after=self.stopgap_after)
         if self.house_project:
             shape = {**shape, "house": HOUSE_SHAPE}
             plan_rule += "\n" + HOUSE_RULE
@@ -789,10 +809,92 @@ thought and in that project's intention."""
         self.told(f'You said aloud, as it happened: "{line}".')
 
     def think(self, prepared, on_reasoning=None):
-        """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in."""
+        """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in; the pieces
+        are also kept in prepared["reasoning"], what it has thought so far, for a stop-gap (ADR-030)."""
         started = time.time()
-        reply = self.llm.complete_json(prepared["system"], prepared["user"], purpose="decide", on_reasoning=on_reasoning)
+        heard = prepared.setdefault("reasoning", [])
+
+        def hear(text):
+            heard.append(text)
+            if on_reasoning:
+                on_reasoning(text)
+        options = {key: value for key, value in (("effort", self.effort), ("max_tokens", self.budget))
+                   if value is not None}
+        reply = self.llm.complete_json(prepared["system"], prepared["user"], purpose="decide", on_reasoning=hear,
+                                       **options)
         return {"reply": reply, "prepared": prepared, "seconds": round(time.time() - started, 2)}
+
+    def stopgap_prompt(self, prepared, snap, late, since=(), meanwhile=(), noticed=()):
+        """Main thread (ADR-030): what to ask for a stop-gap while the plan of `prepared` is still being thought up.
+
+        It is that plan's prompt, read again from the provider's cache, and then the world as it is now (80-CDE3): the
+        prompt was written before the agenda ran. `late`: how long ago the body ran out of work for this plan (80-AB4).
+        `since`: the outcomes of the projects that ended after the prompt was written; `meanwhile`: the stop-gaps done
+        so far; `noticed`: what attention noticed that the plan has not heard of. Then the end of what the mind has
+        thought so far."""
+        held = snap.held()
+        now = f"Now: you are at {_fmt_pos(snap.me)}, holding {held.name if held else 'nothing'}."
+        if snap.hunger is not None:
+            now += f" You are {snap.hunger:.0f}% fed, with health {snap.health:.0f} of 100."
+        feels = _how_it_feels(snap)
+        lines = [f"Your body ran out of work {late:.0f}s ago and is waiting for you to finish thinking about your next "
+                 "plan.", now + (f" {feels}" if feels else "")]
+        if prepared.get("assumes"):
+            lines.append("The agenda you were carrying out when you began thinking has ended.")
+        lines.append("Since you began thinking: " + " ".join(since) if since
+                     else "Nothing you were doing has ended since you began thinking.")
+        if noticed:
+            lines.append("You noticed since: " + "; ".join(noticed) + ".")
+        if meanwhile:
+            lines.append("While you think, your body has already done: " + "; ".join(meanwhile) + ".")
+        thoughts = "".join(list(prepared.get("reasoning") or []))[-STOPGAP_THOUGHTS:]
+        if thoughts.strip():
+            lines.append(f"Your thoughts so far (unfinished):\n{thoughts}")
+        lines.append(STOPGAP_ASK)
+        return {"system": prepared["system"], "user": prepared["user"] + "\n\n" + "\n".join(lines)}
+
+    def stopgap(self, ask):
+        """Any thread (ADR-030): one short project for the body to do while the plan is still being thought up, chosen
+        at once without thinking: {"thought", "projects": [the project]}, or {"thought", "projects": [], "why": the
+        reason there is none}.
+
+        The project is taken as the mind gave it or not at all, never cut or edited (80-SWEEP1): at most STOPGAP_STEPS
+        steps, each one of the body's own moves (80-AB3: a learned skill can run for minutes). Only the body moves on
+        it: what the reply would remember, learn, forget, keep or release, and the house, wait for the finished plan.
+        The loop logs what it does with it (80-CDE9)."""
+        reply = self.llm.complete_json(ask["system"], ask["user"], purpose="stopgap", effort="none",
+                                       max_tokens=STOPGAP_TOKENS, retries=1)
+        thought = str(reply.get("thought", ""))[:400]
+        items = [i for i in reply.get("agenda") or [] if isinstance(i, dict) and i.get("steps")] \
+            if isinstance(reply.get("agenda"), list) else []
+        if not items:
+            return {"thought": thought, "projects": [], "why": "no project"}
+        steps = items[0]["steps"] if isinstance(items[0]["steps"], list) else [items[0]["steps"]]
+        cannot = [str(step.get("skill") if isinstance(step, dict) else step) for step in steps
+                  if not (isinstance(step, dict) and step.get("skill") in self.skills.offered
+                          and isinstance(step.get("args", {}), dict))]
+        if len(steps) > STOPGAP_STEPS:
+            why = f"{len(steps)} steps, more than {STOPGAP_STEPS}"
+        elif cannot:
+            why = "steps that are not the body's own moves as given: " + ", ".join(cannot)
+        else:
+            return {"thought": thought, "projects": [{**self._projects({"agenda": items[:1]})[0], "stopgap": True}]}
+        return {"thought": thought, "projects": [], "why": why}
+
+    def _projects(self, reply):
+        """The projects of a reply, each with the steps the body can do (known skills, arguments as an object)."""
+        raw = reply.get("agenda") if isinstance(reply.get("agenda"), list) else [
+            {**(reply.get("project") or {}), "intention": reply.get("intention", "")}]
+        known = set(self.skills.offered) | set(self.library.skills)
+        projects = []
+        for item in raw[:6]:
+            if not isinstance(item, dict):
+                continue
+            steps = [{"skill": s["skill"], "args": s.get("args", {})} for s in (item.get("steps") or [])[:MAX_STEPS]
+                     if isinstance(s, dict) and s.get("skill") in known and isinstance(s.get("args", {}), dict)]
+            projects.append({"intention": str(item.get("intention", ""))[:200], "goal": str(item.get("goal", ""))[:200],
+                             "why": str(item.get("why", ""))[:200], "steps": steps})
+        return projects
 
     def adopt(self, thought, snap):
         """Main thread: apply the reply's side effects and return the decision (a list of projects)."""
@@ -810,17 +912,7 @@ thought and in that project's intention."""
                 taught.append(self.library.define(spec, tick=tick))
             except (SkillError, TypeError, ValueError) as err:
                 self.notes.append(f"Your attempt to learn '{spec.get('name')}' was rejected: {err}.")
-        raw = reply.get("agenda") if isinstance(reply.get("agenda"), list) else [
-            {**(reply.get("project") or {}), "intention": reply.get("intention", "")}]
-        known = set(self.skills.offered) | set(self.library.skills)
-        projects = []
-        for item in raw[:6]:
-            if not isinstance(item, dict):
-                continue
-            steps = [{"skill": s["skill"], "args": s.get("args", {})} for s in (item.get("steps") or [])[:MAX_STEPS]
-                     if isinstance(s, dict) and s.get("skill") in known and isinstance(s.get("args", {}), dict)]
-            projects.append({"intention": str(item.get("intention", ""))[:200], "goal": str(item.get("goal", ""))[:200],
-                             "why": str(item.get("why", ""))[:200], "steps": steps})
+        projects = self._projects(reply)  # after "learn": a step may use a skill taught in the same reply
         for item in reply.get("remember") or []:
             if isinstance(item, dict) and item.get("text"):
                 self.memory.note(str(item["text"]), about=str(item.get("about", "")), tick=tick,
@@ -862,16 +954,18 @@ thought and in that project's intention."""
     def record_outcome(self, project, results, snap):
         lines = [f"{r.skill}: {'ok' if r.ok else 'FAILED'} - {r.summary}" for r in results]
         ok = bool(results) and all(r.ok for r in results)
-        self.last_outcome = f"Project '{project['goal']}' " + ("succeeded. " if ok else "did not finish. ") + " / ".join(lines)
-        if not ok and project["goal"]:
-            self.failures = (self.failures + [f"{project['goal']}: {lines[-1] if lines else 'no steps'}"])[-5:]
-        elif ok:
-            self.failures = []
+        outcome = f"Project '{project['goal']}' " + ("succeeded. " if ok else "did not finish. ") + " / ".join(lines)
+        if not project.get("stopgap"):  # a stop-gap is filler: it reaches the next plan apart (ADR-030, 80-AB10)
+            self.last_outcome = outcome
+            if not ok and project["goal"]:
+                self.failures = (self.failures + [f"{project['goal']}: {lines[-1] if lines else 'no steps'}"])[-5:]
+            elif ok:
+                self.failures = []
         entities = {v for r in results for v in r.facts.values() if isinstance(v, str)}
         entities |= {c for r in results for c in r.facts.get("cubes", [])}
         height = max((r.facts.get("height", 0) for r in results), default=0)
         importance = 4 if (height >= 5 or any(r.facts.get("toppled") for r in results)) else (3 if ok else 2)
-        self.memory.store_experience(self.last_outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
+        self.memory.store_experience(outcome, kind="project", tick=snap.tick, entities=entities, importance=importance)
         self.memory.note_placed(self.skills.take_placed())
         self.keep_builds(snap)
         self.house_progress(snap)

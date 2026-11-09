@@ -204,7 +204,7 @@ class Skills:
         if urgent:  # an urgent need breaks into the work: the step waits, and the mind plans from where it is
             self.log(kind="skill", skill=skill, args=args, ok=False, summary=f"interrupted: {urgent}", facts={},
                      seconds=0.0)
-            return Result(False, skill, f"interrupted: {urgent}")
+            return Result(False, skill, f"interrupted: {urgent}", {"sheltered": True})  # told apart (ADR-030)
         started = time.time()
         if self.library is not None and any(isinstance(v, dict) for v in args.values()):
             # Perception helpers ({"nearest_free": "cube"}, {"pos": ...}) work in any step, not only inside learned skills.
@@ -317,6 +317,11 @@ class Skills:
         if not urgent:
             self.glance()
         return urgent
+
+    def sheltering(self):
+        """Whether the body took shelter by itself from a danger of the cold that is not over yet (ADR-028): no
+        stop-gap takes it out again meanwhile (ADR-030). The mind's own plans may, as before."""
+        return self._chill is not None and self._chill.get("took") is not None
 
     @staticmethod
     def cold_danger(snap):

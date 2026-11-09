@@ -144,6 +144,61 @@ def test_find_transcripts_skips_unreadable(tmp_path, monkeypatch):
     assert ar.find_transcripts(agent) == []
 
 
+def test_mind_log_counts_stopgaps_and_answers_given_from_the_reasoning(tmp_path):
+    """ADR-030: what the experiment compares between its arms. Review of #80: stop-gaps are counted apart from the
+    planned projects (80-CDE6), an answer given from the reasoning once it was given (80-CDE5), and the criteria's
+    numbers come out of the tool (80-SWEEP2): cost by purpose, the house, first projects after stop-gaps."""
+    from runs import mind_log
+    log = mind_log(tmp_path, [
+        {"time": 0, "kind": "llm", "purpose": "decide", "latency": 200, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.02, "reasoning": 0, "finish": "length"},
+        {"time": 1, "kind": "llm", "purpose": "decide:answer", "latency": 3, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.001, "reasoning": 0, "finish": "stop"},
+        {"time": 1, "kind": "answer_forced", "purpose": "decide", "ok": True},
+        {"time": 1.5, "kind": "llm", "purpose": "decide:answer", "latency": 3, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.001, "reasoning": 0, "finish": "stop"},
+        {"time": 1.5, "kind": "answer_forced", "purpose": "decide", "ok": False},
+        {"time": 2, "kind": "llm", "purpose": "stopgap", "latency": 3, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.001, "reasoning": 0, "finish": "stop"},
+        {"time": 2.5, "kind": "llm", "purpose": "bubble", "latency": 3, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.0005, "reasoning": 0, "finish": "stop"},
+        {"time": 5, "kind": "decision", "thought": "one", "projects": []},
+        {"time": 6, "kind": "project", "phase": "end", "ok": False, "seconds": 2},
+        {"time": 7, "kind": "project", "phase": "end", "ok": True, "seconds": 3},
+        {"time": 8, "kind": "wait_for_mind", "seconds": 21, "stopgap": True},
+        {"time": 9, "kind": "wait_for_mind", "seconds": 70},
+        {"time": 30, "kind": "project", "phase": "end", "ok": True, "seconds": 20, "stopgap": True},
+        {"time": 40, "kind": "project", "phase": "end", "ok": False, "seconds": 4, "stopgap": True},
+        {"time": 41, "kind": "stopgap", "phase": "dropped", "reason": "the plan came first"},
+        {"time": 50, "kind": "decision", "thought": "two", "projects": []},
+        {"time": 51, "kind": "house", "phase": "progress", "score": 2},
+        {"time": 52, "kind": "house", "phase": "progress", "score": 5},
+        {"time": 53, "kind": "house", "phase": "built"},
+        {"time": 60, "kind": "project", "phase": "end", "ok": True, "seconds": 9}])
+    m = ar.analyze_mind_log(log)
+    assert m["cut_off"] == 1 and m["answers_forced"] == 1 and m["answers_forced_failed"] == 1
+    assert m["decide_latency"] == [200]
+    assert (m["stopgaps"], m["stopgaps_ok"], m["stopgap_s"], m["stopgaps_dropped"], m["long_waits"]) == (2, 1, 24, 1, 1)
+    assert m["projects"] == 3 and m["projects_ok"] == 2 and m["busy_s"] == 38  # the stop-gaps' time is the body's
+    assert m["cost_by"] == pytest.approx({"decide": 0.02, "decide:answer": 0.002, "stopgap": 0.001, "bubble": 0.0005})
+    assert m["house_best"] == 5 and m["house_built"]
+    assert m["first_projects"] == {"after_stopgap": (1, 1), "otherwise": (0, 1)}
+    lines = "\n".join(ar.mind_report(m))
+    assert "cut off by the output cap: 1 (1 given from the reasoning so far, 1 attempt failed)" in lines
+    assert "over a minute: 1; stop-gaps run while it thought: 2 (1 finished, 0.4 min), dropped" in lines
+    assert "First projects of a plan finished: 0/1; after stop-gaps 1/1" in lines
+    assert "House: best score 5, stood" in lines
+    assert "Cost by purpose: decide $0.020, decide:answer $0.002, stopgap $0.001, bubble $0.001" in lines
+
+
+def test_mind_log_cut_to_a_minute(tmp_path):
+    """Review of #80 (80-AB11): arms are compared at the same elapsed minute; what came after it is left out."""
+    m = ar.analyze_mind_log(standard_mind_log(tmp_path), until_s=30 * 60)
+    assert m["span_s"] == 1800 and m["projects"] == 2 and m["structures"][-1]["pieces_built_in"] == 3
+    whole = ar.analyze_mind_log(standard_mind_log(tmp_path / "w"))
+    assert whole["structures"][-1]["pieces_built_in"] == 7 and whole["span_s"] == 3950
+
+
 def test_mind_log_reactions_and_quakes(tmp_path):
     log = standard_mind_log(tmp_path)
     m = ar.analyze_mind_log(log)
