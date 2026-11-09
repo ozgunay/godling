@@ -26,7 +26,7 @@ Not a game the viewer plays, and not a video: a living character with its own mi
 - **Today's viewer tools:** the guest panel (`tools/guest_panel.py`): a live view plus buttons for the sky powers, free in test mode.
 
 ## Capabilities and Constraints
-- **God powers today:** Stone, Log, Regrow, Lightning, Meteor (a shadow 40 s ahead), Earthquake (a rumble, 20 s of shaking; Godling braces). Planned: driftwood, coconut, school of fish, healing glow, rain, gust, shooting star, supply crate, passing ship, storm night, sandbar, tsunami (`research/god-powers-and-disasters-plan.md`).
+- **God powers today:** Stone, Log, Regrow, Lightning, Meteor (a shadow 40 s ahead), Earthquake (a rumble, 20 s of shaking; Godling braces). Planned: coconut, school of fish, healing glow, rain, gust, shooting star, supply crate, passing ship, storm night, sandbar, tsunami (`research/god-powers-and-disasters-plan.md`).
 - **Economy (planned, not built):** 1 credit = €0.05; fixed prices; charges per power that refill on a clock; per-viewer limits; a harm cap; mercy while Godling is weak; destruction only from a community pot with a "Hold the ground" counter-pot. Real-money prices must show beside credits (EU CPC principles).
 - **World state viewers can see:** day and night (a 40-minute day), weather (rain, fog, wind), Godling's health and hunger, wet and cold, what it holds, fires, the ship, sky events and their warnings.
 - **Not decided:** the payment rail (platform currency versus own credits), supporter tiers, and the Chronicle (a history of Godling's life).

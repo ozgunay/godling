@@ -1,5 +1,5 @@
 -- Living on the island: hunger, hurt, death and rebirth, coconuts, the weather over many days (showers, wet spells,
--- storms, fog, wind, shelter and cold), driftwood, a passing ship, and the old supply drops.
+-- storms, fog, wind, shelter and cold), the storms' lightning, a passing ship, and the old supply drops.
 local T = load_plain(readfile("world/tests/lib.luau"), "world/tests/lib.luau")()
 local V = T.Vector3
 
@@ -313,8 +313,6 @@ T.test("a one-cell shelter between posts is enclosed, not a house", function()
     T.eq(g:GetAttribute("Cold"), true)
 end)
 
--- Many days of weather, with Godling on the beach by the raft: it rains and dries, a wet spell sets in, storms
--- strike palms near it, fog comes some mornings, logs wash up, and a ship passes far out.
 T.test("house material is continuous, settled and on a real level floor, matching the mind", function()
     for _, case in ipairs({ "complete", "seam", "fractional", "missing-floor", "uneven", "sparse", "unanchored", "unsettled", "tilted", "narrow" }) do
         local w = T.boot()
@@ -385,7 +383,9 @@ T.test("house material is continuous, settled and on a real level floor, matchin
     end
 end)
 
-T.test("the weather over nine days, the driftwood, and a passing ship", function()
+-- Many days of weather: it rains and dries, a wet spell sets in, storms strike near Godling, fog comes some mornings,
+-- and a ship passes far out. No log washes up any more (ADR-026).
+T.test("the weather over nine days, and a passing ship", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling()
@@ -425,29 +425,137 @@ T.test("the weather over nine days, the driftwood, and a passing ship", function
     T.logged(w, "SKY Lightning #%d+ felled Palm_")
     T.logged(w, "DOUSED Fire_")
     T.logged(w, "SHIP passing at")
-    T.logged(w, "DRIFTWOOD Log_")
     T.eq(g:GetAttribute("RainPace") ~= nil, true)
-    local drift = 0
-    for _, inst in ipairs(e.Workspace:GetChildren()) do
-        if inst:GetAttribute("Driftwood") then
-            drift = drift + 1
-        end
+    for _, line in ipairs(e.log) do
+        T.no(line:find("DRIFTWOOD"), "no log washes up (ADR-026)")
     end
-    T.ok(drift >= 6, "the beach holds its share of driftwood, and no more washes up")
+    for _, inst in ipairs(e.Workspace:GetChildren()) do
+        T.no(inst:GetAttribute("Driftwood"), "no driftwood on the beach: " .. inst.Name)
+    end
 end)
 
-T.test("a storm with nobody on the island strikes nothing; with no palm in range, the nearest beyond", function()
+T.test("a storm with nobody on the island strikes nothing; with no palm in range, the open ground or the sea", function()
     local w = T.boot()
     local e, x = w.e, w.x
-    x.stormStrike() -- nobody here
+    T.eq(x.stormStrike(true), false, "nobody here")
     local g = w.godling(V.new(600, 2.55, 600)) -- far out: every palm is beyond 45
-    x.stormStrike()
-    T.logged(w, "SKY Lightning #1 felled")
-    e.hrp(g).Position = V.new(0, 2.55, 0)
+    T.eq(x.stormStrike(true), false, "no palm felled")
+    T.logged(w, "WEATHER lightning struck the sea at")
+    for _, t in ipairs(x.trees) do
+        T.eq(t.part:GetAttribute("RenderRole"), "Tree", "not the nearest palm beyond 45 either (ADR-026): " .. t.name)
+    end
+    -- On the island with no palm standing: the bolt strikes open ground in the same ring, scorches it, and hurts
+    -- anyone within 7 of it, as a bolt on a palm does.
+    local spot = w.openSpot(6)
+    e.hrp(g).Position = spot
     for _, t in ipairs(x.trees) do
         t.part:SetAttribute("RenderRole", "Stump")
     end
-    x.stormStrike() -- no standing palm at all
+    local visitor = e.player("Visitor")
+    e.hrp(visitor).Position = spot + V.new(-28.5 + 3, 0, 0) -- 3 from where the bolt comes down
+    e.step(0.1) -- both are alive and well
+    table.insert(e.randoms, 0.5) -- the way from Godling: west
+    table.insert(e.randoms, 0.5) -- how far: 12 + 0.5 * 33
+    local before = x.surviving[visitor].health
+    T.eq(x.stormStrike(true), false)
+    local line = T.logged(w, "WEATHER lightning struck the ground at")
+    T.ok(line:find(string.format("(%.1f, %.1f)", spot.X - 28.5, spot.Z), 1, true), line)
+    T.near(x.surviving[visitor].health, before - 35, 1e-6, "close by, it hurts")
+    T.eq(g:GetAttribute("Hurt"), nil, "Godling, 28.5 away, is unhurt")
+    local bolt, scorch
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        if part.Name:match("^SkyBolt_") then
+            bolt = part
+        elseif part:GetAttribute("RenderRole") == "Scorch" then
+            scorch = part
+        end
+    end
+    T.ok(bolt and scorch, "a bolt, and a scorch where it struck")
+    T.eq(bolt:GetAttribute("SkyEvent"), nil, "the bolt is no thing the sky left")
+    T.near(bolt:GetAttribute("StrikeX"), spot.X - 28.5, 1e-6)
+    T.near(bolt:GetAttribute("StrikeY"), x.surfaceTopAt(spot.X - 28.5, spot.Z, -20, 60), 1e-6, "down to the ground")
+    T.near(scorch.Position.X, spot.X - 28.5, 1e-6)
+    e.step(241, 1)
+    T.eq(scorch.Parent, nil, "the scorch fades after 4 minutes, as a storm's does")
+end)
+
+-- ADR-026. In run 2026-11-08 the weather's lightning felled a palm at every strike, 26 palms in 9.6 hours (52 of the
+-- island's 106 logs), and the same few near Godling's house over and over (Palm_14 six times). Its bolts still come
+-- every 3 to 8 minutes of heavy rain, but one fells a palm at most once in 25 minutes of heavy rain, and never a palm
+-- the storms felled in the last 6 hours.
+local function heavyRain(w, minutes, at)
+    local e, x = w.e, w.x
+    local g = w.godling(at)
+    local strikes, felled = {}, {}
+    local seen = #e.log
+    for _ = 1, minutes * 3 do
+        e.step(20)
+        x.surviving[g].health, x.surviving[g].hunger = 100, 100
+        for i = seen + 1, #e.log do
+            local palm = e.log[i]:match("^SKY Lightning #%d+ felled (Palm_%d+)")
+            if palm then
+                table.insert(felled, { palm = palm, at = e.now })
+            end
+            if palm or e.log[i]:find("^WEATHER lightning struck") then
+                table.insert(strikes, e.now)
+            end
+        end
+        seen = #e.log
+    end
+    return strikes, felled
+end
+
+local ALWAYS_RAIN = { "local target = weather.held --", "local target = weather.held or 1 --" } -- heavy, all the time
+
+T.test("a storm's bolts keep coming, but fell a palm at most once in 25 minutes of heavy rain, a quarter as often", function()
+    local w = T.boot({ patch = { ALWAYS_RAIN } })
+    local strikes, felled = heavyRain(w, 180, w.openSpot(6)) -- the middle of the island: 11 palms 12 to 45 away
+    T.ok(#strikes >= 22, "a bolt every 3 to 8 minutes, as before: " .. #strikes)
+    T.ok(#felled >= 4, "it still fells palms now and then: " .. #felled)
+    T.ok(#felled <= 8, "at most once in 25 minutes of heavy rain, and the first: " .. #felled)
+    T.ok(#felled * 4 <= #strikes, string.format("a quarter as often as it fells today (every strike): %d of %d",
+        #felled, #strikes))
+    for i = 2, #felled do
+        T.ok(felled[i].at - felled[i - 1].at >= 25 * 60, "25 minutes apart: " .. felled[i].at - felled[i - 1].at)
+    end
+    local struck = {}
+    for _, f in ipairs(felled) do
+        T.no(struck[f.palm], "never the same palm twice within 6 hours: " .. f.palm)
+        struck[f.palm] = true
+    end
+    T.logged(w, "WEATHER lightning struck the ground at")
+    -- By the run's house only Palm_2 and Palm_14 stand 12 to 45 away: every bolt took one of them as soon as it had
+    -- grown back (33 fellings in these three hours before). Now each falls once.
+    local house = T.boot({ patch = { ALWAYS_RAIN } })
+    strikes, felled = heavyRain(house, 180, V.new(-95, 2.55, -35))
+    T.ok(#strikes >= 22, "the bolts still come: " .. #strikes)
+    T.eq(#felled, 2, "two palms in reach, felled once each")
+    T.ok(felled[1].palm ~= felled[2].palm, "not the same one twice")
+end)
+
+T.test("the storms spare a palm they felled for 6 hours, though it has grown back", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local g = w.godling(V.new(600, 2.55, 600))
+    local t = x.trees[1]
+    t.pos = { 630, t.pos[2], 600 } -- the one palm in reach, 30 from Godling
+    x.regrowStump(t)
+    T.eq(x.stormStrike(true), true)
+    T.logged(w, "SKY Lightning #%d+ felled " .. t.name)
+    T.eq(t.part:GetAttribute("RenderRole"), "Stump")
+    x.regrowStump(t) -- grown back, ten minutes on
+    e.now = e.now + 600
+    for _ = 1, 10 do
+        T.eq(x.stormStrike(true), false, "spared")
+    end
+    T.eq(t.part:GetAttribute("RenderRole"), "Tree")
+    T.eq(x.stormStrike(false), false, "and a strike the weather does not let fell any palm strikes the sea")
+    e.now = e.now + 6 * 3600
+    T.eq(x.stormStrike(false), false, "not while the weather does not let it")
+    T.eq(t.part:GetAttribute("RenderRole"), "Tree")
+    T.eq(x.stormStrike(true), true, "six hours on, it may be struck again")
+    T.eq(t.part:GetAttribute("RenderRole"), "Stump")
+    T.eq(g:GetAttribute("Hurt"), nil, "Godling, 30 away, was never hurt")
 end)
 
 T.test("the old supply drops: a cube from the sky when few lie loose", function()

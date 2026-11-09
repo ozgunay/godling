@@ -761,11 +761,12 @@ local HAMMER_SIZE = Vector3.new(0.4, 0.4, 1.2)
 local STRIKE_RANGE = 6 -- from the body centre to the target's nearest surface, like PICKUP_RANGE
 local STRIKES_PER_STONE = 3
 local STRIKE_COOLDOWN = 0.8 -- seconds between swings
--- Felling (ADR-004): with the axe in hand, a few strikes fell a tree into two logs. A stump is left, and it grows
--- back into the tree after TREE_REGROW_SECONDS.
+-- Felling (ADR-004): with the axe in hand, a few strikes fell a tree into AXE_LOGS logs: one, its trunk (ADR-026; it
+-- was two, and with the storms' and the sea's the island filled with loose logs). A stump is left, and it grows back
+-- into the tree after TREE_REGROW_SECONDS.
 local AXE_HOME = Vector3.new(ISLAND.axe[1], 0.2, ISLAND.axe[2]) -- at the camp
 local AXE_SIZE = Vector3.new(0.4, 0.4, 1.0)
-local CHOPS_PER_TREE = 4
+local CHOPS_PER_TREE, AXE_LOGS = 4, 1
 local TREE_REGROW_SECONDS = 600
 local LOG_SIZE = Vector3.new(3 * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE) -- a beam three blocks long and one thick, along X
 -- Ladder (ADR-004): carried like anything else. Set down, it stands upright and stays put; Climb takes the body
@@ -1991,13 +1992,13 @@ local function chopTree(tree, body, edged)
         return "StrikeHit:" .. chops .. "/" .. needed
     end
     tree:SetAttribute("Chops", 0)
-    return "StrikeFelled:" .. table.concat(fellTree(tree, body), ",")
+    return "StrikeFelled:" .. table.concat(fellTree(tree, body, nil, AXE_LOGS), ",")
 end
 
--- A tree falls away from `body`, along the grid: two logs side by side in the cells beside the stump, which stays
--- behind. (Logs that fell at a slant were pushed far off by their slanted boxes and settled askew.) `mark` (optional)
--- is applied to each log. Returns the logs' names.
-function fellTree(tree, body, mark)
+-- A tree falls away from `body`, along the grid: `count` logs (two if not given: lightning splits a palm, and a meteor
+-- shatters one) side by side in the cells beside the stump, which stays behind. (Logs that fell at a slant were pushed
+-- far off by their slanted boxes and settled askew.) `mark` (optional) is applied to each log. Returns their names.
+function fellTree(tree, body, mark, count)
     local base = Vector3.new(tree.Position.X, 0, tree.Position.Z)
     local away = Vector3.new(base.X - body.X, 0, base.Z - body.Z)
     if math.abs(away.X) >= math.abs(away.Z) then
@@ -2008,7 +2009,7 @@ function fellTree(tree, body, mark)
     local side = Vector3.new(-away.Z, 0, away.X)
     local yaw = math.abs(away.X) > 0.5 and 0 or math.rad(90) -- the log's length (X) along the fall
     local names = {}
-    for i = 1, 2 do
+    for i = 1, count or 2 do
         logCounter = logCounter + 1
         local spot = base + away * (tree.Size.X / 2 + LOG_SIZE.X / 2) + side * ((i - 1) * BLOCK_SIZE)
             + Vector3.new(0, LOG_SIZE.Y / 2 + 0.02, 0)
@@ -2644,7 +2645,8 @@ end
 -- WEATHER (the user's wish, after run n7, where nothing made a shelter worth building; ADR-010).
 -- - Showers come every 20 to 50 minutes and last 4 to 10. Now and then a wet spell sets in instead: two or three days
 --   of rain without a break (the first 1.5 to 2.5 hours into a run, then every 4 to 7 hours).
--- - In heavy rain thunderstorms break: lightning strikes a palm near Godling every few minutes.
+-- - In heavy rain thunderstorms break: lightning strikes near Godling every few minutes, and now and then fells a palm
+--   (at most once in FELL_GAP of heavy rain, ADR-026).
 -- - Some mornings fog comes in from the sea and hides what is further than a stone's throw.
 -- - Out in the rain the body is slowed and gets soaked. Nights are cold, and so is being soaked in the rain; cold wears
 --   health down and stops healing. A roof overhead keeps the rain off and halves the cold; a fire close by halves it
@@ -2662,6 +2664,9 @@ local tickWeather = (function()
     local SPELL_FIRST_MIN, SPELL_FIRST_MAX, SPELL_GAP_MIN, SPELL_GAP_MAX = 90 * 60, 150 * 60, 240 * 60, 420 * 60
     local SPELL_DAYS_MIN, SPELL_DAYS_MAX = 2, 3
     local STORM_RAIN, STORM_MIN, STORM_MAX = 0.85, 3 * 60, 8 * 60 -- heavy rain brings lightning, this often
+    -- ...but a bolt fells a palm at most once in this much heavy rain, about a fifth as often as when every bolt
+    -- felled one (ADR-026: 26 palms in a 9.6-hour run, 52 of its 106 logs)
+    local FELL_GAP = 25 * 60
     local FOG_CHANCE, FOG_FROM, FOG_UNTIL_MIN, FOG_UNTIL_MAX = 0.35, 4.5, 8.5, 10 -- some mornings, these hours
     local RAIN_FADE, FOG_FADE = 20, 60 -- seconds a shower or a fog takes to build up and to die away
     local DAMP_AFTER = 300 -- wood stays too damp to light this long after the rain
@@ -2683,7 +2688,8 @@ local tickWeather = (function()
     end
     local weather = { raining = false, spell = false, left = between(RAIN_FIRST_MIN, RAIN_FIRST_MAX), rain = 0, beat = 0,
         clock = 0, spellDue = between(SPELL_FIRST_MIN, SPELL_FIRST_MAX), storm = between(STORM_MIN, STORM_MAX),
-        fog = 0, fogUntil = nil, lastHour = nil, wind = WIND_FAIR, windDir = weatherRandom() * 2 * math.pi }
+        fog = 0, fogUntil = nil, lastHour = nil, wind = WIND_FAIR, windDir = weatherRandom() * 2 * math.pi,
+        sinceFell = FELL_GAP } -- so a run's first storm may fell a palm
     clockPart:SetAttribute("Rain", 0)
     clockPart:SetAttribute("Fog", 0)
 
@@ -2706,9 +2712,12 @@ local tickWeather = (function()
     local function tickSkies(dt, hour) -- the storm's lightning and the morning fog
         if weather.rain >= STORM_RAIN and not weather.held then -- a storm called down strikes only where it was aimed
             weather.storm = weather.storm - dt
+            weather.sinceFell = weather.sinceFell + dt -- heavy rain since a bolt last felled a palm
             if weather.storm <= 0 then
                 weather.storm = between(STORM_MIN, STORM_MAX)
-                stormStrike()
+                if stormStrike(weather.sinceFell >= FELL_GAP) then
+                    weather.sinceFell = 0
+                end
             end
         end
         if weather.lastHour and weather.lastHour < FOG_FROM and hour >= FOG_FROM and weatherRandom() < FOG_CHANCE then
@@ -3958,20 +3967,25 @@ local function nearestTree(role, to)
     return best
 end
 
+-- A bolt, for the renderer to draw whole (lightning.js): where it strikes, and the strike's id, which shapes the bolt the
+-- same for every viewer. No SkyEvent: the mind would take the marker for a thing the sky left.
+function sky.bolt(id, x, y, z)
+    local bolt = skyMarker("SkyBolt_" .. id, Vector3.new(0.35, 30, 0.35), Vector3.new(x, 15, z),
+        Color3.fromRGB(255, 244, 170), "SkyFlash")
+    bolt:SetAttribute("SkyId", id)
+    bolt:SetAttribute("StrikeX", x)
+    bolt:SetAttribute("StrikeY", y)
+    bolt:SetAttribute("StrikeZ", z)
+    table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+    return bolt
+end
+
 -- Lightning strikes standing tree `t`: a bolt, the tree felled into logs, and hurt for anyone close. From the guest
 -- panel's Lightning power, and from the storms in heavy rain (WEATHER).
 local function lightningOn(t, from)
     skyCounter = skyCounter + 1
     local p = t.part.Position
-    local bolt = skyMarker("SkyBolt_" .. skyCounter, Vector3.new(0.35, 30, 0.35), Vector3.new(p.X, 15, p.Z),
-        Color3.fromRGB(255, 244, 170), "SkyFlash")
-    -- For the renderer: where it strikes (the palm's foot), and the strike's id, which shapes the bolt the same for
-    -- every viewer. No SkyEvent: the mind would take the marker for a thing the sky left.
-    bolt:SetAttribute("SkyId", skyCounter)
-    bolt:SetAttribute("StrikeX", p.X)
-    bolt:SetAttribute("StrikeY", p.Y - t.part.Size.Y / 2)
-    bolt:SetAttribute("StrikeZ", p.Z)
-    table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+    sky.bolt(skyCounter, p.X, p.Y - t.part.Size.Y / 2, p.Z) -- down to the palm's foot
     local mark = skyMark("Lightning", skyCounter)
     local names = fellTree(t.part, from, function(log)
         mark(log)
@@ -3982,31 +3996,75 @@ local function lightningOn(t, from)
     return skyCounter
 end
 
--- A storm's lightning: a standing palm 12 to 45 from Godling, one at random (the nearest beyond 12 if none is).
-stormStrike = function()
-    local godling = godlingPlayer()
-    local hrp = godling and getHumanoidRootPart(godling)
-    if not hrp then
-        return
+-- A storm's lightning (WEATHER), 12 to 45 from Godling. Its bolts come as often as ever, but in run 2026-11-08 every
+-- one felled a palm: 26 in 9.6 hours, 52 of the island's 106 logs, the same few by Godling's house over and over
+-- (Palm_14 six times). So (ADR-026) a bolt fells a palm only when the weather lets one fall (`mayFell`: at most once in
+-- its FELL_GAP of heavy rain), and only one the storms have not felled in the last PALM_REST. Any other bolt strikes
+-- the open ground there, and scorches it, or the sea, and hurts anyone close as a bolt on a palm does. Returns whether
+-- it felled a palm.
+stormStrike = (function() -- a function of its own, for the palms it spares
+    local FROM, TO = 12, 45 -- from Godling
+    local PALM_REST = 6 * 3600 -- three times the longest wet spell: none fells the same palm twice
+    local PALM_CLEAR = 4 -- a bolt on the ground comes down this clear of a standing palm, which would have taken it
+    local felledAt = {} -- palm name -> when a storm last felled it
+
+    local function standing(t)
+        return t.part and t.part.Parent and t.part:GetAttribute("RenderRole") == "Tree"
     end
-    local near, beyond = {}, nil
-    for _, t in ipairs(trees) do
-        local part = t.part
-        if part and part.Parent and part:GetAttribute("RenderRole") == "Tree" then
-            local d = (Vector3.new(part.Position.X, 0, part.Position.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z))
-                .Magnitude
-            if d >= 12 and d <= 45 then
-                table.insert(near, t)
-            elseif d > 45 and (beyond == nil or d < beyond[2]) then
-                beyond = { t, d }
+
+    local function flat(p, x, z)
+        return Vector3.new(p.X - x, 0, p.Z - z).Magnitude
+    end
+
+    local function palmNear(x, z)
+        for _, t in ipairs(trees) do
+            if standing(t) and flat(t.part.Position, x, z) < PALM_CLEAR then
+                return true
             end
         end
+        return false
     end
-    local t = #near > 0 and near[math.random(1, #near)] or (beyond and beyond[1])
-    if t then
-        lightningOn(t, hrp.Position)
+
+    return function(mayFell)
+        local godling = godlingPlayer()
+        local hrp = godling and getHumanoidRootPart(godling)
+        if not hrp then
+            return false
+        end
+        local at = hrp.Position
+        local near = {}
+        for _, t in ipairs(mayFell and trees or {}) do
+            local d = standing(t) and os.clock() - (felledAt[t.name] or -math.huge) >= PALM_REST
+                and flat(t.part.Position, at.X, at.Z)
+            if d and d >= FROM and d <= TO then
+                table.insert(near, t)
+            end
+        end
+        if #near > 0 then
+            local t = near[math.random(1, #near)]
+            felledAt[t.name] = os.clock()
+            lightningOn(t, at)
+            return true
+        end
+        local x, z
+        for _ = 1, 6 do
+            local angle, r = math.random() * 2 * math.pi, FROM + math.random() * (TO - FROM)
+            x, z = at.X + math.cos(angle) * r, at.Z + math.sin(angle) * r
+            if not palmNear(x, z) then
+                break
+            end
+        end
+        skyCounter = skyCounter + 1
+        local y = surfaceTopAt(x, z, -20, 60) -- the ground, or what stands there (nothing built is broken)
+        sky.bolt(skyCounter, x, y or 0, z)
+        if y then
+            sky.storm.scorch(skyCounter, x, y, z)
+        end
+        hurtNear(x, z, HARM.lightningRange, HARM.lightning, "Lightning")
+        print(string.format("WEATHER lightning struck %s at (%.1f, %.1f)", y and "the ground" or "the sea", x, z))
+        return false
     end
-end
+end)()
 
 -- A ship passes far out at sea now and then, as one did in the film (ADR-010): the first 1 to 2 hours into a run, then
 -- every 2.5 to 5 hours. It sails along the horizon for five minutes and is gone. Nothing comes of it (yet).
@@ -4086,72 +4144,6 @@ local function dropGift(kind, x, z, yaw)
     print(string.format("SKY %s #%d dropped %s at (%.1f, %.1f)", kind, skyCounter, piece.Name, x, z))
     return skyCounter
 end
-
--- Driftwood (the user's choice, after run n7, where the same few logs were both firewood and building wood; ADR-010):
--- every few minutes the sea leaves a log up the beach, as wreckage washed up in the film, while fewer than DRIFT_MAX
--- lie on the sand.
-local tickDriftwood = (function() -- a function of its own, as tickWeather's
-    local DRIFT_EVERY, DRIFT_MAX, DRIFT_FIRST = 180, 6, 60
-    local driftTimer = DRIFT_EVERY - DRIFT_FIRST
-    local driftState = SUPPLY_SEED + 11
-
-    local function driftRandom()
-        driftState = (driftState * 16807) % 2147483647
-        return driftState / 2147483647
-    end
-
-    local function driftwoodOnBeach()
-        local n = 0
-        for _, inst in ipairs(Workspace:GetChildren()) do
-            if inst:IsA("BasePart") and inst:GetAttribute("Driftwood") and not isCarried(inst) and inst.Position.Y < 2.5
-                and onOpenSand(inst.Position.X, inst.Position.Z) then
-                n = n + 1
-            end
-        end
-        return n
-    end
-
-    local function washUpDriftwood()
-        if driftwoodOnBeach() >= DRIFT_MAX then
-            return nil
-        end
-        for _ = 1, 30 do
-            local s = SHALLOWS[1 + math.floor(driftRandom() * #SHALLOWS)]
-            local length = math.sqrt(s[1] * s[1] + s[2] * s[2])
-            local dx, dz = -s[1] / length, -s[2] / length -- up the beach: towards the island's middle
-            local sand = nil
-            for k = 1, 40 do -- from the water up the beach, while it is open sand
-                local x, z = s[1] + dx * 1.25 * k, s[2] + dz * 1.25 * k
-                if onOpenSand(x, z) then
-                    sand = sand or k
-                    if k - sand >= 2 and clearSupplySpot(x, z) then -- clear of the water's edge and of other pieces
-                        logCounter = logCounter + 1
-                        local along = math.abs(dx) > math.abs(dz) and 90 or 0 -- lying along the shore
-                        local log = createPiece("Log_" .. logCounter, CFrame.new(x, 1.6, z)
-                            * CFrame.fromOrientation(0, math.rad(along), 0), LOG_SIZE, Color3.fromRGB(150, 128, 100), "Log",
-                            woodPhysics, ART.Log)
-                        log:SetAttribute("Driftwood", true)
-                        print(string.format("DRIFTWOOD %s washed up at (%.1f, %.1f)", log.Name, x, z))
-                        return log
-                    end
-                elseif sand then
-                    break -- past the beach
-                end
-            end
-        end
-        return nil
-    end
-
-    local function tickDriftwood(dt)
-        driftTimer = driftTimer + dt
-        if driftTimer >= DRIFT_EVERY then
-            driftTimer = 0
-            washUpDriftwood()
-        end
-    end
-
-    return tickDriftwood
-end)()
 
 -- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; research/god-powers-and-
 -- disasters-plan.md, phase 1). A rumble warns, then the ground shakes for a while and dies away.
@@ -4997,6 +4989,13 @@ sky.storm = (function()
         return { x = hrp.Position.X + math.cos(angle) * r, z = hrp.Position.Z + math.sin(angle) * r }
     end
 
+    local function scorch(id, x, y, z) -- a burn on open ground where a bolt struck, kept SCORCH_KEPT
+        local part = skyMarker("Scorch_" .. id, Vector3.new(3, 0.04, 3), Vector3.new(x, y + 0.03, z),
+            Color3.fromRGB(30, 26, 22), "Scorch")
+        table.insert(scorches, { part = part, gone = os.clock() + SCORCH_KEPT })
+        return part
+    end
+
     local function strike(n, spot, k)
         skyCounter = skyCounter + 1
         local id = skyCounter
@@ -5020,13 +5019,7 @@ sky.storm = (function()
         end
         local d = alive and Vector3.new(hrp.Position.X - x, 0, hrp.Position.Z - z).Magnitude
         local near = not hit and not roofed and d and d <= NEAR
-        local bolt = skyMarker("SkyBolt_" .. id, Vector3.new(0.35, 30, 0.35), Vector3.new(x, 15, z),
-            Color3.fromRGB(255, 244, 170), "SkyFlash")
-        bolt:SetAttribute("SkyId", id)
-        bolt:SetAttribute("StrikeX", x)
-        bolt:SetAttribute("StrikeY", y or 0)
-        bolt:SetAttribute("StrikeZ", z)
-        table.insert(skyFlashes, { part = bolt, gone = os.clock() + SKY_FLASH_SECONDS })
+        sky.bolt(id, x, y or 0, z)
         local what
         if palm then -- the palm comes down as two logs (as Lightning fells one)
             local mark = skyMark("Lightning", id)
@@ -5036,9 +5029,7 @@ sky.storm = (function()
             end)
             what = string.format("felled %s into %s", palm.name, table.concat(names, ","))
         elseif not hit and y then -- a scorch on the ground (or on what stands there: nothing built is broken)
-            local scorch = skyMarker("Scorch_" .. id, Vector3.new(3, 0.04, 3), Vector3.new(x, y + 0.03, z),
-                Color3.fromRGB(30, 26, 22), "Scorch")
-            table.insert(scorches, { part = scorch, gone = os.clock() + SCORCH_KEPT })
+            scorch(id, x, y, z)
             what = "scorched the ground"
         else
             what = hit and "struck Godling" or "struck the sea"
@@ -5179,7 +5170,7 @@ sky.storm = (function()
         end
     end
 
-    return { start = start, tick = tick, active = function() return active end,
+    return { start = start, tick = tick, active = function() return active end, scorch = scorch, -- the weather's too
         WARN = WARN, LAST = LAST, CHARGE = CHARGE, FLOOR = FLOOR, SCORCHED = SCORCHED, COOLDOWN = COOLDOWN }
 end)()
 
@@ -5620,7 +5611,6 @@ RunService.Heartbeat:Connect(function(dt)
     sky.quake.tick(dt) -- an earthquake shakes what is loose
     sky.storm.tick(dt) -- a storm called down strikes where it was aimed
     sky.tickNotes(dt) -- notes from viewers drift down
-    tickDriftwood(dt) -- now and then the sea leaves a log on the beach
     tickShip(dt) -- and a ship passes far out
     keepsakeTimer = keepsakeTimer + dt
     if keepsakeTimer >= 10 then

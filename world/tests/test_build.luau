@@ -73,7 +73,7 @@ T.test("the quarry gives a stone every third blow, into its yard, until the yard
     T.eq(strikeAt(w, g, "Quarry"), "StrikeYardFull")
 end)
 
-T.test("an axe fells a palm into two logs, away from the axe, and it grows back", function()
+T.test("an axe fells a palm into one log, away from the axe, and it grows back", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling()
@@ -83,7 +83,8 @@ T.test("an axe fells a palm into two logs, away from the axe, and it grows back"
         T.eq(strikeAt(w, g, "Palm_2"), "StrikeHit:" .. n .. "/4")
     end
     local felled = strikeAt(w, g, "Palm_2")
-    T.starts(felled, "StrikeFelled:Log_")
+    T.eq(felled, "StrikeFelled:Log_1", "one log, the trunk (ADR-026: it was two, and the island filled with logs)")
+    T.eq(e.find("Log_2"), nil, "and no second beside it")
     T.eq(g:GetAttribute("Gesture"), "Chop")
     T.eq(palm:GetAttribute("RenderRole"), "Stump")
     T.near(palm.Size.Y, 1.25, 1e-9, "a stump half a block high")

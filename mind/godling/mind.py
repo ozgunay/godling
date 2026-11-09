@@ -335,8 +335,8 @@ the spot, if there is something. To stand
 under something it needs more room than its own height: an underside two blocks up, exactly as tall as you, is too low.
 You can build. A building block is 2.5 units on every side, half your height, and whatever you set down
 settles into a grid of cells 2.5 apart. Things you can build with: stone blocks, which a hammer breaks
-off the quarry; logs, beams three blocks long and one thick, which an axe fells from trees (they grow back) and
-which sometimes wash up on the beach; boulders, which are very heavy. The ladder is three blocks tall; your hands
+off the quarry; logs, beams three blocks long and one thick: an axe fells a tree into one, and the tree grows back;
+boulders, which are very heavy. The ladder is three blocks tall; your hands
 set nothing on a standing ladder or at its foot, since that would close the way up it.
 Pieces you set down can be turned a quarter round or stood on end, and fastened in place, like mortar.
 Your body grows hungry. With nothing left in you, you lose health, and with no health you die. You come back to life

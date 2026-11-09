@@ -129,7 +129,7 @@ Tested live:
 ## Bigger trees, terrain on the grid (your choice, late evening)
 You asked, through the art session, for trees to match the big logs, and maybe the whole world at the same ratio. You chose "20 tall, spread out" and "snap the terrain to the grid, same island".
 - **Trees** are 2.5 x 20 x 2.5, on grid cells about 10 apart, the south grove clear of the quarry yard.
-  - A felled tree falls along the grid: two logs side by side, in the cells next to its stump. Logs that fell at a slant were pushed up to 16 units off by their slanted boxes and settled at 45°.
+  - A felled tree falls along the grid: two logs side by side, in the cells next to its stump (the axe's one log since ADR-026). Logs that fell at a slant were pushed up to 16 units off by their slanted boxes and settled at 45°.
   - The stump is 2.5 x 1.25 x 2.5, and the body routes round it as terrain.
   - The art session made a taller tree model.
 - **Mesas and the quarry** have whole-block heights: LowStep 2→2.5, LargeMesa 4→5, Ridge 3→2.5, TallMesa 6→5, HighShelf and TowerBase 7→7.5, Peak 11→10, quarry 6→5. Their faces lie on cell boundaries, so blocks set against them sit flush, and a mesa top is a block layer. The island keeps its size.

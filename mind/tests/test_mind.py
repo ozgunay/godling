@@ -106,6 +106,10 @@ def test_prompts(world, tmp_path):
     assert ("It lands glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like "
             "metal") in " ".join(system.split())
     assert not re.search(r"\b(iron|harpoon|blade|edge)\b", system, re.IGNORECASE), "never what it is for"
+    # ADR-026: no log washes up any more, so the mind is not sent looking for one; an axe fells a tree into one log.
+    flat_system = " ".join(system.split())
+    assert not re.search(r"\b(wash|washes|washed|driftwood)\b", flat_system, re.IGNORECASE)
+    assert "an axe fells a tree into one" in flat_system
     assert '"agenda"' in system
     one = make_mind(world, tmp_path, FakeLLM(), agenda=False)
     flat = one.system_prompt(s)

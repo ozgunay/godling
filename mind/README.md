@@ -5,7 +5,7 @@ The mind thinks about the past and the future; the body handles walking and gras
 
 | Layer | File | What it does |
 |---|---|---|
-| L3 mind | `godling/mind.py` | An LLM decides projects, narrates its intention, writes lessons, teaches itself skills, and sleeps hourly to consolidate memory |
+| L3 mind | `godling/mind.py` | An LLM decides projects, narrates its intention, writes lessons, teaches itself skills, and sleeps hourly to consolidate memory. Its system prompt states plain facts of the body and the world, such as one log to a palm the axe fells (ADR-026) |
 | L2 attention | `godling/attention.py` | Notices new objects, damage to things it kept, visitors and sky events; interrupts for salient events (the Jev slot is `decide`); hands events that happen somewhere to the glance reflex |
 | L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy, and keep a standing ladder's top and foot clear (ADR-025). Between steps, and while it waits, the body glances: it turns towards what attention just noticed, without changing the plan |
 | learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted |
