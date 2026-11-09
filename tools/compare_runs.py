@@ -37,6 +37,9 @@ def stats(run):
         "moving (motion duty)": f"{(r['motion'] or {}).get('duty_cycle') or 0:.0%}",
         "waited for mind": f"{m['waited_s'] / (m['span_s'] or 1):.0%}" if m["waited_s"] else "n/a",
         "decide latency p50": ar.fmt_s(ar.pct(m["decide_latency"], 50)),
+        "decide latency p90": ar.fmt_s(ar.pct(m["decide_latency"], 90)),
+        "waits over a minute": str(m["long_waits"]),
+        "stop-gaps run / finished": f"{m['stopgaps']} / {m['stopgaps_ok']}",  # ADR-030
         "reasoning tokens/decision": f"{sum(m['reasoning']) / len(m['reasoning']):.0f}" if m["reasoning"] else "n/a",
         "decisions/h": f"{m['decisions'] / hours:.0f}",
         "projects/h": f"{m['projects'] / hours:.0f}",
@@ -44,6 +47,7 @@ def stats(run):
         "steps planned/decision": f"{sum(m['planned_steps']) / len(m['planned_steps']):.1f}" if m["planned_steps"] else "n/a",
         "plans discarded / kept": f"{m['discarded']} / {m['kept_after_failure']}",
         "answers cut off": str(m["cut_off"]),
+        "answers given from the reasoning": str(m["answers_forced"]),
         "placements/h": f"{sum(per_hour.values()) / hours:.0f}",
         "placements by hour": " ".join(str(per_hour[h]) for h in sorted(per_hour)),
         "tallest stack": str(max((p[1] for p in stacks), default=0)),

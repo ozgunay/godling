@@ -87,6 +87,16 @@ def main():
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
                     help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
+    ap.add_argument("--think-deadline", type=float, default=20, metavar="SECONDS",
+                    help="how long the body stands idle waiting for its mind's next plan before it takes a stop-gap: "
+                         "one short project the mind chooses at once, without thinking (ADR-030; 0 = it waits, as "
+                         "before)")
+    ap.add_argument("--reasoning-effort", choices=("low", "high", "max"), default=None,
+                    help="how hard each decision thinks (DeepSeek reasoning_effort; unset = the provider's default, "
+                         "high, as before; ADR-030)")
+    ap.add_argument("--reasoning-budget", type=int, default=32768, metavar="TOKENS",
+                    help="tokens a decision may spend on reasoning and answer together; a decision that reaches it "
+                         "is answered from what it has thought so far (ADR-030)")
     args = ap.parse_args()
     # Stop cleanly on Ctrl+C even when started in the background (which ignores SIGINT), and on SIGTERM.
     signal.signal(signal.SIGINT, _stop)
@@ -164,13 +174,15 @@ def main():
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
-                    discovery=discovery, house_project=args.house_project)
+                    discovery=discovery, house_project=args.house_project, effort=args.reasoning_effort,
+                    budget=args.reasoning_budget)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
 
     started = time.time()
-    stats = {"projects": 0, "plans_discarded": 0, "plans_after_failure": 0, "waited_for_mind_s": 0.0}
+    stats = {"projects": 0, "plans_discarded": 0, "plans_after_failure": 0, "waited_for_mind_s": 0.0, "stopgaps": 0,
+             "stopgap_s": 0.0}
     structures = StructureLog(run / "mind/structures.jsonl", log)
     try:
         world.wait_until_up()
@@ -230,7 +242,9 @@ def main():
         minutes = (time.time() - started) / 60
         summary = {"minutes": round(minutes, 1), "llm_calls": llm.calls, "cost_usd": round(llm.cost, 4),
                    "model": args.model, "memory_engine": args.memory, "agenda": args.agenda,
-                   "house_project": args.house_project,
+                   "house_project": args.house_project, "think_deadline": args.think_deadline,
+                   "reasoning_effort": args.reasoning_effort, "reasoning_budget": args.reasoning_budget,
+                   "answers_forced": getattr(llm, "forced", 0),
                    "walk_speed": args.walk_speed, **stats, "memory": memory.health(), "structures": structures.last}
         (run / "summary.json").write_text(json.dumps(summary, indent=2))
         print(f"Done: {summary['minutes']} min, {stats['projects']} projects, {llm.calls} model calls, ${llm.cost:.3f}. "
@@ -407,11 +421,24 @@ class Survive:
             time.sleep(5)
 
 
+STOPGAPS_PER_PLAN = 3  # ADR-030: stop-gaps asked for while one plan is thought up; then the body waits as before
+
+
 def agenda_loop(world, attention, memory, mind, skills, args, log, started, stats, structures):
-    """Think while moving: the next agenda is planned while the body does the current agenda's last project."""
+    """Think while moving: the next agenda is planned while the body does the current agenda's last project.
+
+    A decision deadline (ADR-030): when the body has stood idle for `--think-deadline` seconds and the plan is still
+    not in, it takes a stop-gap, one short project the mind chooses at once from what it has thought so far, and the
+    next one as soon as that ends, up to STOPGAPS_PER_PLAN. The plan, when it comes, is taken up at the end of the
+    stop-gap project under way, never in its middle. It is dropped only as before: when the body dies, or when a
+    project (a stop-gap too) is interrupted by something salient. A stop-gap that comes after the plan is dropped."""
     pool = ThreadPoolExecutor(max_workers=3)  # a stale plan still finishing must not block a fresh one
+    quick = ThreadPoolExecutor(max_workers=1)  # stop-gaps: never queued behind a plan that is thinking
     state = {"agenda": deque(), "future": None, "future_warned": False, "chat_after": None, "agenda_busy": 0.0,
-             "last_think": 0.0}
+             "last_think": 0.0, "prepared": None, "stopgaps": 0, "meanwhile": [], "after_stopgap": False}
+    deadline = getattr(args, "think_deadline", 0) or 0
+    stats.setdefault("stopgaps", 0)
+    stats.setdefault("stopgap_s", 0.0)
     survive = Survive(log)
     thinking = ThinkingLog(args.run_dir.expanduser().resolve() / "mind/thinking.jsonl", getattr(mind, "on_reasoning", None))
 
@@ -424,8 +451,46 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
     def plan_in_background(snap, doing=None):
         prepared = mind.prepare(snap, attention.take_events(), heard(), doing)
         plan = prepared["plan"] = thinking.new_plan()
+        state["prepared"] = prepared
         state["future"] = pool.submit(mind.think, prepared, lambda text: thinking.write(plan, text))
         state["future_warned"] = False
+        state["stopgaps"], state["meanwhile"], state["after_stopgap"] = 0, [], False
+
+    def wait_for_mind(future):
+        """The body stands until its plan is in, past the deadline doing stop-gaps (ADR-030). Returns True if the body
+        died, a stop-gap to do, or None once the plan is in."""
+        waited = time.time()
+        asked = None  # a stop-gap being chosen
+        due = waited + (0 if state["after_stopgap"] else deadline) if deadline else None
+        while True:
+            if asked is None and state["stopgaps"] >= STOPGAPS_PER_PLAN:
+                due = None
+            if watch_while_thinking(future, world, attention, skills, until=due if asked is None else None,
+                                    also=asked):
+                return True
+            stop = None
+            if future.done():
+                if asked is not None:
+                    log(kind="stopgap", phase="dropped", reason="the plan came first")
+            elif asked is not None:
+                try:
+                    stop = asked.result()
+                except Exception as err:  # noqa: BLE001 (a failed stop-gap: the body waits on for the plan)
+                    log(kind="error", message=f"stopgap: {err!r}"[:300])
+                asked = None
+                if not stop:
+                    due = time.time() + deadline  # nothing to do: another deadline before it asks again
+                    continue
+            else:  # the deadline has passed
+                state["stopgaps"] += 1
+                idle = time.time() - waited
+                log(kind="stopgap", phase="asked", idle=round(idle, 1), n=state["stopgaps"])
+                asked = quick.submit(mind.stopgap, mind.stopgap_prompt(state["prepared"], idle, state["meanwhile"]))
+                continue
+            gap = time.time() - waited
+            stats["waited_for_mind_s"] += gap
+            log(kind="wait_for_mind", seconds=round(gap, 2), **({"stopgap": True} if stop else {}))
+            return stop
 
     def discard_plan(reason):
         if state["future"] is not None:
@@ -452,41 +517,46 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         if not state["agenda"]:
             if state["future"] is None:
                 plan_in_background(snap)
-            waited = time.time()
             future = state["future"]
             if not future.done():  # the body stands until its mind has thought: the viewers' screen says so
                 log(kind="thinking")
-            if watch_while_thinking(future, world, attention, skills):
+            stop = wait_for_mind(future)
+            if stop is True:
                 return died()
-            try:
-                thought = future.result()
-            except BaseException:
-                state["future"] = None  # a failed provider call must not be retried by reading the same future
-                raise
-            gap = time.time() - waited
-            stats["waited_for_mind_s"] += gap
-            log(kind="wait_for_mind", seconds=round(gap, 2))
-            state["last_think"] = thought["seconds"]
-            now = observe_body(world, attention)
-            if now.dead or attention.death_pending:  # even if it was born again before the plan finished
-                return died()
-            state["future"] = None
-            decision = mind.adopt(thought, now)
-            state["agenda"].extend(p for p in decision["projects"] if p["steps"])
-            if not state["agenda"]:
-                skills.run("wait", {"seconds": 5})
-                return
-            state["agenda_busy"] = 0.0
-            # Think about what comes after this whole agenda while the body works through it.
-            snap = observe_body(world, attention)
-            if snap.dead or attention.death_pending:
-                return died()
-            plan_in_background(snap, doing=list(state["agenda"]))
+            if stop:  # a stop-gap: the body does it while the plan is still being thought up
+                state["agenda"].extend(stop["projects"])
+            else:
+                try:
+                    thought = future.result()
+                except BaseException:
+                    state["future"] = None  # a failed provider call must not be retried by reading the same future
+                    raise
+                state["last_think"] = thought["seconds"]
+                now = observe_body(world, attention)
+                if now.dead or attention.death_pending:  # even if it was born again before the plan finished
+                    return died()
+                state["future"] = None
+                decision = mind.adopt(thought, now)
+                if state["meanwhile"]:
+                    mind.notes.append("While you thought up your last plan, your body did on the spot, unplanned: "
+                                      + "; ".join(state["meanwhile"]) + ".")
+                state["agenda"].extend(p for p in decision["projects"] if p["steps"])
+                if not state["agenda"]:
+                    skills.run("wait", {"seconds": 5})
+                    return
+                state["agenda_busy"] = 0.0
+                # Think about what comes after this whole agenda while the body works through it.
+                snap = observe_body(world, attention)
+                if snap.dead or attention.death_pending:
+                    return died()
+                plan_in_background(snap, doing=list(state["agenda"]))
         project = state["agenda"].popleft()
+        stopgap = bool(project.get("stopgap"))
         state["doing"] = project["goal"]
         if project["intention"] and not args.no_narration:
             world.say(project["intention"])
-        log(kind="project", phase="start", goal=project["goal"], intention=project["intention"], steps=len(project["steps"]))
+        log(kind="project", phase="start", goal=project["goal"], intention=project["intention"], steps=len(project["steps"]),
+            **({"stopgap": True} if stopgap else {}))
         began = time.time()
         results = []
         for step in project["steps"]:
@@ -498,14 +568,22 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         ok = mind.record_outcome(project, results, snap)
         elapsed = time.time() - began
         stats["projects"] += 1
-        state["agenda_busy"] += elapsed
+        if stopgap:
+            stats["stopgaps"] += 1
+            stats["stopgap_s"] += elapsed
+        else:
+            state["agenda_busy"] += elapsed
         log(kind="project", phase="end", goal=project["goal"], intention=project["intention"], ok=ok,
-            seconds=round(elapsed, 2))
+            seconds=round(elapsed, 2), **({"stopgap": True} if stopgap else {}))
         if snap.dead or attention.death_pending:
             return died()
         if any("interrupted:" in r.summary for r in results):
             state["agenda"].clear()  # something salient happened: rethink from reality
             discard_plan(f"'{project['goal']}' was interrupted")
+            return
+        if stopgap:  # the plan on its way did not count on it; the next stop-gap, if any, comes at once
+            state["meanwhile"].append(f"'{project['goal']}' ({'succeeded' if ok else 'did not finish'})")
+            state["after_stopgap"] = True
             return
         if not ok and state["future"] is not None and not state["future_warned"]:
             # The rest of this agenda and the plan being thought up assumed success. Carry on with both, as a person
@@ -523,12 +601,14 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
             survive(cycle)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+        quick.shutdown(wait=False, cancel_futures=True)
 
 
-def watch_while_thinking(future, world, attention, skills):
+def watch_while_thinking(future, world, attention, skills, until=None, also=None):
     """No idle behaviours: the body waits for its mind. But it keeps watching, so what happens meanwhile still
-    gets a glance, and the next plan hears of it."""
-    while not future.done():
+    gets a glance, and the next plan hears of it. It stops waiting at `until` (the decision deadline, ADR-030), or
+    when `also` (a stop-gap being chosen) is done. Returns True if the body died meanwhile."""
+    while not future.done() and not (also is not None and also.done()) and (until is None or time.time() < until):
         try:
             snap = observe_body(world, attention)
             if snap.dead or getattr(attention, "death_pending", False):
@@ -851,7 +931,15 @@ def print_entry(entry):
         print(f"[{stamp}]   {'ok ' if entry['ok'] else 'FAIL'} {entry['skill']}: {entry['summary']} ({entry['seconds']}s)", flush=True)
     elif kind == "wait_for_mind":
         if entry["seconds"] >= 1:
-            print(f"[{stamp}] WAIT   body waited {entry['seconds']}s for the mind", flush=True)
+            print(f"[{stamp}] WAIT   body waited {entry['seconds']}s for the mind"
+                  + (", then took a stop-gap" if entry.get("stopgap") else ""), flush=True)
+    elif kind == "stopgap":  # ADR-030
+        if entry["phase"] == "chosen":
+            print(f"[{stamp}] STOPGAP {entry['thought']}  (chosen at once while the plan is thought up)", flush=True)
+            for p in entry["projects"]:
+                print(f"[{stamp}]   meanwhile: {p['intention'] or p['goal']} ({len(p['steps'])} steps)", flush=True)
+        elif entry["phase"] == "dropped":
+            print(f"[{stamp}] STOPGAP dropped: {entry['reason']}", flush=True)
     elif kind == "plan_discarded":
         print(f"[{stamp}] REPLAN next plan discarded: {entry['reason']}", flush=True)
     elif kind == "plan_kept":

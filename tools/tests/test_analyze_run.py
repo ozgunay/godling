@@ -144,6 +144,30 @@ def test_find_transcripts_skips_unreadable(tmp_path, monkeypatch):
     assert ar.find_transcripts(agent) == []
 
 
+def test_mind_log_counts_stopgaps_and_answers_given_from_the_reasoning(tmp_path):
+    """ADR-030: what the experiment compares between its arms."""
+    from runs import mind_log
+    log = mind_log(tmp_path, [
+        {"time": 0, "kind": "llm", "purpose": "decide", "latency": 200, "cache_hit": 1, "cache_miss": 1, "output": 9,
+         "cost": 0.02, "reasoning": 9, "finish": "length"},
+        {"time": 1, "kind": "llm", "purpose": "decide:answer", "latency": 5, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.001, "reasoning": 0, "finish": "stop"},
+        {"time": 2, "kind": "llm", "purpose": "stopgap", "latency": 3, "cache_hit": 1, "cache_miss": 1, "output": 1,
+         "cost": 0.001, "reasoning": 0, "finish": "stop"},
+        {"time": 3, "kind": "wait_for_mind", "seconds": 21, "stopgap": True},
+        {"time": 4, "kind": "wait_for_mind", "seconds": 70},
+        {"time": 30, "kind": "project", "phase": "end", "ok": True, "seconds": 20, "stopgap": True},
+        {"time": 40, "kind": "project", "phase": "end", "ok": False, "seconds": 4, "stopgap": True},
+        {"time": 41, "kind": "stopgap", "phase": "dropped", "reason": "the plan came first"},
+        {"time": 60, "kind": "project", "phase": "end", "ok": True, "seconds": 9}])
+    m = ar.analyze_mind_log(log)
+    assert m["cut_off"] == 1 and m["answers_forced"] == 1 and m["decide_latency"] == [200]
+    assert (m["stopgaps"], m["stopgaps_ok"], m["stopgap_s"], m["stopgaps_dropped"], m["long_waits"]) == (2, 1, 24, 1, 1)
+    lines = "\n".join(ar.mind_report(m))
+    assert "cut off by the output cap: 1 (1 given from the reasoning so far)" in lines
+    assert "over a minute: 1; stop-gaps run while it thought: 2 (1 finished, 0.4 min), dropped" in lines
+
+
 def test_mind_log_reactions_and_quakes(tmp_path):
     log = standard_mind_log(tmp_path)
     m = ar.analyze_mind_log(log)

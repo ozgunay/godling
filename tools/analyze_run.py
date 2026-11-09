@@ -294,6 +294,7 @@ def analyze_mind_log(path):
     if not projects:  # older runs (m-001..m-003) have no project entries: approximate with top-level skills
         busy = sum(s["seconds"] for s in skills if s.get("learned") or s["skill"] not in ("wait",))
     decide = [e for e in llm if e["purpose"] == "decide"]
+    stopgaps = [e for e in projects if e.get("stopgap")]  # ADR-030
     return {
         "span_s": span,
         "busy_s": min(busy, span),
@@ -308,6 +309,12 @@ def analyze_mind_log(path):
         "reasoning": [e.get("reasoning", 0) for e in decide if "reasoning" in e],
         "decide_latency": [e["latency"] for e in decide],
         "cut_off": sum(1 for e in llm if e.get("finish") == "length"),
+        "answers_forced": sum(1 for e in llm if str(e["purpose"]).endswith(":answer")),  # given from the reasoning
+        "long_waits": sum(1 for e in entries if e["kind"] == "wait_for_mind" and e["seconds"] > 60),
+        "stopgaps": len(stopgaps),
+        "stopgaps_ok": sum(1 for e in stopgaps if e.get("ok")),
+        "stopgap_s": sum(e["seconds"] for e in stopgaps),
+        "stopgaps_dropped": sum(1 for e in entries if e["kind"] == "stopgap" and e.get("phase") == "dropped"),
         "calls": len(llm),
         "purposes": Counter(e["purpose"] for e in llm),
         "latency": [e["latency"] for e in llm],
@@ -335,7 +342,11 @@ def mind_report(m):
         f"kept after a failure: {m['kept_after_failure']}",
         f"- Reasoning tokens per decision: avg {sum(m['reasoning']) / len(m['reasoning']):.0f}" if m["reasoning"] else
         "- Reasoning tokens per decision: not logged in this run",
-        f"- Answers cut off by the output cap: {m['cut_off']}",
+        f"- Answers cut off by the output cap: {m['cut_off']}"
+        + (f" ({m['answers_forced']} given from the reasoning so far)" if m.get("answers_forced") else ""),
+        f"- Waits for the mind over a minute: {m.get('long_waits', 0)}; stop-gaps run while it thought: "
+        f"{m.get('stopgaps', 0)} ({m.get('stopgaps_ok', 0)} finished, {m.get('stopgap_s', 0) / 60:.1f} min), "
+        f"dropped as the plan came first: {m.get('stopgaps_dropped', 0)}",
         f"- Decisions: {m['decisions']}; projects run: {m['projects']} ({m['projects_ok']} finished); "
         f"events noticed: {m['events']}; sleeps: {m['sleeps']}",
         "- Skill success: " + ", ".join(f"{k} {ok}/{n}" for k, (ok, n) in sorted(m["skills"].items())),

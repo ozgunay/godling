@@ -67,6 +67,16 @@ BUSY_HINT = ("A small step (walk, pick up, place) keeps your body busy for about
              "one of your own skills, which can repeat steps and work out their targets as it goes, keeps your "
              "body busy far longer for the same thought.")
 
+# While the body stands waiting for a late plan, the mind gives it one short project at once (ADR-030).
+STOPGAP_STEPS = 4
+STOPGAP_THOUGHTS = 6000  # characters: the end of what it has thought so far
+STOPGAP_TOKENS = 2048  # no thinking: the answer only, a one-project agenda of about 300 tokens
+STOPGAP_ASK = (f"Go on thinking about your plan. Meanwhile give your body ONE short project to do right now, at most "
+               f"{STOPGAP_STEPS} steps, that fits what you are thinking and that your plan can build on. Reply with ONE "
+               'json object: {"thought": "...", "agenda": [{"intention": "...", "goal": "...", "why": "...", "steps": '
+               '[...]}]}. Only the thought and that one project count now: what you remember, learn, forget, keep or '
+               "release, and your house, wait for your finished plan.")
+
 LOOSE_IN_VIEW = 14  # working memory: name the nearest loose things, count the rest
 TOUCHING = 0.3  # pieces closer than this face to face are built together
 BUILT_PREFIX = "build at "  # the name of a build kept by itself (see Mind.keep_builds)
@@ -190,7 +200,7 @@ class _Seen:
 
 class Mind:
     def __init__(self, llm, memory, soul, skills, library, name="Godling", log=None, agenda=True, discovery=None,
-                 house_project=False):
+                 house_project=False, effort=None, budget=None):
         self.llm = llm
         self.discovery = discovery  # what Godling has seen of the island; None: it knows everything (ADR-008)
         self.memory = memory
@@ -205,6 +215,9 @@ class Mind:
         self.failures = []  # recent failed goals, to break loops
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
         self.think_s = None  # running estimate of how long a plan takes to think up
+        # How hard a decision thinks, and the tokens it may spend (ADR-030); None: as the provider and the client have
+        # it (effort high, a cap of 32768).
+        self.effort, self.budget = effort, budget
         self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
         self.memory.house_project_enabled = house_project
         self.skills.on_placed = self.record_placement
@@ -701,10 +714,63 @@ thought and in that project's intention."""
         return prepared
 
     def think(self, prepared, on_reasoning=None):
-        """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in."""
+        """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in; the pieces
+        are also kept in prepared["reasoning"], what it has thought so far, for a stop-gap (ADR-030)."""
         started = time.time()
-        reply = self.llm.complete_json(prepared["system"], prepared["user"], purpose="decide", on_reasoning=on_reasoning)
+        heard = prepared.setdefault("reasoning", [])
+
+        def hear(text):
+            heard.append(text)
+            if on_reasoning:
+                on_reasoning(text)
+        options = {key: value for key, value in (("effort", self.effort), ("max_tokens", self.budget)) if value}
+        reply = self.llm.complete_json(prepared["system"], prepared["user"], purpose="decide", on_reasoning=hear,
+                                       **options)
         return {"reply": reply, "prepared": prepared, "seconds": round(time.time() - started, 2)}
+
+    def stopgap_prompt(self, prepared, idle, meanwhile=()):
+        """Main thread (ADR-030): what to ask for a stop-gap while the plan of `prepared` is still being thought up.
+        It is that plan's prompt, read again from the provider's cache, with what has happened since, what the body
+        already did meanwhile, and the end of what the mind has thought so far."""
+        thoughts = "".join(list(prepared.get("reasoning") or []))[-STOPGAP_THOUGHTS:]
+        lines = [f"Your body has stood idle for {idle:.0f}s, waiting for you to finish thinking about your next plan. "
+                 f"Since you began thinking: {self.last_outcome}"]
+        if meanwhile:
+            lines.append("While you think, your body has already done: " + "; ".join(meanwhile) + ".")
+        if thoughts.strip():
+            lines.append(f"Your thoughts so far (unfinished):\n{thoughts}")
+        lines.append(STOPGAP_ASK)
+        return {"system": prepared["system"], "user": prepared["user"] + "\n\n" + "\n".join(lines)}
+
+    def stopgap(self, ask):
+        """Any thread (ADR-030): one short project for the body to do while the plan is still being thought up,
+        chosen at once without thinking; None if the reply has none. Only the body moves on it: what the reply would
+        remember, learn, forget, keep or release, and the house, wait for the finished plan."""
+        reply = self.llm.complete_json(ask["system"], ask["user"], purpose="stopgap", effort="none",
+                                       max_tokens=STOPGAP_TOKENS, retries=1)
+        project = next((p for p in self._projects(reply) if p["steps"]), None)
+        if project is None:
+            self.log(kind="stopgap", phase="none")
+            return None
+        stop = {"thought": str(reply.get("thought", ""))[:400],
+                "projects": [{**project, "steps": project["steps"][:STOPGAP_STEPS], "stopgap": True}]}
+        self.log(kind="stopgap", phase="chosen", **stop)
+        return stop
+
+    def _projects(self, reply):
+        """The projects of a reply, each with the steps the body can do (known skills, arguments as an object)."""
+        raw = reply.get("agenda") if isinstance(reply.get("agenda"), list) else [
+            {**(reply.get("project") or {}), "intention": reply.get("intention", "")}]
+        known = set(self.skills.offered) | set(self.library.skills)
+        projects = []
+        for item in raw[:6]:
+            if not isinstance(item, dict):
+                continue
+            steps = [{"skill": s["skill"], "args": s.get("args", {})} for s in (item.get("steps") or [])[:MAX_STEPS]
+                     if isinstance(s, dict) and s.get("skill") in known and isinstance(s.get("args", {}), dict)]
+            projects.append({"intention": str(item.get("intention", ""))[:200], "goal": str(item.get("goal", ""))[:200],
+                             "why": str(item.get("why", ""))[:200], "steps": steps})
+        return projects
 
     def adopt(self, thought, snap):
         """Main thread: apply the reply's side effects and return the decision (a list of projects)."""
@@ -722,17 +788,7 @@ thought and in that project's intention."""
                 taught.append(self.library.define(spec, tick=tick))
             except (SkillError, TypeError, ValueError) as err:
                 self.notes.append(f"Your attempt to learn '{spec.get('name')}' was rejected: {err}.")
-        raw = reply.get("agenda") if isinstance(reply.get("agenda"), list) else [
-            {**(reply.get("project") or {}), "intention": reply.get("intention", "")}]
-        known = set(self.skills.offered) | set(self.library.skills)
-        projects = []
-        for item in raw[:6]:
-            if not isinstance(item, dict):
-                continue
-            steps = [{"skill": s["skill"], "args": s.get("args", {})} for s in (item.get("steps") or [])[:MAX_STEPS]
-                     if isinstance(s, dict) and s.get("skill") in known and isinstance(s.get("args", {}), dict)]
-            projects.append({"intention": str(item.get("intention", ""))[:200], "goal": str(item.get("goal", ""))[:200],
-                             "why": str(item.get("why", ""))[:200], "steps": steps})
+        projects = self._projects(reply)  # after "learn": a step may use a skill taught in the same reply
         for item in reply.get("remember") or []:
             if isinstance(item, dict) and item.get("text"):
                 self.memory.note(str(item["text"]), about=str(item.get("about", "")), tick=tick,

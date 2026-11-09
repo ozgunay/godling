@@ -20,8 +20,8 @@ class FakeLLM:
         self.replies = list(replies)
         self.calls = []
 
-    def complete_json(self, system, user, purpose="decide", on_reasoning=None):
-        self.calls.append({"system": system, "user": user, "purpose": purpose})
+    def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+        self.calls.append({"system": system, "user": user, "purpose": purpose, **({"options": options} if options else {})})
         if on_reasoning:
             on_reasoning("thinking...")
         return self.replies.pop(0)
@@ -232,6 +232,73 @@ def test_one_project_decisions(world, tmp_path):
     assert decision["projects"][0]["intention"] == "look" and decision["projects"][0]["steps"][0]["skill"] == "wait"
     mind2 = make_mind(world, tmp_path, FakeLLM({"intention": "x"}), agenda=False)
     assert mind2.decide(island.snap(), [], [])["projects"][0]["steps"] == []
+
+
+def test_think_asks_for_the_effort_and_budget_it_was_given(world, tmp_path):
+    """ADR-030: unset, a decision is asked for as today (the provider's effort, the client's cap of 32768 tokens)."""
+    island, body, library = world
+    llm = FakeLLM({}, {})
+    today = make_mind(world, tmp_path, llm)
+    today.think(today.prepare(island.snap(), [], []))
+    assert "options" not in llm.calls[-1]
+    tuned = make_mind(world, tmp_path, llm, effort="low", budget=16000)
+    tuned.think(tuned.prepare(island.snap(), [], []))
+    assert llm.calls[-1]["options"] == {"effort": "low", "max_tokens": 16000}
+
+
+def test_think_keeps_what_it_has_thought_so_far(world, tmp_path):
+    """The reasoning streams into the plan it belongs to, so a stop-gap can be chosen in its light (ADR-030)."""
+    island, body, library = world
+    mind = make_mind(world, tmp_path, FakeLLM({}))
+    prepared = mind.prepare(island.snap(), [], [])
+    seen = []
+    mind.think(prepared, on_reasoning=seen.append)
+    assert prepared["reasoning"] == ["thinking..."] and seen == ["thinking..."]
+
+
+def test_a_stopgap_moves_the_body_only(world, tmp_path):
+    """ADR-030: while the body stands waiting for a late plan, the mind gives it one short project, chosen at once (no
+    thinking) from the prompt it is thinking about and what it has thought so far. Only the body moves on it: memories,
+    skills, keeps, releases and the house wait for the finished plan."""
+    island, body, library = world
+    steps = [{"skill": "walk_to", "args": {"x": 5, "z": 0}}, {"skill": "fly", "args": {}},
+             {"skill": "pick_up", "args": {"object": "Block_3"}}, {"skill": "jump", "args": {}},
+             {"skill": "wait", "args": {"seconds": 1}}, {"skill": "jump", "args": {}}, {"skill": "jump", "args": {}}]
+    reply = {"thought": "A block first.", "agenda": [{"intention": "Fetch a block", "goal": "a block", "steps": steps},
+                                                     {"intention": "more", "goal": "more", "steps": steps}],
+             "remember": [{"about": "x", "text": "never kept"}], "learn": [{"name": "hop", "steps": [{"skill": "jump"}]}],
+             "keep": [{"name": "pair", "cubes": ["Block_1", "Block_2"]}],
+             "house": {"inside": [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], "door": [0, -2.5]}}
+    llm = FakeLLM(reply)
+    mem = NativeMemory(tmp_path / "mem")
+    mind = make_mind(world, tmp_path, llm, memory=mem, house_project=True)
+    prepared = mind.prepare(island.snap(), [], [], doing=[{"goal": "a wall"}])
+    prepared["reasoning"] = ["an early idea. " * 2000, "so I will fetch Block_3 first"]
+    mind.last_outcome = "Project 'a wall' did not finish. / pick_up: FAILED - out of reach"
+    ask = mind.stopgap_prompt(prepared, idle=21.4, meanwhile=["'look round' (succeeded)"])
+    stop = mind.stopgap(ask)
+    call = llm.calls[-1]
+    assert call["purpose"] == "stopgap" and call["system"] == prepared["system"]
+    assert call["options"]["effort"] == "none" and call["options"]["max_tokens"] <= 4096
+    assert call["user"].startswith(prepared["user"])  # the prompt already sent: read again from the provider's cache
+    tail = call["user"][len(prepared["user"]):]
+    assert "21s" in tail and "so I will fetch Block_3 first" in tail and "did not finish" in tail
+    assert "'look round' (succeeded)" in tail and len(tail) < 10000
+    assert stop["thought"] == "A block first." and len(stop["projects"]) == 1
+    project = stop["projects"][0]
+    assert project["stopgap"] and project["intention"] == "Fetch a block"
+    assert [s["skill"] for s in project["steps"]] == ["walk_to", "pick_up", "jump", "wait"]  # four steps at most
+    assert mem.episodes == [] and library.skills == {} and "pair" not in mem.state["structures"]
+    assert mem.state.get("house") is None and mind.logs[-1]["kind"] == "stopgap"
+
+
+def test_a_stopgap_without_a_project_is_none(world, tmp_path):
+    island, body, library = world
+    mind = make_mind(world, tmp_path, FakeLLM({"thought": "hm", "agenda": [{"goal": "x", "steps": [{"skill": "fly"}]}]},
+                                              {"agenda": "nonsense"}))
+    ask = mind.stopgap_prompt(mind.prepare(island.snap(), [], []), idle=20)  # nothing thought yet: no thoughts quoted
+    assert "Your thoughts so far" not in ask["user"]
+    assert mind.stopgap(ask) is None and mind.stopgap(ask) is None  # no known skill; no agenda
 
 
 def test_agenda_feedback(world, tmp_path):

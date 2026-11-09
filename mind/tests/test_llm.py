@@ -112,6 +112,81 @@ def test_complete_json_gives_up(requests):
         LLM(api_key="k").complete_json("s", "u", retries=1)
 
 
+def answered(text='{"ok": 1}', usage=None):
+    return stream({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]},
+                  {"choices": [], "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5}})
+
+
+def test_reasoning_effort_is_sent_only_when_asked_for(requests):
+    """ADR-030: how hard the mind thinks is an option. Unset, the request is today's: no effort named, so the provider's
+    default (high), and the cap of 32768 tokens."""
+    sent, queue = requests
+    queue.extend([answered(), answered(), answered()])
+    model = LLM(api_key="k")
+    model.complete_json("s", "u")
+    model.complete_json("s", "u", effort="low", max_tokens=16000)
+    model.complete_json("s", "u", effort="none")
+    today, low, off = (json.loads(req.data) for req, _ in sent)
+    assert "reasoning_effort" not in today and "thinking" not in today and today["max_tokens"] == 32768
+    assert low["reasoning_effort"] == "low" and low["max_tokens"] == 16000 and "thinking" not in low
+    assert off["thinking"] == {"type": "disabled"} and "reasoning_effort" not in off
+
+
+def test_an_answer_cut_off_by_the_cap_is_given_from_the_reasoning_so_far(requests):
+    """Run live (2026-11-08): 8 of 219 decisions spent all 32768 tokens on reasoning, about 200 s each, and lost their
+    answer; the retry then thought the whole plan up again. Past the cap, the answer now comes from what it has thought,
+    in one call that does not think again."""
+    sent, queue = requests
+    logs, heard = [], []
+    queue.append(stream(
+        {"choices": [{"delta": {"reasoning_content": "an early idea. " * 3000}}]},
+        {"choices": [{"delta": {"reasoning_content": "so: fetch Log_4 for the wall"}}]},
+        {"choices": [{"delta": {"content": '{"thought": "the wa'}, "finish_reason": "length"}]},
+        {"choices": [], "usage": {"prompt_tokens": 9000, "completion_tokens": 32768,
+                                  "completion_tokens_details": {"reasoning_tokens": 32760}}}))
+    queue.append(answered('{"thought": "the wall"}', {"prompt_tokens": 9500, "completion_tokens": 40}))
+    model = LLM(api_key="k", log=lambda **kw: logs.append(kw))
+    assert model.complete_json("sys", "situation", purpose="decide", on_reasoning=heard.append) == {"thought": "the wall"}
+    assert len(sent) == 2 and model.forced == 1 and model.calls == 2
+    answer = json.loads(sent[1][0].data)
+    assert answer["thinking"] == {"type": "disabled"} and answer["max_tokens"] <= 4096
+    assert answer["messages"][0]["content"] == "sys" and len(answer["messages"]) == 2
+    asked = answer["messages"][1]["content"]
+    assert asked.startswith("situation") and "so: fetch Log_4 for the wall" in asked and '{"thought": "the wa' in asked
+    assert len(asked) < 20000  # the end of its thinking, not all of it
+    assert [entry["purpose"] for entry in logs] == ["decide", "decide:answer"] and logs[0]["finish"] == "length"
+    assert "".join(heard).endswith("so: fetch Log_4 for the wall")  # the viewers still read all of it
+
+
+def test_a_reply_that_broke_off_is_answered_from_its_reasoning_too(requests):
+    """A stream that ends without a finish reason (three in run live, one after 223 s) keeps what it thought."""
+    sent, queue = requests
+    queue.append(stream({"choices": [{"delta": {"reasoning_content": "thinking hard"}}]}, done=False))
+    queue.append(answered())
+    model = LLM(api_key="k")
+    assert model.complete_json("s", "u") == {"ok": 1}
+    assert model.forced == 1 and json.loads(sent[1][0].data)["thinking"] == {"type": "disabled"}
+
+
+def test_a_forced_answer_that_fails_falls_back_to_asking_again(requests):
+    sent, queue = requests
+    queue.append(stream({"choices": [{"delta": {"reasoning_content": "r"}, "finish_reason": "length"}]}))
+    queue.extend([answered("still not json"), answered("nor this"), answered()])
+    model = LLM(api_key="k")
+    assert model.complete_json("s", "u", retries=1) == {"ok": 1}
+    last = json.loads(sent[-1][0].data)
+    assert "thinking" not in last and "not valid JSON" in last["messages"][-1]["content"]
+
+
+def test_a_reply_without_thinking_is_never_forced(requests):
+    """With thinking off there is nothing to answer from: a bad reply is asked again, as before."""
+    sent, queue = requests
+    queue.extend([stream({"choices": [{"delta": {"content": "{"}, "finish_reason": "length"}]}), answered()])
+    model = LLM(api_key="k")
+    assert model.complete_json("s", "u", effort="none") == {"ok": 1}
+    assert model.forced == 0 and "not valid JSON" in json.loads(sent[1][0].data)["messages"][-1]["content"]
+
+
 def test_reasoning_callback_failures_are_swallowed(monkeypatch):
     clock = itertools.count(0, 5)  # every reading of the clock is 5 s later: each piece is passed on alone
     monkeypatch.setattr(llm_module.time, "time", lambda: next(clock))
