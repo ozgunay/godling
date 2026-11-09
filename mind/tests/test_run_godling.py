@@ -877,8 +877,8 @@ def test_the_live_default_memory_keeps_a_skill_that_has_proven_itself(main_env, 
     (run / "memory" / "skills.json").write_text(json.dumps({"mend_at_home": MEND_AT_HOME}))
 
     class ForgetfulLLM(FakeLLMClass):
-        def complete_json(self, system, user, purpose="decide", on_reasoning=None):
-            reply = super().complete_json(system, user, purpose, on_reasoning)
+        def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+            reply = super().complete_json(system, user, purpose, on_reasoning, **options)  # max_tokens, effort...
             return {**reply, "forget": ["mend_at_home"]} if purpose == "decide" else reply
     monkeypatch.setattr(rg, "LLM", ForgetfulLLM)
     monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),

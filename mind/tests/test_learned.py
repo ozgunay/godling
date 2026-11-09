@@ -13,6 +13,9 @@ from run_live_skills import (BEAM_Z_ON_STEP, CUBE_STEP_AT, MEND_AT_HOME, POST_AN
                              UPRIGHT_NAMED_LOG)
 
 FORGET_WHEN_IDLE = 2 * 3600  # ADR-032 after the review of #75 (learned.FORGET_WHEN_IDLE)
+# A skill that works while $who is there and fails at its arguments when it is not. Plain words to say: the body
+# may refuse a line of nothing but numbers, so the helper goes into a wait (Block_1's height, 1.25 s).
+GREET_STEPS = [{"skill": "wait", "args": {"seconds": {"y": {"pos": "$who"}}}}, {"skill": "say", "args": {"text": "hello"}}]
 
 
 @pytest.fixture
@@ -133,7 +136,7 @@ def test_a_skill_that_never_worked_or_has_stopped_working_can_go(tmp_path, recor
 
 def test_every_run_counts_the_failures_in_a_row_beyond_the_last_five(setup, tmp_path):
     island, body, library, logs = setup
-    library.define({"name": "greet", "params": ["who"], "steps": [{"skill": "say", "args": {"text": {"pos": "$who"}}}]})
+    library.define({"name": "greet", "params": ["who"], "steps": GREET_STEPS})
     for _ in range(6):
         assert body.run("greet", {"who": "Block_1"}).ok
     for _ in range(3):
@@ -153,7 +156,7 @@ def test_every_run_counts_the_failures_in_a_row_beyond_the_last_five(setup, tmp_
 def test_a_record_saved_before_the_count_goes_on_from_its_last_five(setup, tmp_path):
     _, body, _, _ = setup
     body.library, _ = library_of(tmp_path, greet={
-        "params": ["who"], "steps": [{"skill": "say", "args": {"text": {"pos": "$who"}}}], "does": "",
+        "params": ["who"], "steps": GREET_STEPS, "does": "",
         "status": "proven", "uses": 2, "successes": 1, "recent": [True, False]})
     assert not body.run("greet", {"who": "Nothing"}).ok
     assert body.library.skills["greet"]["fails_in_a_row"] == 2 and "recent" not in body.library.skills["greet"]
@@ -212,7 +215,7 @@ def test_an_interruption_says_nothing_about_the_skill(setup):
 def test_a_run_that_breaks_counts_as_a_failure(setup):
     # 75-AB8: the world failing under a helper raised out of the run, which then went uncounted.
     island, body, library, _ = setup
-    library.define({"name": "look", "steps": [{"skill": "say", "args": {"text": {"pos": "Block_1"}}}]})
+    library.define({"name": "look", "steps": [{"skill": "wait", "args": {"seconds": {"y": {"pos": "Block_1"}}}}]})
     assert body.run("look", {}).ok
     island.fail_observe = 50
     r = body.run("look", {})
