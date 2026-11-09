@@ -39,8 +39,11 @@ works so, and so do most abilities there cast with "quick cast". Two other ways 
 
 **On the screen.** While a log is aimed, a ring of radius 60 (`REACH`) lies round Godling's feet and follows Godling
 each frame (`aim.update`). It brightens when the pointer is past it. The reticle then sits on the ring, on the line from
-Godling to the pointer and on top of whatever stands there. The aim bar says "Past Godling's reach: it lands on the
-ring". The spot on the ring is what the screen sends.
+Godling to the pointer and on top of whatever stands there, and it follows Godling as it walks under a still pointer.
+The aim bar says "Past Godling's reach: it lands on the ring". The screen reads the reach from the world (the Clock's
+`SkyReach`), so the ring cannot drift from it. It sends what the viewer aimed at, not the spot on the ring, so that the
+world brings it in from where Godling is when the call arrives, and its log line counts only viewers who aimed past
+the ring.
 
 **In the world.** `sky.aim.read` brings such an aim in to the edge as well (`within`), because Godling may walk between
 the click and the call. The world log says so: `SKY Log aimed 84.0 from Godling, past its reach: brought in to ...`.
@@ -68,7 +71,11 @@ weighed:
   - its doorway
   - the way out (`house.outside_of`)
 
-  These are the cells the mind inspects for its site (`Mind._house_cells`). The world keeps a plain list of cells for
+  - the cells round the way out, its two flanks and the cell beyond (the review of #79): one log lying across the way
+    out and another beside it would close it, as Log_94 and its neighbours closed the way in the run
+
+  The first four are what the body already keeps clear (`NativeMemory.reserved_cells`) with the walls, and `site.py`
+  builds on that, so one rule says which cells a house needs. The world keeps a plain list of cells for
   each player, so it needs no house rules of its own: a bigger room or another doorway needs no change in the world.
   Building and colony games keep the cells of a blueprint or a zone reserved in the same way.
 
@@ -83,27 +90,43 @@ weighed:
   The world takes the site even while the body lies dead. It never sets `LastActionResult`, which the body's own steps
   read, and `Think` already works this way. It ignores nonsense, and anything over 400 cells.
 
-A log's whole outline, as it will lie, keeps off those cells (`sky.aim.keeper`). Touching a cell is not landing on it.
-This holds for unaimed logs too, which until now kept clear of pieces but not of an empty room.
+A gift's whole outline, as it will lie, keeps off those cells (`sky.aim.offSite`). Touching a cell is not landing on
+it. This holds for unaimed gifts too, which until now kept clear of pieces but not of an empty room, and, since the
+review of #79, for the stone as well as the log.
+
+**At Godling's feet, or as near as there is room.** A gift aimed at Godling lands at its feet, lying across that side,
+squared to x or z because settling squares it anyway, so the outline checked is the one it keeps. When Godling stands in
+its room, or among pieces, there is no room at its feet: the gift then goes to the nearest spot to Godling that has
+room, and the screen says "At Godling: at its feet, or as near as there is room".
 
 **Landing as often as before.** The stricter rule must not turn landings into refusals:
 - The search round the aim goes out to 20 (`SNAP_FAR`) instead of 12.
 - A log lies along x or along z, whichever fits first.
-- The cheap checks run first, and the pieces are gathered once for each drop, because the search tries hundreds of
-  spots.
+- The cheap checks run first, each once a spot, and the pieces are gathered once for each drop, because the search
+  tries hundreds of spots.
+
+**Bounds.** A log lands no further than 72 from Godling (the reach and a stone's look round it), as every gift did
+before. One brought in to the edge lands no further out than 1.25 past the ring the screen showed. A log's whole outline
+also keeps 0.5 off palm trunks, mesas and the quarry; until now only its middle was checked, and a log is 7.5 long.
 
 **Not guided construction.** The world tells the mind nothing new, and places nothing for it. The site serves only to
 keep the sky's gifts off it. Godling still chooses where to build, and still fetches each log.
 
-### Only the log
+### Only the log, but every gift keeps off the house
 The owner asked for the other powers to stay as they are. The stone gift shares this code (`sky.aim.gift`) but keeps its
-old rules, because `KEEPS` holds only the log:
+reach and its room, because `KEEPS` holds only the log:
 - A stone aimed past 60 is still refused.
 - It lands with 0.5 of room.
 - The screen shows no ring for it.
 
-Giving the stone the same rules would take one entry in each of `KEEPS` (`main.lua`) and `LOOKS` (`aim.js`). That is the
-owner's call.
+The review of #79 found that a stone could still land in the house's room, the clutter this decision is about. Keeping
+off the house is a rule about the house, not about how far a stone reaches or how close it lands, so every gift keeps
+it now. Giving the stone the log's other rules would take one entry in each of `KEEPS` (`main.lua`) and `LOOKS`
+(`aim.js`). That is the owner's call, as is undoing the stone's site rule (one line in `sky.aim.spot`).
+
+Lightning's felled logs do not consult the site. Viewers cannot call Lightning since ADR-023 (the site switched it
+off, and neither the screen nor the panel offers it), and a storm's strikes, which fell palms where they are aimed,
+are a disaster.
 
 ## Checked
 CI is not running (GitHub billing), so every suite was run locally.
@@ -152,6 +175,23 @@ spot are checked; the stone's words are unchanged. Both new renderer and screen 
 
 **Site: `LogReachTests`.** The seeded description and rule are checked, words written in the admin stay, and the
 migration goes back.
+
+**After the review of #79** (its findings in the review PR stacked on #79), each a test that fails on #79's head:
+- `test_drops.luau`:
+  - a log aimed at Godling standing on each cell of its room lands 5 from it, the nearest there is room, not up to
+    7.3 out;
+  - a log at Godling's feet is dropped squared, from eight directions;
+  - a log brought in to a crowded edge lands on or inside the ring, and one aimed just inside it within 72;
+  - a log's outline keeps 0.5 off a palm's trunk;
+  - a stone aimed at the room lands off the house;
+  - the Clock carries `SkyReach`;
+  - `HouseSite` ignores a JSON object and a list with a null in it, and the site goes when the body leaves.
+- `test_drops.luau` also refuses a log with no room within 20 (`NoClearSpot`): untested before.
+- `test_house_site.py`: the site holds the way out's apron (20 cells for the run's last house) and builds on the cells
+  the body keeps clear.
+- `aim.test.js`: the reticle and the words follow Godling under a still pointer; the clouds are never aimed at; the
+  ring is as wide as the world's reach; a new aim starts with the ring unlit; a click past the ring sends what the
+  viewer aimed at. `viewer.test.js`: the words for a gift aimed at Godling.
 
 ## Not checked
 - **No live run has tried this yet.** Still to see:

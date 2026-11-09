@@ -590,9 +590,11 @@ export function createRenderer(ctx) {
   // Aiming a sky power (aim.js): the screen says which power; the ring follows the pointer; the spot goes back.
   const godlingAt = new THREE.Vector3()
   let godlingSeen = false
+  let skyReach = null // how far from Godling a log may be aimed: the Clock's SkyReach (main.lua sky.aim.REACH)
   const tellScreen = (message) => globalThis.parent.postMessage({ source: 'godling-renderer', ...message }, '*')
   const aim = embedded ? createAim(THREE, scene, camera, ctx.canvas, {
     godling: () => (godlingSeen ? godlingAt : null),
+    reach: () => skyReach,
     onHover: (spot) => tellScreen({ type: 'godling-aim-hover', ...spot }),
     onAimed: (spot) => tellScreen({ type: 'godling-aimed', ...spot }),
     onCancel: () => tellScreen({ type: 'godling-aim-cancel' }),
@@ -1012,6 +1014,8 @@ export function createRenderer(ctx) {
       if (entity.attributes?.WindX !== undefined) wind.read(entity.attributes)
       const mist = Number(entity.attributes?.Fog)
       if (Number.isFinite(mist) && !Number.isFinite(forcedFog)) worldFog = mist
+      const reachSaid = Number(entity.attributes?.SkyReach)
+      if (Number.isFinite(reachSaid) && reachSaid > 0) skyReach = reachSaid
       const quake = Number(entity.attributes?.Quake)
       if (Number.isFinite(quake) && !Number.isFinite(forcedQuake)) {
         worldQuake = quake

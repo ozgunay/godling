@@ -36,8 +36,10 @@ def memory_with_house(tmp_path, on=True):
 def test_the_cells_a_house_needs_are_its_room_walls_doorway_and_way_out(tmp_path):
     cells = house_cells(memory_with_house(tmp_path))
     walls = {(x, z) for x in range(-37, -33) for z in range(-9, -5)} - {tuple(c) for c in ROOM}
-    assert set(cells) == {tuple(c) for c in ROOM} | walls | {(-35, -10)}  # the way out: south of the doorway
-    assert len(cells) == 17 and tuple(DOOR) in cells and cells == sorted(cells)
+    out = (-35, -10)  # the way out: south of the doorway
+    apron = {(-36, -10), (-34, -10), (-35, -11)}  # beside it and beyond it (review of #79, 79-AB2)
+    assert set(cells) == {tuple(c) for c in ROOM} | walls | {out} | apron
+    assert len(cells) == 20 and tuple(DOOR) in cells and cells == sorted(cells)
     assert house_cells(memory_with_house(tmp_path, on=False)) == []  # the comparison arm without the house project
     memory = memory_with_house(tmp_path)
     memory.set_house(None)
@@ -56,7 +58,15 @@ def test_the_world_is_told_once_and_again_on_each_change(tmp_path):
     assert site.sync() is True and world.acts[-1] == ("HouseSite", {"cells": []})  # given up: nothing kept
     world.session = "s2"  # joined again (a world started afresh knows nothing): told again
     assert site.sync() is True and len(world.acts) == 4
-    assert [l["cells"] for l in logs if l["kind"] == "house_site"] == [17, 17, 0, 0]
+    assert [l["cells"] for l in logs if l["kind"] == "house_site"] == [20, 20, 0, 0]
+
+
+def test_the_site_is_the_cells_the_body_keeps_clear_and_the_walls(tmp_path, monkeypatch):
+    """One rule for the cells a house needs (review of #79, 79-CLEAN2): the sky keeps what the body keeps clear
+    (NativeMemory.reserved_cells), with the walls and the way out's apron on top, so a cell added there is kept too."""
+    memory = memory_with_house(tmp_path)
+    monkeypatch.setattr(memory, "reserved_cells", lambda: {(-35, -8), (-35, -9), (-35, -10), (-40, -8)})
+    assert (-40, -8) in house_cells(memory)
 
 
 def test_a_world_that_did_not_hear_is_told_at_the_next_look(tmp_path):
@@ -81,6 +91,6 @@ def test_the_loops_tell_the_world_a_house_before_the_first_project_builds_it(mon
         acts = [a for a, _ in island.acts]
         sites = [d["cells"] for a, d in island.acts if a == "HouseSite"]
         assert sites[0] == [], "at the start, whatever an earlier mind left there is cleared"
-        assert len(sites[1]) == 17 and [4, 0] in sites[1] and [5, -2] in sites[1]
+        assert len(sites[1]) == 20 and [4, 0] in sites[1] and [5, -2] in sites[1] and [5, -3] in sites[1]
         told = [i for i, (a, d) in enumerate(island.acts) if a == "HouseSite" and d["cells"]][0]
         assert "Jump" in acts[told:] and "Jump" not in acts[acts.index("HouseSite") + 1:told], loop.__name__

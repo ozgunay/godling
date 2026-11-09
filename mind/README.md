@@ -10,7 +10,7 @@ The mind thinks about the past and the future; the body handles walking and gras
 | L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy, and keep a standing ladder's top and foot clear (ADR-025). Between steps, and while it waits, the body glances: it turns towards what attention just noticed, without changing the plan |
 | learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted |
 | memory | `godling/memory.py` | Episodes (with world ticks), intentions, kept structures, digest; follows the plan's MemoryAdapter interface (§10.6) |
-| house site | `godling/site.py` | Tells the world, with the input `HouseSite`, every cell the house the mind is building needs (its room, walls, doorway and the way out), so the sky keeps viewers' logs off them (ADR-029). Sent at each cycle when it changed, and right after a plan chooses, moves or gives up the house; it changes nothing the mind or the body does |
+| house site | `godling/site.py` | Tells the world, with the input `HouseSite`, every cell the house the mind is building needs (what the body keeps clear, `reserved_cells`, with its walls and the cells round its way out), so the sky keeps viewers' gifts off them (ADR-029). Sent at each cycle when it changed, and right after a plan chooses, moves or gives up the house; it changes nothing the mind or the body does |
 | world | `godling/world.py` | HTTP client for Clawblox and a compact reading of observations |
 | LLM | `godling/llm.py` | DeepSeek (OpenAI-compatible endpoint), JSON replies, cost per call |
 
