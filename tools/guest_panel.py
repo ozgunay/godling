@@ -47,8 +47,10 @@ from godling.world import SKY_PLAYER, World, WorldError  # noqa: E402
 # the earthquake and the note (main.lua sky.aim): the meteor and a storm's strikes can land on Godling; only the meteor
 # breaks what it built.
 POWERS = [
-    ("Stone", "Drop a stone", "A stone block drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
-    ("Log", "Drop a log", "A log beam drops from the sky where you aim; aimed at Godling, at its feet.", "gift"),
+    ("Stone", "Drop a stone", "A stone block drops from the sky where you aim, beside Godling's house and never on "
+     "it; aimed at Godling, at its feet or as near as there is room.", "gift"),
+    ("Log", "Drop a log", "A log beam drops from the sky where you aim, beside Godling's house and never on it; aimed "
+     "at Godling, at its feet or as near as there is room; aimed past its reach (60), at the edge of it.", "gift"),
     ("Regrow", "Regrow a tree", "The stump nearest your aim grows back at once.", "gift"),
     ("Meteor", "Meteor", "A shadow spreads where you aim; 40 s later a stone blasts there, whatever stands in it: "
      "Godling, its walls, palms. It leaves a crater.", "big"),

@@ -10,6 +10,7 @@
 | Pickup | `{"position": [x, y, z]}` |
 | Place | `{"position": [x, y, z], "rotation"?: {"yaw": deg, "pitch": deg, "roll": deg}}` |
 | Throw | `{"direction": [x, y, z], "speed": n}` |
+| HouseSite | `{"cells": [[ix, iz], ...]}`: the cells (2.5 wide, centred on ix × 2.5, iz × 2.5) of the house you are building, kept clear of what the sky drops; `[]` clears them |
 
 
 ## API Endpoints
