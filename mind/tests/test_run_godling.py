@@ -891,6 +891,58 @@ def test_main_attached(main_env, monkeypatch):
     assert "Done:" in (run / "console.log").read_text()
 
 
+def test_main_speaks_by_itself_when_a_note_comes_down(main_env, monkeypatch, tmp_path, world_server):
+    """78-CDE10: the voice as the launcher builds it. A viewer's note comes down; the voice asks the model with
+    Godling's persona and name, its line reaches the world chat in plain words, and the mind is told it said it."""
+    from godling import speech
+    _, port = main_env
+    run = tmp_path / "run7"
+    monkeypatch.setattr(speech, "EVERY", 0.01)
+    monkeypatch.setattr(speech, "GAP", 0)  # its own "hi" was just said: no waiting here
+    told, lines, voiced = threading.Event(), [], []
+
+    class Speaking(FakeLLMClass):
+        def quick_json(self, system, user, purpose, max_tokens=80):
+            if purpose == "voice":
+                voiced.append((system, user))
+                return {"say": "A note from beyond the sea, at (3, 4)."}
+            return super().quick_json(system, user, purpose, max_tokens)
+
+        def complete_json(self, *a, **kw):
+            if self.left <= 0:  # the run ends with this plan: not before its voice has spoken
+                told.wait(5)
+            return super().complete_json(*a, **kw)
+
+    class Told(rg.Mind):
+        def said_aloud(self, line):
+            super().said_aloud(line)
+            lines.append(line)
+            told.set()
+    monkeypatch.setattr(rg, "LLM", Speaking)
+    monkeypatch.setattr(rg, "Mind", Told)
+    looks = []
+
+    def observe(request):  # a note's glider lands from the second look on
+        looks.append(1)
+        clock = {"NoteId": 1, "NoteText": "hello island", "NoteX": 3, "NoteZ": 4} if len(looks) > 1 else {}
+        return raw_obs([ground(), block("Block_1", 5, 1.25, 0)], clock=clock, tick=len(looks))
+    world_server.replies[("GET", "/observe")] = observe
+    world_server.replies[("POST", "/input")] = observe
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
+                                      "--no-bubble"])
+    try:
+        rg.main()
+    finally:
+        close_console()
+    assert lines == ["A note from beyond the sea."]
+    chat = [r["body"]["content"] for r in world_server.requests if r["path"] == "/chat"]
+    assert "A note from beyond the sea." in chat
+    system, user = voiced[0]
+    assert "I am Godling." in system and "You are Godling." in system and '"hello island"' in user
+    log = (run / "mind/log.jsonl").read_text()
+    assert '"kind": "said", "words": "A note from beyond the sea.", "moment": "note"' in log
+
+
 def test_main_starts_the_world(main_env, monkeypatch, tmp_path):
     _, port = main_env
     run = tmp_path / "run2"

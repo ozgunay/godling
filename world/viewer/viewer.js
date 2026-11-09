@@ -205,6 +205,21 @@ const ABOUT_GODLING = [
   [/^The ground is rumbling under you: /, 'The ground is rumbling: '],
 ]
 const article = (name) => (/^[AEIOU]/.test(name) ? 'an ' : 'a ') + name.toLowerCase()
+// Places as the mind writes them beside its map (x -115, z=-7.5, -85 to -77.5, 8.75 over -7.5), with the word that
+// leads to them, and the world's tick counts: viewers do not see the map (78-CLEAN10; what it says aloud passes
+// mind/godling/speech.py plain first). No lookbehind: Safari before 16.4 cannot read one, and the screen would not load.
+const COORD = String.raw`(?:[xyz]\s*=?\s*[-−+]?\d+(?:\.\d+)?|[-−]\d+(?:\.\d+)?|\d+\.\d+)`
+const PLACES = new RegExp(String.raw`(^|[^\w.])(?:(?:at|to|from|along|near|by|around|over|on|in|into|onto|past|towards?|across)\s+)?`
+  + String.raw`${COORD}(?:\s*(?:,|to|and|or|\.\.|over|from)\s*${COORD})*(?!\w|\.\d)`, 'gi')
+const A_NUMBER = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)$/i
+function noPlaces(s) {
+  return s.replace(PLACES, (match, before, at, text) => {
+    const prior = text.slice(0, at + before.length).trim().split(/\s+/).pop() || ''
+    return /^[xyz]/i.test(match.slice(before.length)) && A_NUMBER.test(prior) ? match : before // "2 x 2": a size
+  }).replace(/\b(?:world\s+)?tick\s+\d+/gi, '').replace(/\b\d{4,}\b/g, '')
+    .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/[,;:]\s*([.!?]|$)/g, '$1')
+    .replace(/\s{2,}/g, ' ').trim()
+}
 function plain(words, who = 'notice') {
   let s = String(words || '')
   for (const [from, to] of ABOUT_GODLING) s = s.replace(from, to)
@@ -212,6 +227,7 @@ function plain(words, who = 'notice') {
     .replace(/\s*\(-?\d+(\.\d+)?, ?-?\d+(\.\d+)?\)/g, '')
     .replace(/: \w+_\d+( and \w+_\d+)* (landed|lies|lie)\b.*$/, '') // "a log dropped from the sky: Log_3 landed"
     .replace(/\b([A-Z][a-z]+)_\d+\b/g, (_, name) => article(name))
+  s = noPlaces(s)
   s = s.charAt(0).toUpperCase() + s.slice(1)
   return who !== 'godling' && /\byou(r)?\b/i.test(s) ? '' : s
 }

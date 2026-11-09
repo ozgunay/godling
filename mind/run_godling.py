@@ -164,19 +164,20 @@ def main():
         llm = LLM(args.model, log=log)
         memory = make_memory(args, run, log)
         library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
+        soul = args.persona.read_text()
+        # One voice for all it says aloud, in plain words; with --voice it also speaks at the moments that matter,
+        # waiting its gap after any line, its say steps' too (ADR-031). The mind is looked up when a line is said.
+        speaker = Voice(world, llm if args.voice else None, soul=soul, name=args.name, log=log,
+                        on_said=lambda line: mind.said_aloud(line))
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
                         walk_speed=args.walk_speed, kept_in=memory.built_into,
-                        reserved=memory.reserved_cells)
+                        reserved=memory.reserved_cells, voice=speaker)
         discovery = Discovery(run / "memory" / "discovery.json")  # the island as far as Godling has seen it
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
-        soul = args.persona.read_text()
         mind = Mind(llm, memory, soul, skills, library, name=args.name, log=log, agenda=args.agenda,
                     discovery=discovery, house_project=args.house_project)
-        if args.voice:  # one voice for all it says aloud: its own say steps keep the gap too (ADR-031)
-            skills.voice = Voice(world, llm, soul=soul, name=args.name, log=log,
-                                 on_said=lambda line: mind.notes.append(f'You said aloud, as it happened: "{line}".'))
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
@@ -207,7 +208,7 @@ def main():
             bubble = Bubble(world, llm, log=log).start()
             mind.on_reasoning = bubble.thought
         if args.voice:
-            voice = skills.voice.start()
+            voice = speaker.start()
         if args.guest_panel:
             panel = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "tools/guest_panel.py"),
                                       "--world", local_world, "--port", str(args.guest_panel),

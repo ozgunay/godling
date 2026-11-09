@@ -623,6 +623,23 @@ describe('the viewer screen', () => {
     expect($('.b-feed .said').classList.contains('latest')).toBe(false) // the newest thought stays the thought
   })
 
+  it('shows what Godling does and thinks without places given as numbers (78-CLEAN10)', async () => {
+    // Run live's now line and thoughts, which viewers read beside the island: they do not see the map
+    const mind = { needs: '', now: { time: NOW - 5, text: 'Walk west along z -30 to the raft and the west beach' },
+      feed: [
+        { time: NOW - 30, who: 'godling', about: 'failed', text: 'Stand on the step log and set a log at 8.75 over the doorway' },
+        { time: NOW - 20, who: 'godling', text: 'My house stands at x -85 to -77.5, z -30 to -22.5, walls three high. Night 1245595.' },
+        { time: NOW - 10, who: 'godling', about: 'said', text: 'A room 2 x 2, and the door at x=-80.' },
+      ] }
+    const { stage, $, tick } = await boot({ statuses: [panelStatus({ mind })], stored: { 'godling.mind': 'open' } })
+    await tick(0)
+    expect($('.b-now .what').textContent).toBe('Walk west to the raft and the west beach')
+    expect([...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)).toEqual([
+      'Couldn’t finish: stand on the step log and set a log over the doorway',
+      '“My house stands, walls three high. Night.”',
+      'Said: “A room 2 x 2, and the door.”'])
+  })
+
   it('folds the feed as a game folds its quest tracker: the newest thought, and each new line for a while', async () => {
     const mind = { needs: '', feed: [
       { time: NOW - 60, who: 'godling', text: 'An older thought.' },

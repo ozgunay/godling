@@ -112,9 +112,11 @@ def test_say_speaks_plain_words_and_tells_the_mind_what_it_left_out(body):
 
 
 def test_say_refuses_a_line_with_nothing_a_viewer_can_read_and_says_why(body):
+    """78-CDE2: the step does not fail, so what comes after it in the project (or a learned skill) still runs."""
     island, skills = body
     result = skills.run("say", {"text": "x -115, z -30 to -22.5"})
-    assert not result.ok and island.said == [] and ("Talk", {}) not in island.acts
+    assert result.ok and result.facts == {"said": False}
+    assert island.said == [] and ("Talk", {}) not in island.acts
     assert result.summary == ("not said: it was all places as numbers, which the strangers who watch cannot read; say "
                               "where in words (the west beach, by my house)")
 
@@ -177,8 +179,9 @@ DIED = event("You died of the cold. Your body lies where it fell; you will come 
 REBORN = event("You have come back to life at the start, whole but half fed. What you carried lies where you died, at "
                "(-80, -28)", death="reborn")
 NOTE = event('A paper glider drifted down at (-71, 14) with a note from one of the strangers who watch you. It reads: '
-             '"Hello godling please stop building for a while and rest"', sky="Note", sky_id=7, sky_stage="arrived")
-STRUCK = event("Lightning struck you: you are burned and hurt, your health is 50 of 100", at=[0, 0])
+             '"Hello godling please stop building for a while and rest"', sky="Note", sky_id=7, sky_stage="arrived",
+             note="Hello godling please stop building for a while and rest")
+STRUCK = event("Lightning struck you: you are burned and hurt, your health is 50 of 100", at=[0, 0], hit="struck")
 
 
 def test_death_and_rebirth_are_spoken_without_the_mind_choosing_to(monkeypatch):
@@ -228,7 +231,7 @@ def test_a_note_is_acknowledged_and_never_read_out():
 def test_the_sky_hitting_it_is_spoken_once_in_a_while():
     v, clock, logs = voice({"say": "Burned. The sky picked me."})
     v.hears(STRUCK)
-    v.hears(event("You were hurt by lightning striking close by: your health is 40 of 100"))  # the same moment
+    v.hears(event("You were hurt by lightning striking close by: your health is 40 of 100", hit="hurt"))  # one moment
     assert v.step() == "Burned. The sky picked me." and v.step() is None
     assert "Lightning struck you" in v.llm.calls[0]["user"] and "You were hurt" in v.llm.calls[0]["user"]
     clock.now += speech.GAP
@@ -236,7 +239,7 @@ def test_the_sky_hitting_it_is_spoken_once_in_a_while():
     assert v.step() is None  # within its cooldown
     clock.now += speech.COOLDOWN["hit"]
     v.hears(event("A stone from the sky blasted at (-78, -31): it smashed 1 piece, threw 5, and the blast threw you "
-                  "down. It left a crater.", sky="Meteor", sky_stage="blast"))
+                  "down. It left a crater.", sky="Meteor", sky_stage="blast", hit="thrown"))
     assert v.step() == "Burned. The sky picked me."
     clock.now += speech.COOLDOWN["hit"]
     v.hears(event("The ground is rumbling under you: an earthquake is coming", sky="Earthquake", sky_stage="warning"))
@@ -265,10 +268,11 @@ def test_losing_the_house_and_big_achievements_are_spoken():
     assert v.step() == "A roof over me at last."
     clock.now += speech.GAP
     v.hears({"kind": "skill", "skill": "rub", "ok": True, "summary": "rubbed Spear_2 against Log_60 14 times, and a "
-             "flame caught: Fire_1 burns on Log_60"})
+             "flame caught: Fire_1 burns on Log_60", "facts": {"made": "Fire_1"}})
     assert v.step() is None  # an achievement within the cooldown of the last
     clock.now += speech.COOLDOWN["achievement"]
-    v.hears({"kind": "skill", "skill": "rub", "ok": True, "summary": "a flame caught: Fire_2 burns on Log_61"})
+    v.hears({"kind": "skill", "skill": "rub", "ok": True, "summary": "a flame caught: Fire_2 burns on Log_61",
+             "facts": {"made": "Fire_2"}})
     assert v.step() == "Fire."
     clock.now += speech.COOLDOWN["achievement"]
     v.hears({"kind": "structures", "roofed": 0, "enclosures": 0, "houses": 0, "walls": 2})  # the island as found
@@ -385,6 +389,10 @@ def test_a_failed_call_or_chat_says_nothing_and_never_stops_the_run():
     v, clock, logs = voice({"nothing": "here"}, {"say": "x -115"})
     v.hears(STRUCK)
     assert v.step() is None
+    clock.now += speech.COOLDOWN["hit"]
+    v.hears(STRUCK)
+    assert v.step() is None and len(v.llm.calls) == 2 and v.world.said == []  # nothing a viewer can read in it
+    assert [l["why"] for l in logs if l["kind"] == "voice"][-1].startswith("it was all places as numbers")
     v, clock, logs = voice(world=World(fail=True))
     v.hears(STRUCK)
     assert v.step() is None and any(l["kind"] == "error" for l in logs)
@@ -415,3 +423,157 @@ def test_the_voice_runs_beside_the_body(monkeypatch):
     finally:
         v.stop()
     assert v.world.said == ["Gone."]
+
+
+# ---- review of #78 -------------------------------------------------------------------------------------------------
+def test_names_after_an_article_keep_all_their_words_and_sizes_stay_sizes():
+    """78-AB4, 78-AB5."""
+    assert plain("the arch_beam_115 failed")[0] == "The arch beam failed."
+    assert plain("I did every walk_to twice.")[0] == "I did every walk to twice."
+    assert plain("my west_tower_2 stands")[0] == "My west tower stands."
+    assert plain("A room two x two, the door south.") == ("A room two x two, the door south.", [])
+    assert plain("A wall at x minus ten.")[0] == "A wall."  # a spelled place is still a place
+
+
+def test_a_bare_pair_is_a_place_after_a_preposition_and_a_sign_is_a_sign():
+    """78-AB6, 78-CLEAN7."""
+    assert plain("My house is at 15, 27 on the sand.") == ("My house is on the sand.", ["places"])
+    assert plain("Door at 3, 4.") == ("", ["places"]) and plain("My house is at 15, 27.")[0] == "My house."
+    assert plain("Set it at +3,4 now.") == ("Set it now.", ["places"])
+    assert plain("Set it at (+3, 4) now.") == ("Set it now.", ["places"])
+    assert plain("Health 60, 47% fed, and 20:33, 62% fed.") == ("Health 60, 47% fed, and 20:33, 62% fed.", [])
+
+
+def test_a_line_cut_for_length_says_so():
+    """78-AB11: the mind is told its line was cut, as it is told what else was left out."""
+    long = " ".join(["The ring is nearly closed and the gate stands."] * 5)
+    said, left = plain(long)
+    assert said.endswith("stands.") and left == ["what came after the first 200 characters"]
+    assert speech.left_out_note(left) == "left out what came after the first 200 characters"
+
+
+def test_numbers_that_are_not_text_are_said_as_numbers():
+    """78-CDE8: a say step's text may come as a number; 0 is a number, not nothing."""
+    assert plain(0) == ("0.", []) and plain(None) == ("", [])
+
+
+def test_the_voices_clock_never_steps_back():
+    """78-CDE7: the gap, cooldowns and staleness are measured on a clock a host's resync cannot move."""
+    import time
+    assert Voice(World()).clock is time.monotonic
+
+
+def test_a_failed_chat_post_of_an_intention_loses_nothing_but_the_post():
+    """78-CDE11: narrate() keeps the project going when only the chat fails, as say() does."""
+    clock, logs = Clock(), []
+    v = Voice(World(fail=True), log=lambda **k: logs.append(k), clock=clock)
+    assert v.narrate("Walk west to the raft") is None
+    assert [l["kind"] for l in logs] == ["error"] and "chat down" in logs[0]["message"]
+
+
+def test_a_line_said_while_the_voices_words_come_puts_its_line_back_a_gap_later():
+    """78-CDE3: its say step lands while the model writes the voice's line: the voice waits its gap again, and says
+    the words it already has, with no second call."""
+    v, clock, logs = voice({"say": "Burned."})
+    original = v.llm.quick_json
+
+    def meanwhile(*a, **kw):
+        clock.now += 2
+        v.say("Sixteen posts now.")  # the body's say step, on its own thread
+        return original(*a, **kw)
+    v.llm.quick_json = meanwhile
+    v.hears(STRUCK)
+    assert v.step() is None and v.world.said == ["Sixteen posts now."]
+    v.llm.quick_json = original
+    clock.now += speech.GAP - 1
+    assert v.step() is None
+    clock.now += 1
+    assert v.step() == "Burned." and len(v.llm.calls) == 1  # the words it had, not a second call
+    assert v.world.said == ["Sixteen posts now.", "Burned."]
+
+
+def test_a_death_seen_only_once_it_is_back_asks_for_no_last_words():
+    """78-CDE4: the whole death passed during a long model call; the body already stands at the start."""
+    v, clock, logs = voice({"say": "Back, and half fed."})
+    v.hears(event("You died of the cold. You have already come back to life at the start, whole but half fed",
+                  death="died", back=True))
+    assert v.step() is None and v.llm.calls == []  # no last words from a body standing at the start
+    clock.now += 8
+    v.hears({"kind": "death", "cause": "Cold", "deaths": 1, "feeling": "I came back with the rain still on me."})
+    assert v.step() == "I came back with the rain still on me."
+    assert [l["moment"] for l in v.hears_log()] == ["reborn"]
+
+
+def test_the_killing_blow_is_not_said_after_it_comes_back():
+    """78-SWEEP1: attention logs the blow that killed it after the death, from the same look; it belongs to the life
+    that ended."""
+    v, clock, logs = voice({"say": "Gone."})
+    v.hears(DIED)
+    v.hears(event("You were hurt by lightning striking close by: your health is 0 of 100", hit="hurt"))
+    assert v.step() == "Gone."
+    clock.now += 30
+    v.hears(REBORN)
+    clock.now += 9
+    v.hears({"kind": "death", "cause": "Lightning", "deaths": 1, "feeling": "Back."})
+    assert v.step() == "Back."
+    for _ in range(10):
+        clock.now += speech.GAP
+        assert v.step() is None
+    assert [l["moment"] for l in v.hears_log()] == ["died", "reborn"]
+    v.hears(STRUCK)  # alive again, the sky hitting it is news again
+    assert v.step() == "Gone."
+
+
+def test_a_failed_rebirth_call_leaves_the_reflections_line_to_say():
+    """78-CDE6: the rebirth counts as said only once it is."""
+    v, clock, logs = voice(RuntimeError("provider down"))
+    v.hears(REBORN)
+    clock.now += speech.REBORN_WAIT
+    assert v.step() is None
+    clock.now += 20
+    v.hears({"kind": "death", "cause": "Cold", "deaths": 1, "feeling": "I came back cold."})
+    assert v.step() == "I came back cold."
+
+
+def test_only_one_line_about_coming_back():
+    v, clock, logs = voice({"say": "Back at the start."})
+    v.hears(REBORN)
+    clock.now += speech.REBORN_WAIT
+    assert v.step() == "Back at the start."
+    clock.now += 20
+    v.hears({"kind": "death", "cause": "Cold", "deaths": 1, "feeling": "I came back cold."})  # the slow reflection
+    clock.now += speech.GAP
+    assert v.step() is None and v.world.said == ["Back at the start."]
+
+
+def test_a_feeling_that_is_no_sentence_is_not_said():
+    """78-SWEEP2."""
+    v, clock, logs = voice({"say": "Back."})
+    for feeling in (None, ["I came back."], "", "  "):
+        v.hears({"kind": "death", "cause": "Cold", "deaths": 1, "feeling": feeling})
+        assert v.step() is None and v.world.said == []
+
+
+def test_a_fresh_fact_keeps_its_moment_fresh():
+    """78-AB1: a hit merged into a moment waiting out its cooldown is as new as the hit."""
+    v, clock, logs = voice({"say": "Burned."})
+    v.hears(STRUCK)
+    assert v.step() == "Burned."
+    clock.now += 25
+    v.hears(STRUCK)  # waits out the cooldown
+    clock.now += 85
+    v.hears(event("You were hurt by lightning striking close by: your health is 30 of 100", hit="hurt"))
+    clock.now += 10  # 120 s after the last line; the first wait began 95 s ago, the newest hit 10 s ago
+    assert v.step() == "Burned." and "your health is 30 of 100" in v.llm.calls[-1]["user"]
+
+
+def test_moments_come_from_what_the_entries_say_they_are_not_their_wording():
+    """78-CLEAN11, 78-CDE1: a say step quoting "a flame caught" is no fire, and a hit is a hit by its field."""
+    v, clock, logs = voice({"say": "Fire."})
+    v.hears({"kind": "skill", "skill": "say", "ok": True, "summary": 'said "I rubbed and a flame caught."', "facts": {}})
+    v.hears(event("Lightning struck you: you are burned", at=[0, 0]))  # an old line, with no hit field
+    clock.now += 1
+    assert v.step() is None and v.llm.calls == []
+    v.hears({"kind": "skill", "skill": "strike", "ok": True, "summary": "speared Fish_2; the catch, Catch_1, lies...",
+             "facts": {"made": "Catch_1"}})
+    assert v.step() == "Fire." and "speared a fish" in v.llm.calls[-1]["user"]
