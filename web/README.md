@@ -23,7 +23,7 @@ the admin's tools are borrowed from AgentOp (`C:/Work/agentop`); running it on a
   - The site keeps each account's pace from the database: one power every 2 s and one note every 3 minutes, as the site rules say. The turn is taken before the island is asked, in one database update, so two requests at once cannot both pass. The keyed panel defers to it and keeps only the island's own pace: one note a minute, a short queue.
   - A power's credits are taken first, and given back if the world refuses it. Every call is logged.
   - A power goes to the island from the worker (Celery), not from the viewer's request; the screen asks how it went. A call the worker never takes is given up after 3 minutes, its credits back, by the worker's own clock (`--beat`), page open or not (ADR-014).
-- **20 free credits** when the email is confirmed (the site rules, in the admin), once per inbox: `me+2@…` and, at Gmail, `m.e@…` are the same inbox as `me@…`.
+- **600 free credits** when the email is confirmed (the site rules, in the admin: *Welcome credits*, which counts for accounts confirmed from then on), once per inbox: `me+2@…` and, at Gmail, `m.e@…` are the same inbox as `me@…`.
 - **More credits** through Stripe Checkout (`/credits/`). Without Stripe keys, in development only, a test checkout stands in.
   - A refund in Stripe takes back its share of the pack's credits, and a dispute holds back all of them until the bank decides. Credits already spent are owed, and come out of whatever the viewer gets next.
   - The payment is made before Stripe's checkout and travels in its metadata, so a paid checkout always finds it. A checkout Stripe charged less for, or in another currency, is held until staff let it stand in the admin (ADR-014).

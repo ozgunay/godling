@@ -83,8 +83,9 @@ def refund(user, price, ref):
 
 
 def welcome(user):
-    """The new account's free credits (the user's choice: 20 on confirming the email), once per inbox: an account
-    made from the same inbox as one already welcomed (me+2@, m.e@gmail.com) gets none (Welcome, ADR-014)."""
+    """The new account's free credits on confirming the email (Rules.welcome_credits: 600, the user's choice, set in
+    the admin under Site rules), once per inbox: an account made from the same inbox as one already welcomed (me+2@,
+    m.e@gmail.com) gets none (Welcome, ADR-014)."""
     from apps.rules.models import Rules
     from apps.users.validators import canonical_email
 

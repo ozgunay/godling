@@ -39,15 +39,15 @@ class WelcomeTests(TestCase):
     def setUp(self):
         cache.clear()  # allauth's 3-minute cooldown between confirmation emails lives in the cache
 
-    def test_twenty_credits_on_confirming_the_email_once(self):
+    def test_600_credits_on_confirming_the_email_once(self):
         self.client.post(reverse("account_signup"), {"username": "mara_k", "email": "mara@example.org",
                                                      "password1": PASSWORD, "password2": PASSWORD})
         link = re.search(r"https?://\S+/accounts/confirm-email/\S+/", mail.outbox[-1].body).group(0)
         self.client.post(link)
         user = User.objects.get(username="mara_k")
-        self.assertEqual(services.balance_of(user), 20)
+        self.assertEqual(services.balance_of(user), 600)
         self.assertFalse(services.welcome(user))
-        self.assertEqual(services.balance_of(user), 20)
+        self.assertEqual(services.balance_of(user), 600)
 
     def test_one_welcome_per_inbox(self):
         """me+2@ is me@'s inbox: a second account from it may watch and buy, but gets no second gift."""
@@ -58,7 +58,7 @@ class WelcomeTests(TestCase):
         self.assertTrue(services.welcome(first))
         self.assertFalse(services.welcome(again))
         self.assertTrue(services.welcome(other))
-        self.assertEqual([services.balance_of(u) for u in (first, again, other)], [20, 0, 20])
+        self.assertEqual([services.balance_of(u) for u in (first, again, other)], [600, 0, 600])
 
     def test_a_deleted_account_does_not_free_its_inbox_for_another_gift(self):
         first = User.objects.create_user(username="sam", email="sam@gmail.com", password=PASSWORD)

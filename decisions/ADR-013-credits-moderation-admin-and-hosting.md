@@ -8,7 +8,7 @@ The site (ADR-012) let accounts call powers and send notes for free, with no way
 ## Decisions (yours)
 1. **Payments:** Stripe.
 2. **Hosting:** one server with Docker Compose, as AgentOp runs.
-3. **Free credits:** 20 when an account confirms its email.
+3. **Free credits:** 20 when an account confirms its email. On 2026-11-09 you raised it to 600, still set in the admin (Site rules, *Welcome credits*).
 4. **Moderation:** report after delivery. A note goes out at once; viewers report it; 3 reports hide it and pause its sender until a moderator looks.
 5. **The admin:** prices adjustable, viewers visible, AgentOp's admin borrowed.
 
@@ -19,7 +19,7 @@ The site (ADR-012) let accounts call powers and send notes for free, with no way
   - The seeded packs: 100 credits for €5, 320 for €15, 1,100 for €50.
 - **A purse per account, and a ledger.** Every change is an entry with the balance after it: bought, welcome, spent, given back, granted. Entries are never edited, and a balance never goes below zero.
 - **A power is charged before the world is asked.** If the world refuses (no clear spot, too soon), the credits go back. "Test mode" (`GODLING_FREE_POWERS=1`) charges nothing.
-- **Welcome credits:** 20 on confirming the email, once per account (a database constraint).
+- **Welcome credits:** 20 on confirming the email, once per account (a database constraint). 600 from 2026-11-09 (`rules` migration 0006: a site still giving 20 gives 600; a number set in the admin stays).
 
 ### Payments (Stripe Checkout)
 - **Buying:** a pack opens Stripe's hosted checkout.
