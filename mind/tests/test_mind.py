@@ -223,6 +223,28 @@ def test_forget_refusals_become_notes(world, tmp_path):
     assert mind.notes and mind.notes[0].startswith("'good' was kept")
 
 
+def test_forgetting_and_reteaching_a_skill_that_worked_in_one_reply_keeps_it(world, tmp_path):
+    # Review of #75 (75-CDE1): the forget was refused, then 'learn' replaced the steps that had worked anyway.
+    island, body, library = world
+    library.define({"name": "good", "steps": [{"skill": "jump"}]})
+    library.skills["good"].update(successes=5, uses=5)
+    mind = make_mind(world, tmp_path, FakeLLM())
+    mind.adopt({"reply": {"forget": ["good"], "learn": [{"name": "good", "steps": [{"skill": "say", "args": {}}]}]},
+                "seconds": 1, "prepared": {"assumes": None}}, island.snap())
+    assert library.skills["good"]["steps"] == [{"skill": "jump"}] and library.skills["good"]["successes"] == 5
+    assert mind.notes[0].startswith("'good' was kept")
+    assert mind.notes[1].startswith("Your attempt to learn 'good' was rejected: 'good' has worked 5 of 5 times")
+
+
+def test_the_mind_is_told_when_a_skill_that_worked_may_go(world, tmp_path):
+    # Review of #75 (75-CLEAN4): the rule was only in the refusal, while the prompt said to forget failing skills.
+    island, _, _ = world
+    prompt = " ".join(make_mind(world, tmp_path, FakeLLM()).system_prompt(island.snap()).split())
+    assert ("A skill that has worked keeps its steps until it has failed as many times in a row as it has worked "
+            "(at least 3) or gone 2 hours without working; to try other steps before then, teach them under a new "
+            "name.") in prompt
+
+
 def test_one_project_decisions(world, tmp_path):
     island, body, library = world
     reply = {"intention": "look", "project": {"goal": "see", "steps": [{"skill": "wait", "args": {"seconds": 1}}]}}

@@ -54,7 +54,9 @@ arguments may use your parameters ("$object") and these helpers, worked out at t
   {"x": vector}, {"y": vector}, {"z": vector} -> one coordinate
   {"nearest_free": "cube"} -> the nearest block nobody has claimed; also "stone" (quarried blocks), "log" or "boulder"
 A step may have "repeat": n. Example: {"skill": "place_at", "args": {"x": {"x": {"pos": "$o"}}, "y": 3, "z": {"z": {"pos": "$o"}}}}
-New skills are "unproven" until one full run succeeds. Fix or forget skills that keep failing."""
+New skills are "unproven" until one full run succeeds. Fix or forget skills that keep failing. A skill that has worked
+keeps its steps until it has failed as many times in a row as it has worked (at least 3) or gone 2 hours without
+working; to try other steps before then, teach them under a new name."""
 
 AGENDA_RULES = """Plan an agenda: 1-6 projects in order, each with 1-12 steps. While your body works through the agenda
 you are already thinking about what comes after it, so give it enough to do: if your body runs out of
