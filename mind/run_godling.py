@@ -85,7 +85,8 @@ def main():
                          "connection to the world however many watch (0 = off; with --attach, export the world's "
                          "WORLD_SPECTATOR_TOKEN)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
-                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
+                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4). "
+                         "Learned skills follow ADR-032 under every engine")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
     args = ap.parse_args()
     # Stop cleanly on Ctrl+C even when started in the background (which ignores SIGINT), and on SIGTERM.
@@ -155,7 +156,7 @@ def main():
         world = World(local_world, args.name)
         llm = LLM(args.model, log=log)
         memory = make_memory(args, run, log)
-        library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
+        library = SkillLibrary(run / "memory" / "skills.json", log=log)  # every engine keeps proven skills (ADR-032)
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
                         walk_speed=args.walk_speed, kept_in=memory.built_into,
                         reserved=memory.reserved_cells)

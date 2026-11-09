@@ -114,3 +114,5 @@ Metrics, all logged automatically:
 ## Rollback
 - Each change has a flag: `--agenda/--no-agenda`, `--memory native|native2|hindsight`.
 - m-003's setup stays reproducible with `--no-agenda --memory native`.
+  - *Amended by ADR-032 (2026-11-09):* except for learned skills. Every engine now keeps a skill that has worked, which
+    m-003 did not. To rerun m-003 exactly, check out the code of that time.

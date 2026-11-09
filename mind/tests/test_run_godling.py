@@ -23,6 +23,7 @@ from godling.skills import Interrupted, Skills
 from godling.world import WorldError
 from helpers import block, ent, ground, raw_obs
 from island import FakeTime, Island
+from run_live_skills import MEND_AT_HOME
 
 
 # ---- the island's save ----------------------------------------------------------------------------------------
@@ -866,6 +867,32 @@ def test_main_attached(main_env, monkeypatch):
     log = (run / "mind/log.jsonl").read_text()
     assert '"kind": "decision"' in log and '"kind": "project"' in log
     assert "Done:" in (run / "console.log").read_text()
+
+
+def test_the_live_default_memory_keeps_a_skill_that_has_proven_itself(main_env, monkeypatch):
+    # The live run (native memory, the default) forgot mend_at_home at 71 of 81 when its mind asked (ADR-032).
+    tmp_path, port = main_env
+    run = tmp_path / "run"
+    (run / "memory").mkdir(parents=True)
+    (run / "memory" / "skills.json").write_text(json.dumps({"mend_at_home": MEND_AT_HOME}))
+
+    class ForgetfulLLM(FakeLLMClass):
+        def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+            reply = super().complete_json(system, user, purpose, on_reasoning, **options)  # max_tokens, effort...
+            return {**reply, "forget": ["mend_at_home"]} if purpose == "decide" else reply
+    monkeypatch.setattr(rg, "LLM", ForgetfulLLM)
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(run), "--attach", "--port", str(port),
+                                      "--no-bubble"])
+    try:
+        rg.main()
+    finally:
+        close_console()
+    assert json.loads((run / "config.json").read_text())["memory"] == "native"
+    assert json.loads((run / "memory" / "skills.json").read_text())["mend_at_home"]["successes"] == 71
+    log = [json.loads(line) for line in (run / "mind/log.jsonl").read_text().splitlines()]
+    assert [e["kind"] for e in log if e["kind"] in ("forget", "forget_refused")][:1] == ["forget_refused"]
+    assert "forget" not in [e["kind"] for e in log]
+    assert "KEEP   skill mend_at_home" in (run / "console.log").read_text()
 
 
 def test_main_starts_the_world(main_env, monkeypatch, tmp_path):
