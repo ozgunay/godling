@@ -25,7 +25,8 @@ BEAM_Z_ON_STEP = {
             "centred on the target",
     "status": "proven", "uses": 3, "successes": 2, "defined_tick": 0, "version": 1, "recent": [False, True, True]}
 
-# Worked 2 of 11 times, then failed 9 times in a row (hands full, nowhere to set the log down); forgotten at 07:25 UTC.
+# Worked 2 of 11 times, then failed 9 times in a row; forgotten at 07:25 UTC. Seven of the nine were full hands (six
+# holding Log_3, nowhere to set it down), one a fastened log, and one an interruption, which no longer counts (8 left).
 POST_AND_FASTEN = {
     "params": ["log", "site_x", "site_z", "stand_x", "stand_z"],
     "steps": [{"skill": "upright_named_log", "args": {"log": "$log", "site_x": "$site_x", "site_z": "$site_z",
@@ -44,6 +45,19 @@ CUBE_STEP_AT = {
     "does": "Picks the nearest unclaimed block, walks to the standing cell and sets it down there as a one-block step",
     "status": "proven", "uses": 29, "successes": 10, "defined_tick": 312763, "version": 1,
     "recent": [False, False, False, False, False]}
+
+# Still in the final library: worked once, at 06:19 UTC, and never run again.
+TOP_WEST_TOWER = {
+    "params": [],
+    "steps": [{"skill": "pick_up", "args": {"object": {"nearest_free": "log"}}},
+              {"skill": "walk_to", "args": {"x": -102.5, "z": -35}}, {"skill": "walk_to", "args": {"x": -100, "z": -35}},
+              {"skill": "walk_to", "args": {"x": -97.5, "z": -35}},
+              {"skill": "place_at", "args": {"x": -95, "y": 13.75, "z": -35, "upright": True}},
+              {"skill": "walk_to", "args": {"x": -100, "z": -35}}, {"skill": "walk_to", "args": {"x": -102.5, "z": -35}},
+              {"skill": "walk_to", "args": {"x": -100, "z": -30}}],
+    "does": "Takes the nearest free log, walks up the three-step stair at (-102.5,-35)/(-100,-35)/(-97.5,-35), stands "
+            "the log upright on the tower top at 13.75 (topping 17.5), and walks back down",
+    "status": "proven", "uses": 1, "successes": 1, "defined_tick": 1793768, "version": 1, "recent": [True]}
 
 # Still in the final library: worked 19 of 39 times, its last five runs failed.
 UPRIGHT_NAMED_LOG = {

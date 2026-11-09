@@ -85,7 +85,8 @@ def main():
                          "connection to the world however many watch (0 = off; with --attach, export the world's "
                          "WORLD_SPECTATOR_TOKEN)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
-                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
+                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4). "
+                         "Learned skills follow ADR-032 under every engine")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
     args = ap.parse_args()
     # Stop cleanly on Ctrl+C even when started in the background (which ignores SIGINT), and on SIGTERM.
