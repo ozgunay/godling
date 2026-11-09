@@ -77,6 +77,9 @@ export function reduceStatus(entries, feedKept = 8, worldKept = Math.floor(feedK
     } else if (e.kind === 'bubble' && e.ok) out.bubble = { thing: e.thing, feeling: e.feeling }
     else if (e.kind === 'thinking') {
       if (!out.now?.thinking) out.now = { time: e.time, thinking: true } // thinking since the first time it said so
+    } else if (e.kind === 'project' && e.phase === 'start' && e.stopgap) { // no step of the agenda (ADR-030)
+      out.intention = e.intention || e.goal || ''
+      out.now = { time: e.time, text: out.intention }
     } else if (e.kind === 'project' && e.phase === 'start') {
       out.intention = e.intention || e.goal || ''
       step += 1

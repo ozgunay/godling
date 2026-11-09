@@ -404,7 +404,9 @@ def test_print_entry(capsys):
         {"kind": "wait_for_mind", "seconds": 21, "stopgap": True}, {"kind": "stopgap", "phase": "asked", "idle": 21},
         {"kind": "stopgap", "phase": "chosen", "thought": "A log first.",
          "projects": [{"intention": "", "goal": "a log", "steps": [1, 2]}]},
-        {"kind": "stopgap", "phase": "dropped", "reason": "the plan came first"}, {"kind": "stopgap", "phase": "none"},
+        {"kind": "stopgap", "phase": "dropped", "reason": "the plan came first"},
+        {"kind": "stopgap", "phase": "none", "why": "5 steps, more than 4"}, {"kind": "answer_forced", "purpose": "decide",
+                                                                           "ok": True},
     ]
     for e in entries:
         rg.print_entry(e)
@@ -414,7 +416,8 @@ def test_print_entry(capsys):
                   "could not brace", "INTEND a wall", "ok  jump: up", "FAIL jump: no",
                   "WAIT   body waited 21s for the mind, then took a stop-gap",
                   "STOPGAP A log first.  (chosen at once while the plan is thought up)", "meanwhile: a log (2 steps)",
-                  "STOPGAP dropped: the plan came first",
+                  "STOPGAP dropped: the plan came first", "STOPGAP none: 5 steps, more than 4",
+                  "ANSWER given from the reasoning so far (decide)",
                   "WAIT   body waited 4s", "REPLAN next plan discarded: r1", "CARRY  keeping the next plan although r2",
                   "BUBBLE fish, happy", "BUBBLE unreadable: ?", "FORGET skill a", "KEEP   skill b",
                   "LEARN  new skill c(o) v2: d", "SLEEP  ships", "intentions: ['hut']", "BUILT  houses 0, walls 1",
@@ -499,8 +502,10 @@ def loop_setup(monkeypatch, tmp_path, plans, calls=6, agenda=True, minutes=0, no
     skills.next_glance = attention.take_glance
     mind = Mind(llm or ScriptLLM(plans, calls), memory, "soul", skills, library, log=log, agenda=agenda)
     (tmp_path / "mind").mkdir(exist_ok=True)
-    args = Namespace(run_dir=tmp_path, name="Godling", no_narration=no_narration, minutes=minutes, sleep_minutes=0)
-    stats = {"projects": 0, "plans_discarded": 0, "plans_after_failure": 0, "waited_for_mind_s": 0.0}
+    args = Namespace(run_dir=tmp_path, name="Godling", no_narration=no_narration, minutes=minutes, sleep_minutes=0,
+                     think_deadline=0)
+    stats = {"projects": 0, "plans_discarded": 0, "plans_after_failure": 0, "waited_for_mind_s": 0.0, "stopgaps": 0,
+             "stopgap_s": 0.0}
     structures = rg.StructureLog(tmp_path / "mind/structures.jsonl", log)
     return island, (island, attention, memory, mind, skills, args, log, rg.time.time(), stats, structures), logs, stats
 
@@ -622,8 +627,10 @@ def test_the_body_does_a_stopgap_instead_of_standing_while_its_mind_is_late(monk
     assert seq.index(("project", "start", "fetch")) < seq.index(("project", "end", "fetch")) \
         < seq.index(("decision", None, None)) < seq.index(("project", "start", "build"))
     assert island.said[:2] == ["Meanwhile, fetch", "Build now"] and stats["stopgaps"] == 1 and stats["stopgap_s"] >= 0
+    assert stats["projects"] == 1  # 80-CDE6: the planned ones; stop-gaps are counted apart
     user, options = llm.asked[0]
     assert user.startswith(llm.planned[0]) and "so: a wall" in user and options["effort"] == "none"
+    assert "Now: you are at (0.0, 0.0), holding nothing." in user
     assert not any(e["text"] == "never" for e in loop_args[2].episodes)
     waits = [entry for entry in logs if entry["kind"] == "wait_for_mind"]
     assert waits[0]["stopgap"] and waits[0]["seconds"] < 2.5 and stats["waited_for_mind_s"] < 3
@@ -650,7 +657,7 @@ def test_a_stopgap_that_comes_after_the_plan_is_dropped(monkeypatch, tmp_path):
     seq = phases(logs)
     assert ("stopgap", "dropped", None) in seq and ("project", "start", "fetch") not in seq
     assert seq.index(("stopgap", "dropped", None)) < seq.index(("decision", None, None))
-    assert stats["stopgaps"] == 0
+    assert stats["stopgaps"] == 0 and ("stopgap", "chosen", None) not in seq  # 80-CDE9
 
 
 def test_stopgaps_follow_one_another_up_to_a_limit_and_a_failed_one_is_waited_out(monkeypatch, tmp_path):
@@ -668,20 +675,25 @@ def test_stopgaps_follow_one_another_up_to_a_limit_and_a_failed_one_is_waited_ou
     assert len(llm.asked) == rg.STOPGAPS_PER_PLAN == 3 and stats["stopgaps"] == 2
     assert any(entry["kind"] == "error" and "provider down" in entry["message"] for entry in logs)
     assert "'one' (succeeded)" in llm.asked[2][0] and "'one'" not in llm.asked[1][0]
+    assert "stood idle for 0s" not in llm.asked[2][0] and "Your body ran out of work" in llm.asked[2][0]
+    assert ("stopgap", "none", None) not in phases(logs)  # the failed one is an error, not an empty reply
+    note = llm.planned[1].split("Notes: ")[1]
+    assert "your body stood still for " in note and "then did on the spot, unplanned: 'one' (succeeded); 'two'" in note
     seq = phases(logs)
     assert seq.index(("project", "end", "two")) < seq.index(("decision", None, None))
     assert ("project", "start", "three") not in seq
 
 
-def test_an_interrupted_stopgap_drops_the_plan_it_was_waiting_for(monkeypatch, tmp_path):
-    """Something salient happened: the plan thought up before it no longer fits (the rule of ADR-002 holds)."""
+def test_an_interrupted_stopgap_keeps_the_plan_it_was_waiting_for(monkeypatch, tmp_path):
+    """Review of #80 (80-CDE1): a salient event while the body stands waiting leaves the plan in flight, and so does one
+    during a stop-gap: the stop-gap ends, and the next plan hears of the event. Before, a stop-gap opened a window in
+    which the plan was thrown away and thought up again, which the idle wait never had."""
     plans = [{"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
-    llm = LateLLM(plans, [stopgap("fetch", ("walk_to", {"x": 10, "z": 0}))], calls=2)
+    llm = LateLLM(plans, [stopgap("fetch", ("walk_to", {"x": 10, "z": 0}))])
 
     def hook(entry):
-        if entry["kind"] == "plan_discarded":
-            for _ in range(3):
-                llm.released.release()
+        if entry["kind"] == "project" and entry["phase"] == "end" and entry["goal"] == "fetch":
+            llm.released.release()
 
     island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [], llm=llm, hook=hook, no_narration=True)
     island.on_act["MoveTo"] = lambda d: island.ents.setdefault("Visitor", block("Block_9", 30, 1.25, 30)) and None
@@ -691,10 +703,67 @@ def test_an_interrupted_stopgap_drops_the_plan_it_was_waiting_for(monkeypatch, t
     loop_args[5].think_deadline = 0.1
     with pytest.raises(KeyboardInterrupt):
         rg.agenda_loop(*loop_args)
-    discarded = next(entry for entry in logs if entry["kind"] == "plan_discarded")
-    assert "'fetch' was interrupted" in discarded["reason"]
     seq = phases(logs)
-    assert seq.index(("plan_discarded", None, None)) < min(i for i, s in enumerate(seq) if s[0] == "decision")
+    assert stats["plans_discarded"] == 0 and ("plan_discarded", None, None) not in seq
+    assert seq.index(("project", "end", "fetch")) < seq.index(("decision", None, None)) \
+        < seq.index(("project", "start", "build"))
+    assert "'fetch' (interrupted" in llm.planned[1]
+
+
+def test_a_stopgap_is_still_taken_when_the_plan_fails(monkeypatch, tmp_path):
+    """Review of #80 (80-AB7): a plan whose provider call fails has not come first; the stop-gap being chosen is taken
+    up, and the failure is handled as before (logged, and the next plan thought up)."""
+    plans = [RuntimeError("provider down"), {"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
+    failed = threading.Event()
+
+    class Failing(LateLLM):
+        def complete_json(self, system, user, purpose="decide", on_reasoning=None, **options):
+            if purpose == "stopgap" and not failed.is_set():
+                self.released.release()  # the plan fails while the stop-gap is being chosen
+                assert failed.wait(3)
+                rg_sleep(0.1)
+            try:
+                return super().complete_json(system, user, purpose, on_reasoning, **options)
+            except RuntimeError:
+                failed.set()
+                raise
+
+    rg_sleep = rg.time.sleep
+    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, monotonic=rg.time.monotonic,
+                                                          sleep=lambda seconds: rg_sleep(min(seconds, 0.05))))
+    llm = Failing(plans, [stopgap("fetch")], calls=2)
+    threading.Timer(1.5, llm.released.release).start()  # the second plan, after the failure
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [], llm=llm)
+    loop_args[5].think_deadline = 0.1
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args)
+    seq = phases(logs)
+    assert ("stopgap", "dropped", None) not in seq[:seq.index(("project", "start", "fetch"))]
+    assert any(entry["kind"] == "error" and "provider down" in entry["message"] for entry in logs)
+    assert ("project", "start", "build") in seq
+
+
+def test_a_stopgap_sees_where_the_agenda_left_the_body(monkeypatch, tmp_path):
+    """Review of #80 (80-CDE3): the plan's prompt was written before the agenda ran; the stop-gap is told where the body
+    is now, what it holds, and that the agenda has ended."""
+    plans = [{"thought": "go", "agenda": [project("walk", ("walk_to", {"x": 20, "z": 0}))]},
+             {"thought": "the real plan", "agenda": [project("build", ("jump", {}))]}]
+    llm = LateLLM(plans, [stopgap("look")], calls=2)
+    llm.released.release()  # the first plan comes at once; the second is late
+
+    def hook(entry):
+        if entry["kind"] == "project" and entry["phase"] == "end" and entry["goal"] == "look":
+            llm.released.release()
+
+    island, loop_args, logs, stats = loop_setup(monkeypatch, tmp_path, [], llm=llm, hook=hook)
+    loop_args[5].think_deadline = 0.1
+    with pytest.raises(KeyboardInterrupt):
+        rg.agenda_loop(*loop_args)
+    user = llm.asked[0][0]
+    assert "You are at (0.0, 0.0), holding nothing." in llm.planned[1]  # the plan's prompt, from before the walk
+    assert "Now: you are at (20.0, 0.0), holding nothing." in user
+    assert "The agenda you were carrying out when you began thinking has ended." in user
+    assert "Since you began thinking: Project 'walk' succeeded." in user
 
 
 def test_without_a_deadline_the_body_waits_as_before(monkeypatch, tmp_path):
@@ -847,7 +916,7 @@ def test_loops_reflect_even_when_a_model_call_outlasts_the_whole_dead_interval(m
 def test_an_agenda_replans_after_a_provider_failure(monkeypatch, tmp_path):
     island, loop_args, logs, stats = loop_setup(
         monkeypatch, tmp_path, [RuntimeError("model unavailable"), {"agenda": [project("hop", ("jump", {}))]}], calls=2)
-    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, sleep=lambda seconds: None))
+    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, monotonic=rg.time.monotonic, sleep=lambda seconds: None))
 
     def log(**entry):
         logs.append(entry)
@@ -932,7 +1001,7 @@ def test_single_loop_ends_on_time(monkeypatch, tmp_path):
 def test_watch_while_thinking(monkeypatch, tmp_path):
     island = Island([ground()])
     monkeypatch.setattr(sk, "time", FakeTime(island))
-    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, sleep=lambda s: None))
+    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, monotonic=rg.time.monotonic, sleep=lambda s: None))
     skills = Skills(island)
     calls = []
 
@@ -957,6 +1026,7 @@ class FakeLLMClass:
     def __init__(self, model="m", log=None, **kw):
         self.model, self.log = model, log
         self.calls, self.cost = 0, 0.0
+        self.forced = 2  # what summary.json reports as answers_forced (80-CLEAN9)
         self.left = 3
         FakeLLMClass.instances.append(self)
 
@@ -989,8 +1059,8 @@ def main_env(monkeypatch, tmp_path, world_server):
     world_server.replies[("GET", "/snapshot")] = snapshot()
     monkeypatch.setattr(rg, "LLM", FakeLLMClass)
     monkeypatch.setattr(rg.signal, "signal", lambda *a: None)
-    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, sleep=lambda s: None))
-    monkeypatch.setattr(sk, "time", types.SimpleNamespace(time=rg.time.time, sleep=lambda s: None))
+    monkeypatch.setattr(rg, "time", types.SimpleNamespace(time=rg.time.time, monotonic=rg.time.monotonic, sleep=lambda s: None))
+    monkeypatch.setattr(sk, "time", types.SimpleNamespace(time=rg.time.time, monotonic=rg.time.monotonic, sleep=lambda s: None))
     monkeypatch.setattr(sys, "stdout", sys.stdout)
     monkeypatch.setattr(sys, "stderr", sys.stderr)
     monkeypatch.setenv("WORLD_OPERATOR_TOKEN", "tok")
@@ -1019,13 +1089,25 @@ def test_main_attached(main_env, monkeypatch):
         close_console()
     summary = json.loads((run / "summary.json").read_text())
     assert summary["projects"] >= 1 and summary["memory_engine"] == "native2" and summary["structures"]["pieces"] == 1
-    assert summary["stopgaps"] == 0 and summary["answers_forced"] == 0 and summary["think_deadline"] == 20
+    assert summary["stopgaps"] == 0 and summary["answers_forced"] == 2 and summary["think_deadline"] == 0
     assert summary["reasoning_effort"] == "low" and summary["reasoning_budget"] == 32768
     assert FakeLLMClass.instances[0].options == {"effort": "low", "max_tokens": 32768}
     assert json.loads((run / "config.json").read_text())["attach"] == "True"
     log = (run / "mind/log.jsonl").read_text()
     assert '"kind": "decision"' in log and '"kind": "project"' in log
     assert "Done:" in (run / "console.log").read_text()
+
+
+@pytest.mark.parametrize("bad", [["--reasoning-budget", "0"], ["--reasoning-budget", "-1"],
+                                 ["--think-deadline", "-5"], ["--think-deadline", "nan"]])
+def test_main_refuses_reasoning_options_that_cannot_run(main_env, monkeypatch, bad, capsys):
+    """Review of #80 (80-AB8): a budget of 0 was sent as the default cap while summary.json said 0; a negative one made
+    every decision fail; a negative deadline asked for stop-gaps at once. argparse refuses them, before anything runs."""
+    tmp_path, port = main_env
+    monkeypatch.setattr(sys, "argv", ["run_godling.py", "--run-dir", str(tmp_path / "bad"), "--attach", *bad])
+    with pytest.raises(SystemExit) as stopped:
+        rg.main()
+    assert stopped.value.code == 2 and not (tmp_path / "bad").exists()
 
 
 def test_main_starts_the_world(main_env, monkeypatch, tmp_path):

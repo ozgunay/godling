@@ -1,3 +1,4 @@
+import json
 import re
 
 import pytest
@@ -261,9 +262,8 @@ def test_a_stopgap_moves_the_body_only(world, tmp_path):
     thinking) from the prompt it is thinking about and what it has thought so far. Only the body moves on it: memories,
     skills, keeps, releases and the house wait for the finished plan."""
     island, body, library = world
-    steps = [{"skill": "walk_to", "args": {"x": 5, "z": 0}}, {"skill": "fly", "args": {}},
-             {"skill": "pick_up", "args": {"object": "Block_3"}}, {"skill": "jump", "args": {}},
-             {"skill": "wait", "args": {"seconds": 1}}, {"skill": "jump", "args": {}}, {"skill": "jump", "args": {}}]
+    steps = [{"skill": "walk_to", "args": {"x": 5, "z": 0}}, {"skill": "pick_up", "args": {"object": "Block_3"}},
+             {"skill": "jump", "args": {}}, {"skill": "wait", "args": {"seconds": 1}}]
     reply = {"thought": "A block first.", "agenda": [{"intention": "Fetch a block", "goal": "a block", "steps": steps},
                                                      {"intention": "more", "goal": "more", "steps": steps}],
              "remember": [{"about": "x", "text": "never kept"}], "learn": [{"name": "hop", "steps": [{"skill": "jump"}]}],
@@ -274,31 +274,90 @@ def test_a_stopgap_moves_the_body_only(world, tmp_path):
     mind = make_mind(world, tmp_path, llm, memory=mem, house_project=True)
     prepared = mind.prepare(island.snap(), [], [], doing=[{"goal": "a wall"}])
     prepared["reasoning"] = ["an early idea. " * 2000, "so I will fetch Block_3 first"]
-    mind.last_outcome = "Project 'a wall' did not finish. / pick_up: FAILED - out of reach"
-    ask = mind.stopgap_prompt(prepared, idle=21.4, meanwhile=["'look round' (succeeded)"])
+    island.me = [20.0, island.me[1], 0.0]
+    island.held = "Block_1"
+    ask = mind.stopgap_prompt(prepared, island.snap(), late=65.4, since=["Project 'a wall' did not finish."],
+                              meanwhile=["'look round' (succeeded)"], noticed=["A dark shadow on the sand"])
     stop = mind.stopgap(ask)
     call = llm.calls[-1]
     assert call["purpose"] == "stopgap" and call["system"] == prepared["system"]
     assert call["options"]["effort"] == "none" and call["options"]["max_tokens"] <= 4096
     assert call["user"].startswith(prepared["user"])  # the prompt already sent: read again from the provider's cache
     tail = call["user"][len(prepared["user"]):]
-    assert "21s" in tail and "so I will fetch Block_3 first" in tail and "did not finish" in tail
-    assert "'look round' (succeeded)" in tail and len(tail) < 10000
+    assert "so I will fetch Block_3 first" in tail and "'look round' (succeeded)" in tail and len(tail) < 10000
+    # Review of #80 (80-CDE3, 80-AB4): the world as it is now, not as the plan's prompt saw it before the agenda ran; how
+    # long the plan has been awaited, not the idle time since the last stop-gap; and only what ended since it began.
+    assert "Now: you are at (20.0, 0.0), holding Block_1." in tail and "65s ago" in tail
+    assert "The agenda you were carrying out when you began thinking has ended." in tail
+    assert "Since you began thinking: Project 'a wall' did not finish." in tail
+    assert "You noticed since: A dark shadow on the sand." in tail
     assert stop["thought"] == "A block first." and len(stop["projects"]) == 1
     project = stop["projects"][0]
     assert project["stopgap"] and project["intention"] == "Fetch a block"
-    assert [s["skill"] for s in project["steps"]] == ["walk_to", "pick_up", "jump", "wait"]  # four steps at most
+    assert [s["skill"] for s in project["steps"]] == ["walk_to", "pick_up", "jump", "wait"]
     assert mem.episodes == [] and library.skills == {} and "pair" not in mem.state["structures"]
-    assert mem.state.get("house") is None and mind.logs[-1]["kind"] == "stopgap"
+    assert mem.state.get("house") is None
+    assert not any(entry["kind"] == "stopgap" for entry in mind.logs)  # 80-CDE9: the loop logs what it takes up
 
 
-def test_a_stopgap_without_a_project_is_none(world, tmp_path):
+def test_a_stopgap_prompt_says_when_nothing_has_ended_yet(world, tmp_path):
     island, body, library = world
-    mind = make_mind(world, tmp_path, FakeLLM({"thought": "hm", "agenda": [{"goal": "x", "steps": [{"skill": "fly"}]}]},
-                                              {"agenda": "nonsense"}))
-    ask = mind.stopgap_prompt(mind.prepare(island.snap(), [], []), idle=20)  # nothing thought yet: no thoughts quoted
-    assert "Your thoughts so far" not in ask["user"]
-    assert mind.stopgap(ask) is None and mind.stopgap(ask) is None  # no known skill; no agenda
+    mind = make_mind(world, tmp_path, FakeLLM())
+    mind.last_outcome = "You died of cold, and have come back to life at the start."  # old news: in the plan's prompt
+    prepared = mind.prepare(island.snap(), [], [])
+    tail = mind.stopgap_prompt(prepared, island.snap(), late=20)["user"][len(prepared["user"]):]
+    assert "Nothing you were doing has ended since you began thinking." in tail and "died" not in tail
+    assert "Your thoughts so far" not in tail and "agenda you were carrying out" not in tail
+
+
+def test_a_stopgap_is_refused_unless_it_is_a_few_body_moves(world, tmp_path):
+    """Review of #80 (80-SWEEP1, 80-AB3): a stop-gap is never cut short or edited. A project longer than four steps,
+    or with a step that is not one of the body's moves (a learned skill, which can run for minutes, or an unknown
+    one), is refused with the reason, and the body waits on for its plan."""
+    island, body, library = world
+    library.define({"name": "hop", "steps": [{"skill": "jump"}]})
+    long = [{"skill": "jump", "args": {}}] * 5
+    replies = [{"agenda": [{"goal": "pile", "steps": long}]},
+               {"agenda": [{"goal": "hop", "steps": [{"skill": "hop", "args": {}}]}]},
+               {"thought": "hm", "agenda": [{"goal": "x", "steps": [{"skill": "fly"}]}]},
+               {"agenda": "nonsense"}, {"agenda": [{"goal": "x", "steps": [{"skill": "jump", "args": "no"}]}]}]
+    mind = make_mind(world, tmp_path, FakeLLM(*replies))
+    ask = mind.stopgap_prompt(mind.prepare(island.snap(), [], []), island.snap(), late=20)
+    whys = [mind.stopgap(ask) for _ in replies]
+    assert all(stop["projects"] == [] for stop in whys)
+    assert "5 steps" in whys[0]["why"] and "hop" in whys[1]["why"] and "fly" in whys[2]["why"]
+    assert whys[3]["why"] == "no project" and "jump" in whys[4]["why"]
+
+
+def test_the_stopgap_ask_is_built_from_the_answer_shape():
+    """80-CLEAN3: one shape for a plan's projects, in the system prompt and in the stop-gap's ask."""
+    assert json.dumps(mind_module.ANSWER_SHAPE["agenda"]) in mind_module.STOPGAP_ASK
+
+
+def test_the_prompt_tells_of_stopgaps_only_when_they_are_on(world, tmp_path):
+    """80-SWEEP3: with stop-gaps on, the plan's rules no longer say only that an idle body stands still."""
+    island, body, library = world
+    assert "a short project at once" not in make_mind(world, tmp_path, FakeLLM()).system_prompt(island.snap())
+    system = make_mind(world, tmp_path, FakeLLM(), stopgap_after=20).system_prompt(island.snap())
+    assert "If your body has stood still for 20s while you are still thinking, you give it a short project at once" in system
+
+
+def test_a_stopgap_outcome_leaves_the_failures_and_what_just_happened_alone(world, tmp_path):
+    """Review of #80 (80-AB10): a stop-gap is filler. Its outcome is remembered, and the next plan hears of it with the
+    others done meanwhile, but it never clears "Recent failures ... Try something different" or takes the place of
+    what the agenda itself ended with."""
+    island, body, library = world
+    mem = NativeMemory(tmp_path / "mem")
+    mind = make_mind(world, tmp_path, FakeLLM(), memory=mem)
+    s = island.snap()
+    mind.record_outcome({"goal": "a"}, [Result(False, "pick_up", "out of reach")], s)
+    mind.record_outcome({"goal": "b"}, [Result(False, "pick_up", "out of reach")], s)
+    failures, outcome = list(mind.failures), mind.last_outcome
+    assert mind.record_outcome({"goal": "hop", "stopgap": True}, [Result(True, "jump", "jumped")], s)
+    assert not mind.record_outcome({"goal": "fall", "stopgap": True}, [Result(False, "jump", "fell")], s)
+    assert mind.failures == failures and mind.last_outcome == outcome
+    assert [e["text"][:20] for e in mem.episodes[-2:]] == ["Project 'hop' succee", "Project 'fall' did n"]
+    assert "Recent failures" in mind.situation(s, [], [])
 
 
 def test_agenda_feedback(world, tmp_path):

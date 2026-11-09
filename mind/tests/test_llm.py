@@ -1,3 +1,4 @@
+import http.client
 import io
 import itertools
 import json
@@ -127,9 +128,11 @@ def test_reasoning_effort_is_sent_only_when_asked_for(requests):
     model.complete_json("s", "u", effort="low", max_tokens=16000)
     model.complete_json("s", "u", effort="none")
     today, low, off = (json.loads(req.data) for req, _ in sent)
-    assert "reasoning_effort" not in today and "thinking" not in today and today["max_tokens"] == 32768
+    assert "reasoning_effort" not in today and "thinking" not in today and today["max_tokens"] == llm_module.DECIDE_TOKENS
     assert low["reasoning_effort"] == "low" and low["max_tokens"] == 16000 and "thinking" not in low
     assert off["thinking"] == {"type": "disabled"} and "reasoning_effort" not in off
+    # Review of #80 (80-CLEAN1): thinking off, the temperature counts, and it is the bubble's (quick_json), not 0.9.
+    assert today["temperature"] == 0.9 and off["temperature"] == 0.7
 
 
 def test_an_answer_cut_off_by_the_cap_is_given_from_the_reasoning_so_far(requests):
@@ -148,6 +151,8 @@ def test_an_answer_cut_off_by_the_cap_is_given_from_the_reasoning_so_far(request
     model = LLM(api_key="k", log=lambda **kw: logs.append(kw))
     assert model.complete_json("sys", "situation", purpose="decide", on_reasoning=heard.append) == {"thought": "the wall"}
     assert len(sent) == 2 and model.forced == 1 and model.calls == 2
+    assert {"kind": "answer_forced", "purpose": "decide", "ok": True} in logs
+    logs[:] = [entry for entry in logs if entry["kind"] == "llm"]
     answer = json.loads(sent[1][0].data)
     assert answer["thinking"] == {"type": "disabled"} and answer["max_tokens"] <= 4096
     assert answer["messages"][0]["content"] == "sys" and len(answer["messages"]) == 2
@@ -170,12 +175,60 @@ def test_a_reply_that_broke_off_is_answered_from_its_reasoning_too(requests):
 
 def test_a_forced_answer_that_fails_falls_back_to_asking_again(requests):
     sent, queue = requests
+    logs = []
     queue.append(stream({"choices": [{"delta": {"reasoning_content": "r"}, "finish_reason": "length"}]}))
     queue.extend([answered("still not json"), answered("nor this"), answered()])
-    model = LLM(api_key="k")
+    model = LLM(api_key="k", log=lambda **kw: logs.append(kw))
     assert model.complete_json("s", "u", retries=1) == {"ok": 1}
     last = json.loads(sent[-1][0].data)
     assert "thinking" not in last and "not valid JSON" in last["messages"][-1]["content"]
+    # Review of #80 (80-CDE5): `forced` counts answers given, not attempts; the log says which attempt failed.
+    assert model.forced == 0 and {"kind": "answer_forced", "purpose": "decide", "ok": False} in logs
+
+
+def test_a_forced_answer_never_forces_itself_again(requests):
+    """Review of #80 (80-AB1): whether to force is decided by the request. A forced call (thinking off) whose reply still
+    streams reasoning and is cut off again is asked once more as an ordinary reply, never forced in turn: no nesting."""
+    sent, queue = requests
+    logs = []
+    queue.append(stream({"choices": [{"delta": {"reasoning_content": "deep"}, "finish_reason": "length"}]}))
+    queue.append(stream({"choices": [{"delta": {"reasoning_content": "still thinking"}, "finish_reason": "length"}]}))
+    queue.append(answered())
+    model = LLM(api_key="k", log=lambda **kw: logs.append(kw))
+    assert model.complete_json("s", "u") == {"ok": 1}
+    assert [entry["purpose"] for entry in logs if entry["kind"] == "llm"] == ["decide", "decide:answer", "decide:answer"]
+    assert "not valid JSON" in json.loads(sent[2][0].data)["messages"][-1]["content"] and model.forced == 1
+
+
+class Breaking(Reply):
+    """A streamed reply whose connection breaks after `lines` lines."""
+
+    def __init__(self, lines, error):
+        super().__init__(b"")
+        self.lines, self.error = list(lines), error
+
+    def __iter__(self):
+        yield from self.lines
+        raise self.error
+
+
+def test_a_stream_broken_by_an_error_is_answered_from_its_reasoning(requests):
+    """Review of #80 (80-AB2): a connection that breaks mid-stream (IncompleteRead, a reset, a read timeout) after the
+    reasoning began keeps what it thought, as a stream that ends without a finish does; one that breaks before anything
+    came is asked again, as before."""
+    sent, queue = requests
+    heard = []
+    piece = b"data: " + json.dumps({"choices": [{"delta": {"reasoning_content": "minutes of thought"}}]}).encode() + b"\n"
+    queue.append(Breaking([piece], http.client.IncompleteRead(b"")))
+    queue.append(answered())
+    model = LLM(api_key="k")
+    assert model.complete_json("s", "u", on_reasoning=heard.append) == {"ok": 1}
+    assert model.forced == 1 and "".join(heard) == "minutes of thought"
+    forced = json.loads(sent[1][0].data)
+    assert forced["thinking"] == {"type": "disabled"} and "minutes of thought" in forced["messages"][1]["content"]
+    queue.extend([Breaking([], ConnectionResetError("reset")), answered()])
+    assert model.complete_json("s", "u") == {"ok": 1}
+    assert "thinking" not in json.loads(sent[-1][0].data) and model.forced == 1
 
 
 def test_a_reply_without_thinking_is_never_forced(requests):
