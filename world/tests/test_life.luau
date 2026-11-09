@@ -422,7 +422,10 @@ T.test("the weather over nine days, and a passing ship", function()
     end
     T.logged(w, "WEATHER a wet spell for")
     T.logged(w, "WEATHER fog until")
-    T.logged(w, "SKY Lightning #%d+ felled Palm_")
+    T.logged(w, "WEATHER lightning #%d+ felled Palm_")
+    for _, line in ipairs(e.log) do
+        T.no(line:find("^SKY Lightning"), "no viewer called Lightning: " .. line)
+    end
     T.logged(w, "DOUSED Fire_")
     T.logged(w, "SHIP passing at")
     T.eq(g:GetAttribute("RainPace") ~= nil, true)
@@ -440,7 +443,9 @@ T.test("a storm with nobody on the island strikes nothing; with no palm in range
     T.eq(x.stormStrike(true), false, "nobody here")
     local g = w.godling(V.new(600, 2.55, 600)) -- far out: every palm is beyond 45
     T.eq(x.stormStrike(true), false, "no palm felled")
-    T.logged(w, "WEATHER lightning struck the sea at")
+    T.logged(w, "WEATHER lightning #%d+ struck the sea at")
+    local sea = e.find("SkyBolt_1")
+    T.eq(sea:GetAttribute("StrikeY"), x.OCEAN_TOP_Y, "down to the sea's surface, not above it (77-AB1)")
     for _, t in ipairs(x.trees) do
         T.eq(t.part:GetAttribute("RenderRole"), "Tree", "not the nearest palm beyond 45 either (ADR-026): " .. t.name)
     end
@@ -458,13 +463,13 @@ T.test("a storm with nobody on the island strikes nothing; with no palm in range
     table.insert(e.randoms, 0.5) -- how far: 12 + 0.5 * 33
     local before = x.surviving[visitor].health
     T.eq(x.stormStrike(true), false)
-    local line = T.logged(w, "WEATHER lightning struck the ground at")
+    local line = T.logged(w, "WEATHER lightning #%d+ struck the ground at")
     T.ok(line:find(string.format("(%.1f, %.1f)", spot.X - 28.5, spot.Z), 1, true), line)
     T.near(x.surviving[visitor].health, before - 35, 1e-6, "close by, it hurts")
     T.eq(g:GetAttribute("Hurt"), nil, "Godling, 28.5 away, is unhurt")
     local bolt, scorch
     for _, part in ipairs(e.Workspace:GetChildren()) do
-        if part.Name:match("^SkyBolt_") then
+        if part.Name:match("^SkyBolt_") and part ~= sea then
             bolt = part
         elseif part:GetAttribute("RenderRole") == "Scorch" then
             scorch = part
@@ -475,8 +480,42 @@ T.test("a storm with nobody on the island strikes nothing; with no palm in range
     T.near(bolt:GetAttribute("StrikeX"), spot.X - 28.5, 1e-6)
     T.near(bolt:GetAttribute("StrikeY"), x.surfaceTopAt(spot.X - 28.5, spot.Z, -20, 60), 1e-6, "down to the ground")
     T.near(scorch.Position.X, spot.X - 28.5, 1e-6)
-    e.step(241, 1)
+    e.step(241)
     T.eq(scorch.Parent, nil, "the scorch fades after 4 minutes, as a storm's does")
+    -- On a loose log lying there the bolt ends on the log, and leaves no scorch: it would hang in the air once the log
+    -- is carried off (77-CDE2).
+    local log = e.part("Log_900", { Size = V.new(7.5, 2.5, 2.5), Position = V.new(spot.X - 28.5, 1.25, spot.Z),
+        Anchored = true, attrs = { RenderRole = "Log" } })
+    table.insert(e.randoms, 0.5)
+    table.insert(e.randoms, 0.5)
+    T.eq(x.stormStrike(false), false)
+    local onLog
+    for _, part in ipairs(e.Workspace:GetChildren()) do
+        T.ok(part:GetAttribute("RenderRole") ~= "Scorch", "no scorch on the log")
+        if part.Name:match("^SkyBolt_") and part ~= sea and part ~= bolt then
+            onLog = part
+        end
+    end
+    T.near(onLog:GetAttribute("StrikeY"), log.Position.Y + 1.25, 1e-6, "the bolt ends on the log")
+end)
+
+T.test("a bolt finds no open ground clear of the palms: none comes down this time, rather than beside a palm", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    w.godling(V.new(600, 2.55, 600))
+    local t = x.trees[1]
+    t.pos = { 630, t.pos[2], 600 } -- a standing palm 30 east of Godling
+    x.regrowStump(t)
+    for _ = 1, 40 do -- every try, east and 30 out: on the palm (77-AB2)
+        table.insert(e.randoms, 0)
+        table.insert(e.randoms, 18 / 33)
+    end
+    T.eq(x.stormStrike(false), false)
+    T.eq(e.find("SkyBolt_1"), nil, "no bolt beside the palm it would have struck")
+    for _, line in ipairs(e.log) do
+        T.no(line:find("^WEATHER lightning"), line)
+    end
+    T.eq(t.part:GetAttribute("RenderRole"), "Tree", "and the palm stands")
 end)
 
 -- ADR-026. In run 2026-11-08 the weather's lightning felled a palm at every strike, 26 palms in 9.6 hours (52 of the
@@ -492,11 +531,11 @@ local function heavyRain(w, minutes, at)
         e.step(20)
         x.surviving[g].health, x.surviving[g].hunger = 100, 100
         for i = seen + 1, #e.log do
-            local palm = e.log[i]:match("^SKY Lightning #%d+ felled (Palm_%d+)")
+            local palm = e.log[i]:match("^WEATHER lightning #%d+ felled (Palm_%d+)")
             if palm then
                 table.insert(felled, { palm = palm, at = e.now })
             end
-            if palm or e.log[i]:find("^WEATHER lightning struck") then
+            if palm or e.log[i]:find("^WEATHER lightning #%d+ struck") then
                 table.insert(strikes, e.now)
             end
         end
@@ -523,25 +562,88 @@ T.test("a storm's bolts keep coming, but fell a palm at most once in 25 minutes 
         T.no(struck[f.palm], "never the same palm twice within 6 hours: " .. f.palm)
         struck[f.palm] = true
     end
-    T.logged(w, "WEATHER lightning struck the ground at")
-    -- By the run's house only Palm_2 and Palm_14 stand 12 to 45 away: every bolt took one of them as soon as it had
-    -- grown back (33 fellings in these three hours before). Now each falls once.
-    local house = T.boot({ patch = { ALWAYS_RAIN } })
-    strikes, felled = heavyRain(house, 180, V.new(-95, 2.55, -35))
-    T.ok(#strikes >= 22, "the bolts still come: " .. #strikes)
-    T.eq(#felled, 2, "two palms in reach, felled once each")
-    T.ok(felled[1].palm ~= felled[2].palm, "not the same one twice")
+    T.logged(w, "WEATHER lightning #%d+ struck the ground at")
+end)
+
+T.test("by the run's house, where only two palms stand in reach, each falls once in three hours of bolts", function()
+    -- Only Palm_2 and Palm_14 stand 12 to 45 from there: every bolt took one of them as soon as it had grown back (33
+    -- fellings in three hours of heavy rain before). Driven bolt by bolt, each one allowed to fell.
+    local w = T.boot()
+    local e, x = w.e, w.x
+    w.godling(V.new(-95, 2.55, -35))
+    local felled = {}
+    for _ = 1, 60 do
+        e.now = e.now + 180
+        x.regrowTrees()
+        local before = #e.log
+        x.stormStrike(true)
+        for i = before + 1, #e.log do
+            table.insert(felled, e.log[i]:match("^WEATHER lightning #%d+ felled (Palm_%d+)"))
+        end
+    end
+    table.sort(felled)
+    T.eq(table.concat(felled, ","), "Palm_14,Palm_2", "two palms in reach, felled once each")
+end)
+
+T.test("a restart neither lets the next bolt fell a palm at once nor forgets the stumps it put back", function()
+    -- 77-AB5. A restored island waits the whole gap of heavy rain before its storms fell a palm, as if one had just
+    -- fallen; a fresh one may fell at its first bolt.
+    local function firstFelling(restore)
+        local w = T.boot({ patch = { ALWAYS_RAIN } })
+        if restore then
+            w.x.sky.restore({ pieces = {}, felled = {}, roles = {}, counters = {}, clock = 0 })
+        end
+        local _, felled = heavyRain(w, 40, w.openSpot(6))
+        return felled[1] and felled[1].at
+    end
+    T.ok(firstFelling(false) <= 9 * 60, "a fresh island: at its first bolt")
+    T.ok(firstFelling(true) >= 25 * 60, "a restored one: not before 25 minutes of heavy rain")
+    -- A stump the save put back is spared 6 hours, as one a storm felled: the save does not say which felled it.
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local g = w.godling(w.openSpot(6))
+    local at = e.hrp(g).Position
+    local kept
+    for _, t in ipairs(x.trees) do
+        local d = V.new(t.part.Position.X - at.X, 0, t.part.Position.Z - at.Z).Magnitude
+        if not kept and d >= 12 and d <= 45 then
+            kept = t
+        end
+    end
+    local p = kept.part.Position
+    x.sky.restore({ pieces = {}, roles = {}, counters = {}, clock = 0, felled = { { name = kept.name,
+        pos = { p.X, 0.625, p.Z }, turn = { 0, 0, 0 }, size = { 2.5, 1.25, 2.5 }, color = { 0.4, 0.3, 0.2 },
+        anchored = true, collide = true, attrs = { RenderRole = "Stump", ModelUrl = "asset://stump.glb" } } } })
+    T.eq(kept.part:GetAttribute("RenderRole"), "Stump")
+    local felled = {}
+    for _ = 1, 40 do -- 2 hours of bolts, each allowed to fell: every other palm in reach falls, once
+        e.now = e.now + 180
+        x.regrowTrees()
+        local before = #e.log
+        x.stormStrike(true)
+        for i = before + 1, #e.log do
+            local palm = e.log[i]:match("^WEATHER lightning #%d+ felled (Palm_%d+)")
+            if palm then
+                felled[palm] = true
+            end
+        end
+    end
+    T.eq(kept.part:GetAttribute("RenderRole"), "Tree", "grown back")
+    T.no(felled[kept.name], "but spared: " .. kept.name)
+    T.ok(next(felled), "while the others fell")
 end)
 
 T.test("the storms spare a palm they felled for 6 hours, though it has grown back", function()
     local w = T.boot()
     local e, x = w.e, w.x
     local g = w.godling(V.new(600, 2.55, 600))
+    e.step(0.1) -- alive, so a bolt could hurt it
+    T.ok(x.surviving[g], "Godling can be hurt")
     local t = x.trees[1]
     t.pos = { 630, t.pos[2], 600 } -- the one palm in reach, 30 from Godling
     x.regrowStump(t)
     T.eq(x.stormStrike(true), true)
-    T.logged(w, "SKY Lightning #%d+ felled " .. t.name)
+    T.logged(w, "WEATHER lightning #%d+ felled " .. t.name)
     T.eq(t.part:GetAttribute("RenderRole"), "Stump")
     x.regrowStump(t) -- grown back, ten minutes on
     e.now = e.now + 600
