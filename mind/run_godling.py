@@ -85,7 +85,8 @@ def main():
                          "connection to the world however many watch (0 = off; with --attach, export the world's "
                          "WORLD_SPECTATOR_TOKEN)")
     ap.add_argument("--memory", choices=("native", "native2", "hindsight"), default="native",
-                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4)")
+                    help="native = m-003 memory; native2 = brain-like memory; hindsight = Hindsight engine (ADR-002 D4). "
+                         "Learned skills follow ADR-032 under every engine")
     ap.add_argument("--hindsight-url", default=None, help="use a running Hindsight server instead of starting one")
     args = ap.parse_args()
     # Stop cleanly on Ctrl+C even when started in the background (which ignores SIGINT), and on SIGTERM.
@@ -155,7 +156,7 @@ def main():
         world = World(local_world, args.name)
         llm = LLM(args.model, log=log)
         memory = make_memory(args, run, log)
-        library = SkillLibrary(run / "memory" / "skills.json", log=log, protect_proven=args.memory != "native")
+        library = SkillLibrary(run / "memory" / "skills.json", log=log)  # every engine keeps proven skills (ADR-032)
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
                         walk_speed=args.walk_speed, kept_in=memory.built_into,
                         reserved=memory.reserved_cells)
@@ -163,8 +164,10 @@ def main():
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step
         skills.next_glance = attention.take_glance
+        skills.on_reflex = attention.notice  # a reflex it took (taking shelter, ADR-028) is news for the next plan
         mind = Mind(llm, memory, args.persona.read_text(), skills, library, name=args.name, log=log, agenda=args.agenda,
                     discovery=discovery, house_project=args.house_project)
+        mind.on_news = attention.notice  # so is its house lost (ADR-028)
     except BaseException:  # stopped or failed while starting: leave no world server holding the port
         stop_children(relay, server, hindsight)
         raise
@@ -407,6 +410,9 @@ class Survive:
             time.sleep(5)
 
 
+SHELTERED = "the body took shelter by itself"  # why a plan is dropped when the body took shelter while it was thought
+
+
 def agenda_loop(world, attention, memory, mind, skills, args, log, started, stats, structures):
     """Think while moving: the next agenda is planned while the body does the current agenda's last project."""
     pool = ThreadPoolExecutor(max_workers=3)  # a stale plan still finishing must not block a fresh one
@@ -444,7 +450,7 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
         snap = observe_body(world, attention)
         if snap.dead or attention.death_pending:
             return died()
-        maybe_sleep(mind, memory, snap, args, log)
+        maybe_sleep(mind, memory, snap, args, log, skills)
         snap = observe_body(world, attention)  # sleep can outlast a whole death and rebirth, too
         if snap.dead or attention.death_pending:
             return died()
@@ -456,8 +462,12 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
             future = state["future"]
             if not future.done():  # the body stands until its mind has thought: the viewers' screen says so
                 log(kind="thinking")
-            if watch_while_thinking(future, world, attention, skills):
+            why = watch_while_thinking(future, world, attention, skills)
+            if why == "died":
                 return died()
+            if why == "sheltered":  # ADR-028: that plan was for the body out in the rain; the next hears why it moved
+                discard_plan(SHELTERED)
+                return
             try:
                 thought = future.result()
             except BaseException:
@@ -526,17 +536,20 @@ def agenda_loop(world, attention, memory, mind, skills, args, log, started, stat
 
 
 def watch_while_thinking(future, world, attention, skills):
-    """No idle behaviours: the body waits for its mind. But it keeps watching, so what happens meanwhile still
-    gets a glance, and the next plan hears of it."""
+    """No idle behaviours: while its mind thinks, the body does nothing of its own accord but its reflexes. It keeps
+    watching, so what happens meanwhile still gets a glance and the next plan hears of it; it braces through a quake;
+    and it takes shelter when the cold is killing it (ADR-028). Returns "died" (the plan belongs to the life that
+    ended) or "sheltered" (the plan was thought for where the body stood) to stop waiting for that plan, else None."""
     while not future.done():
+        snap = None
         try:
             snap = observe_body(world, attention)
             if snap.dead or getattr(attention, "death_pending", False):
-                return True  # stop waiting for a plan that belongs to the life that ended
+                return "died"
         except WorldError:
             pass  # the plan on its way is worth more than one missed look
-        skills.steady()  # braced through an earthquake, if the ground rumbles
-        skills.glance()
+        if skills.reflexes(snap=snap, carried=False):
+            return "sheltered"
         time.sleep(0.25)
 
 
@@ -617,7 +630,7 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
         if snap.dead or attention.death_pending:
             live_through_death(world, attention, mind, log, state.get("doing", ""))
             return
-        maybe_sleep(mind, memory, snap, args, log)
+        maybe_sleep(mind, memory, snap, args, log, skills)
         snap = observe_body(world, attention)
         if snap.dead or attention.death_pending:
             live_through_death(world, attention, mind, log, state.get("doing", ""))
@@ -627,7 +640,17 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
         if msgs:
             state["chat_after"] = max(m.get("created_at", "") for m in msgs)
         waited = time.time()
-        thought = mind.think(mind.prepare(snap, attention.take_events(), msgs))
+        future = pool.submit(mind.think, mind.prepare(snap, attention.take_events(), msgs))
+        why = watch_while_thinking(future, world, attention, skills)  # the body keeps its reflexes meanwhile
+        if why == "sheltered":
+            future.cancel()  # a call already running may finish; its plan is never adopted
+            stats["plans_discarded"] += 1
+            log(kind="plan_discarded", reason=SHELTERED)
+            return
+        if why == "died":
+            live_through_death(world, attention, mind, log, state.get("doing", ""))
+            return
+        thought = future.result()
         stats["waited_for_mind_s"] += time.time() - waited
         snap = observe_body(world, attention)
         if snap.dead or attention.death_pending:
@@ -653,8 +676,12 @@ def single_loop(world, attention, memory, mind, skills, args, log, started, stat
                 live_through_death(world, attention, mind, log, state.get("doing", ""))
                 return
 
-    while not args.minutes or time.time() - started < args.minutes * 60:
-        survive(cycle)
+    pool = ThreadPoolExecutor(max_workers=2)  # a plan dropped while it was thought may still be finishing
+    try:
+        while not args.minutes or time.time() - started < args.minutes * 60:
+            survive(cycle)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 DEAD_LOOK = 1.0  # seconds between looks while the body lies dead
@@ -680,7 +707,11 @@ def live_through_death(world, attention, mind, log, doing=""):
     return snap
 
 
-def maybe_sleep(mind, memory, snap, args, log):
+def maybe_sleep(mind, memory, snap, args, log, skills=None):
+    """The hourly sleep: a long model call on the body's own thread. It waits while the cold is killing the body
+    (ADR-028): no reflex runs during it, and a body freezing in the rain does not sit down to dream."""
+    if skills is not None and skills.cold_danger(snap):
+        return
     if time.time() - memory.state["last_sleep"] >= args.sleep_minutes * 60:
         try:
             mind.sleep(snap)
