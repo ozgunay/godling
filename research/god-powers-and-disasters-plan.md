@@ -12,7 +12,7 @@ This plan follows on from `reports/God games lessons for Godling.md` and from yo
 |---|---|---|
 | Sky powers | Stone, Log, Regrow, Lightning, Meteor, called from the guest panel as the bodiless player `Sky` | `world/main.lua` `SKY_POWERS`, `tools/guest_panel.py` |
 | Sky harm | Lightning takes 35 health within 7; a meteor's stone takes 45 within 6. A stone never lands on anyone. | ADR-009 |
-| Random events | Showers, wet spells, thunderstorms, morning fog, a ship passing far out, driftwood | ADR-010 |
+| Random events | Showers, wet spells, thunderstorms, morning fog, a ship passing far out (driftwood until ADR-026) | ADR-010, ADR-026 |
 | Survival | Hunger, health, fainting at the raft, coconuts, fish, a carved spear, fire by friction | ADR-007, ADR-010 |
 | God bot | Calls a sky power at long random intervals during a run | `tools/god_bot.py` |
 | Reflexes | A glance at what happens, between steps and while waiting for the mind | `skills.glance` |

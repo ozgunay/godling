@@ -20,6 +20,27 @@ def test_the_screen_reads_the_mind_as_the_cases_say():
                                 world_kept=crowded["world_kept"])["feed"] == crowded["feed"]
 
 
+def test_a_stopgap_is_no_step_of_the_agenda():
+    """Review of #80 (80-CDE14): the screen showed a stop-gap as "2 of 3" of the agenda an interruption had thrown away.
+    The tracks keep the flag, so the viewers' screen can tell (reduceStatus, the same case)."""
+    case = CASE["stopgap"]
+    assert replay.reduce_status(case["entries"])["now"] == case["now"]
+    assert "stopgap" in replay.TRACKED["project"]
+
+
+def test_what_godling_says_aloud_is_on_the_screen():
+    """Run live: the island page inside the screen shows only its picture (?embed=1), so the world chat never reached a
+    viewer, and the feed had no line for what Godling said (ADR-031)."""
+    spoken = CASE["spoken"]
+    assert replay.reduce_status(spoken["entries"], feed_kept=spoken["feed_kept"],
+                                world_kept=spoken["world_kept"])["feed"] == spoken["feed"]
+    said = {"time": 9, "kind": "said", "words": "Back.", "moment": "reborn"}
+    assert replay.reduce_status([said], clean=lambda s: f"<{s}>")["feed"] == [
+        {"time": 9, "who": "godling", "about": "said", "text": "<Back.>"}]
+    assert replay._makes_line(said) and not replay._makes_line({"kind": "said", "words": ""})
+    assert replay.TRACKED["said"] == ("words", "moment")
+
+
 def test_now_ends_with_its_project_and_a_think_ends_with_the_decision():
     start = {"time": 1, "kind": "project", "phase": "start", "goal": "a wall", "intention": "Build a wall"}
     end = {"time": 9, "kind": "project", "phase": "end", "goal": "a wall", "ok": True}

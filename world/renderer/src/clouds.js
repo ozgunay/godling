@@ -149,6 +149,7 @@ function voxelTile(cells) {
 export function createClouds(scene, tier) {
   const cells = cloudPattern()
   const layer = tier.clouds === 'voxel' ? voxelTile(cells) : flatLayer(cells)
+  layer.object.userData.noAim = true // sky, not island: never aimed at (aim.js)
   scene.add(layer.object)
   const tint = new THREE.Color()
   const white = new THREE.Color(1, 1, 1)

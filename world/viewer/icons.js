@@ -308,6 +308,18 @@ const DRAW = {
     dots(g, [[1, 12]], 'w')
     return outline(g)
   },
+  speech() { // Godling saying something aloud: a speech balloon, its tail to the speaker (unlike think's bubbles)
+    return outline(rows([
+      '.wwwwwwwwww.',
+      'wwwwwwwwwwww',
+      'wwkkwkkwkkww',
+      'wwwwwwwwwwww',
+      'WWWWWWWWWWWW',
+      '.WWWWWWWWWW.',
+      '..WW........',
+      '..W.........',
+    ]))
+  },
   more() { // the feed unfolds downwards
     return outline(rows(['.........', '.ww...ww.', '.www.www.', '..wwwww..', '...www...', '....w....', '.........']))
   },
