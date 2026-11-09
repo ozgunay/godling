@@ -366,7 +366,7 @@ def test_once_it_has_said_there_is_no_roof_it_looks_again_only_now_and_then(make
     island, body = make()
     looks = []
     search = body._shelters
-    body._shelters = lambda *a: looks.append(1) or search(*a)
+    body._shelters = lambda *a, **k: looks.append(1) or search(*a, **k)
     assert body.run("jump", {}).ok and len(looks) == 1
     assert body.run("wait", {"seconds": 3}).ok and len(looks) == 1
     island.now += sk.SHELTER_LOOK_AGAIN
@@ -390,7 +390,7 @@ ROOM = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
 def test_at_night_it_goes_into_the_house_it_knows_not_its_doorway(make):
     # 76-CDE14: with real walls, a doorway roofed by its lintel is the nearest roof, one cell from the only warm place.
-    # A house it has stood in comes first when it is not much further.
+    # A house it has stood in comes first (INT-10).
     island, body = make(house(), health=80, rain=0, wet=0, night=True, room=ROOM)
     island.solid_pieces = True
     assert body.run("walk_to", {"x": 0, "z": 0}).ok and island.attrs["InHouse"]  # it has been inside
@@ -399,6 +399,57 @@ def test_at_night_it_goes_into_the_house_it_knows_not_its_doorway(make):
     result = body.run("jump", {})
     assert result.summary.startswith("interrupted: You were cold") and "into a house it knows" in result.summary
     assert island.attrs["InHouse"] and not island.attrs["Cold"]
+
+
+def test_a_house_it_knows_comes_before_any_plain_roof_in_reach(make):
+    # INT-10: a house warms and mends (2-4 times as fast with #82); a plain roof at night only halves the cold. Its own
+    # eaves, or a roof much nearer than the house, are no reason to stop short of it.
+    island, body = make(house() + [roof("Log_Shed", -20, -25)], health=80, rain=0, wet=0, night=True, room=ROOM)
+    island.solid_pieces = True
+    assert body.run("walk_to", {"x": 0, "z": 0}).ok and island.attrs["InHouse"]  # it has been inside
+    assert body.run("walk_to", {"x": -20, "z": -20}).ok and island.attrs["Cold"]  # the shed is 5 off, the house 28
+    island.attrs["Health"] = 30
+    result = body.run("jump", {})
+    assert "into a house it knows" in result.summary and island.attrs["InHouse"]
+
+
+def test_cold_under_a_roof_at_night_it_walks_on_into_its_house(make):
+    # INT-10: covered, but cold (a roof only halves it at night), with a house it knows in reach: it goes in.
+    island, body = make(house() + [roof("Log_Shed", -20, -25)], health=80, rain=0, wet=0, night=True, room=ROOM)
+    island.solid_pieces = True
+    assert body.run("walk_to", {"x": 0, "z": 0}).ok and island.attrs["InHouse"]
+    assert body.run("walk_to", {"x": -20, "z": -25}).ok and island.attrs["Sheltered"] == "roof"  # the mind's choice
+    assert island.attrs["Cold"] and not island.attrs["InHouse"]
+    island.attrs["Health"] = 30
+    result = body.run("jump", {})
+    assert result.summary.startswith("interrupted: You were cold under a roof that keeps only half the cold off")
+    assert "into a house it knows" in result.summary and island.attrs["InHouse"]
+    # The mind takes it back out under the shed: let go until its health has fallen another ten (no loop).
+    assert body.run("walk_to", {"x": -20, "z": -25}).ok and island.attrs["Sheltered"] == "roof"
+    island.attrs["Health"] = 25
+    assert body.run("jump", {}).ok and not island.attrs["InHouse"]
+    island.attrs["Health"] = 20
+    assert not body.run("jump", {}).ok and island.attrs["InHouse"]
+
+
+def test_cold_under_a_roof_with_no_house_known_it_stays(make):
+    # Under a roof at night with no house it has stood in: there is nowhere warmer it knows; nothing is said.
+    island, body = make([roof("Log_Shed", 0, 0)], rain=0, wet=0, night=True)
+    assert island.attrs["Sheltered"] == "roof" and island.attrs["Cold"]
+    assert body.run("jump", {}).ok and body.told == []
+
+
+def test_a_house_that_keeps_nothing_warm_is_not_walked_to_again(make):
+    # The world finds no house there now (a piece fell into the room): it is not walked to again while the danger lasts.
+    island, body = make(house() + [roof("Log_Shed", -20, -25)], health=80, rain=0, wet=0, night=True, room=ROOM)
+    island.solid_pieces = True
+    assert body.run("walk_to", {"x": 0, "z": 0}).ok and island.attrs["InHouse"]
+    assert body.run("walk_to", {"x": -20, "z": -25}).ok
+    island.feel = weather(island, room=())  # no longer a house
+    island.attrs["Health"] = 30
+    assert not body.run("jump", {}).ok and not island.attrs["InHouse"]  # it went, and the mind hears what it found
+    walks = len(island.actions("MoveTo"))
+    assert body.run("jump", {}).ok and body.run("jump", {}).ok and len(island.actions("MoveTo")) == walks
 
 
 def loop_in_the_rain(monkeypatch, tmp_path, agenda):

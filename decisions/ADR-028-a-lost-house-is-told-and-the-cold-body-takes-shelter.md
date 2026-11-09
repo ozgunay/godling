@@ -83,9 +83,15 @@ Then the step waits, and the body walks to the nearest roof it knows within 80 u
   reckons it, and no more than 15 up (`main.lua` `shelterOf`, `house.OVER`), with nothing in between.
 
 Either way, the body first checks that the roof is still there, so a roof that is gone is no shelter. The broken house
-is the case in point: the mind thought its roof was still there and died under where it had been. A house it has
-stood in counts as 10 units nearer than a plain roof (`HOUSE_WORTH`). At night only a house is warm, and the doorway of
-a house, roofed by its lintel, is otherwise the nearest roof to a body coming from outside.
+is the case in point: the mind thought its roof was still there and died under where it had been.
+
+**A house it has stood in comes before any plain roof in reach.** A house keeps the cold off and mends a fed body
+(2 to 4 times as fast once its size counts, #82). A plain roof at night only halves the cold, and mends nothing.
+Coming from outside, the nearest roofs are often the house's own eaves, or the doorway under its lintel. When the body
+is already under a roof that is no house, and still cold, it walks on into a house it knows in reach. With none known,
+it stays under the roof and says nothing. A house where it is not warm on arrival (no house there now) is not walked
+to again while the danger lasts. This walk on is held back like any other: once it has taken the body into the house,
+it lets the mind take it out again under a roof until its health has fallen another 10.
 
 The world has the last word on arrival:
 - **The rain still reaches it there.** That roof is not tried again while the danger lasts.
@@ -110,7 +116,8 @@ stood. The step's result carries the words to the mind; attention keeps them for
   (`SHELTER_LOOK_AGAIN`), and a roof built meanwhile is one it knows.
 - **The mind takes it out again.** It may need food: below half fed nothing mends, even under a roof. The reflex lets
   it go until its health has fallen another 10 (`COLD_AGAIN`). So within one spell of danger it steps in at most about
-  four times, at 35, 25, 15 and 5. Each time, the mind is told. If the roof it sheltered under is knocked away from
+  four times, at 35, 25, 15 and 5, besides one more try a minute at a roof or house it could not get to. Each time,
+  the mind is told. If the roof it sheltered under is knocked away from
   over it, that was not the mind, and it shelters again at once.
 - **When the danger is over.** That is at health 50 (`WARM_AGAIN`), or once the body stands in the open in dry weather
   without being cold. Drying under the roof is not the end of it.
@@ -169,14 +176,17 @@ Run from the repository root on Windows (Python 3.14). CI is not running (GitHub
   - A remembered roof that is gone is no shelter; a roof too low to walk under, or too high to count, is none either.
   - A roof the world does not count is tried once, then the next, and named; a walk back under it is not let go.
   - A roof it could not get to is tried again a minute later.
-  - At night it goes into the house it has stood in, not its doorway.
+  - At night it goes into the house it has stood in, not its doorway, and before a shed much nearer than the house.
+  - Cold under a roof at night, it walks on into the house; under a roof with no house known, it stays; a house that
+    keeps nothing warm now is not walked to again; once in, it lets the mind take it out until 10 more are gone.
   - It shelters inside a `wait`, between a learned skill's steps, and while the mind thinks, in both run loops, which
     then drop the plan being thought.
   - A walk to a roof (also one named by helpers), a learned walk home, eating and speaking are let go.
   - News on the way stops it; a bug in its walk never escapes `Skills.run`; a failed observation is logged.
   - The hourly sleep waits while the cold is killing the body.
 - Against the code from before PR #76, 14 of its first 23 tests failed: every one that needs the notice or the reflex.
-  Against PR #76 itself, 26 of the review fix's tests failed, each one a finding.
+  Against PR #76 itself, 26 of the review fix's tests failed, each one a finding, and 3 more for the cross-PR finding
+  INT-10.
 - The mind and tools suites pass (`python -m pytest -q`). The world script is unchanged.
 
 ## Not checked
@@ -187,8 +197,8 @@ Run from the repository root on Windows (Python 3.14). CI is not running (GitHub
 - **The body's view of a roof can differ from the world's.** The world probes a column 1.2 wide over the body; the body
   looks at the cell's centre and at building pieces only, not rock. When they differ, the world's word is taken on
   arrival, at the cost of a walk.
-- **At night a plain roof only halves the cold.** The reflex prefers a house it has stood in, but goes to a roof when
-  it knows no house near, and a body sheltering there at night still loses health, at half the pace.
+- **At night a plain roof only halves the cold.** The reflex goes into a house it has stood in, but goes to a roof when
+  it knows no house in reach, and a body sheltering there at night still loses health, at half the pace.
 - **The brace reflex still has no watch during the hourly sleep**, as before ADR-028.
 - **The world is unchanged.** It already gives `Health`, `Cold`, `InRain`, `Sheltered`, `InHouse` and `ByFire`, so
   there are no world tests.
