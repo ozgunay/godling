@@ -167,8 +167,9 @@ class NativeMemory:
         self.state["amendments"] = (self.state.get("amendments", []) + [text.strip()[:400]])[-4:]
 
     def finish_sleep(self, digest, intentions):
-        self.state["digest"] = digest.strip()[:2500]
-        self.state["amendments"] = []  # the new story is written from them
+        if digest.strip():  # a sleep that wrote no story leaves the old one, and what has made it wrong since
+            self.state["digest"] = digest.strip()[:2500]
+            self.state["amendments"] = []  # the new story is written from them
         self.set_intentions(intentions)
         self.state["last_sleep"] = time.time()
         self.state["slept"] += 1
