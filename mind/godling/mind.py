@@ -601,13 +601,18 @@ thought and in that project's intention."""
         if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
             house["installed"] = len(found["pieces"])
             self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
+        if snap.quake_phase or self._settling(house, observed):
+            return found  # pieces the shaking woke stand where they did, not yet settled: judged once they are still
         was_house = bool(house.get("built"))
-        gone, had = self._house_gone(house, found, observed)
+        had = house.get("had")  # the pieces it had at the last look at this layout, and where; None at the first
+        gone = self._house_gone(had, found, observed) if had is not None else []
+        house["had"] = {n: [round(v, 2) for v in observed.entities[n].pos] for n in found["pieces"]
+                        if n in observed.entities}
         if had is not None and (gone or (was_house and not found["house"])):
-            # Measured from what still stands: putting back what fell is progress again, and no stall is reckoned
-            # from a best it had before (run live: "no further in 381 minutes" an hour after the house fell).
-            house["best"], house["best_at"] = found["score"], time.time()
-            self._house_lost(snap, house, found, gone, had, was_house and not found["house"])
+            unhoused = was_house and not found["house"]
+            if unhoused:  # rebuilding it is progress, and no stall is reckoned from the house it was (run live: "no
+                house["best"], house["best_at"] = found["score"], time.time()  # further in 381 minutes")
+            self._house_lost(snap, house, found, gone, len(had), unhoused)
         if found["score"] > house.get("best", -1):
             house["best"], house["best_at"] = found["score"], time.time()
             self.log(kind="house", phase="progress", score=found["score"], next=found["next"], house=found["house"])
@@ -616,7 +621,6 @@ thought and in that project's intention."""
             self.log(kind="house", phase="built", inside=house["inside"], door=house["door"])
             if house.pop("lost", None):
                 text = f"Your house at {at(house['inside'][0])} stands as a house again: it keeps the rain and the cold off you."
-                self.notes.append(text)
                 self.memory.amend(text, tick=snap.tick)
                 self.on_news(text, 4)
         elif not found["house"]:
@@ -624,41 +628,44 @@ thought and in that project's intention."""
         return found
 
     @staticmethod
-    def _house_gone(house, found, observed):
-        """The pieces of the house it had at the last look that are not in it now, gone from where they stood, and how
-        many it had (ADR-028); (none, None) at the first look at a layout, which only takes note of them (a house the
-        mind changed is its own doing, not a loss). A piece still where it stood but no longer reckoned the house's own
-        (now in its way) is not gone."""
-        layout_key = [house["inside"], house["door"]]
-        had = house.get("had") if house.get("had_for") == layout_key else None
+    def _house_gone(had, found, observed):
+        """The pieces of the house it had at the last look (`had`: name -> where it stood) that are not in it now and
+        are gone from where they stood (ADR-028). A piece still where it stood but no longer reckoned the house's own
+        (now in its way) is not gone. A house kept from before ADR-028, or one the mind changed (_choose_house), has
+        no record: its first look only takes note of its pieces."""
         now = set(found["pieces"])
-        house["had"] = {n: [round(v, 2) for v in observed.entities[n].pos] for n in found["pieces"]
-                        if n in observed.entities}
-        house["had_for"] = layout_key
-        if had is None:
-            return [], None
         return sorted(n for n, was in had.items() if n not in now and (
             n not in observed.entities or hdist(observed.entities[n].pos, was) > 0.5
-            or abs(observed.entities[n].pos[1] - was[1]) > 0.5)), len(had)
+            or abs(observed.entities[n].pos[1] - was[1]) > 0.5))
+
+    @staticmethod
+    def _settling(house, observed):
+        """Whether a piece of the house stands where it stood but is not yet settled: woken by a quake (main.lua wakes
+        loose pieces as it shakes and lets them settle once it is still), it does not count as a wall or roof."""
+        return any(n in observed.entities and hdist(observed.entities[n].pos, was) <= 0.5
+                   and (not observed.entities[n].anchored or observed.entities[n].attrs.get("Settled") is False)
+                   for n, was in (house.get("had") or {}).items())
 
     def _house_lost(self, snap, house, found, gone, had, unhoused):
         """Its house stopped being a house (`unhoused`), or lost pieces it had: the mind hears it plainly and at once
-        (ADR-028), in its notes, as news and in memory, and once it was a house, in a line after its story so far."""
+        (ADR-028), as news (the death report keeps it too) and in memory, and once it was a house, in the line about it
+        and after its story so far until it is a house again."""
         where = at(house["inside"][0])
         names = ", ".join(gone[:6]) + (f" and {len(gone) - 6} more" if len(gone) > 6 else "")
         if unhoused:
+            roofed = "the roof is over the room" in found["done"]  # main.lua: any roof keeps the rain off
             text = (f"Your house at {where} is no longer a house: "
                     + (f"{len(gone)} of the {had} pieces in its walls and roof are gone or knocked out of place ({names})"
                        if gone else "something in it has changed; the line about your house says what it is short of")
-                    + ". It keeps neither the rain nor the cold off you now.")
-            house["lost"] = {"at": time.time(), "had": had, "left": len(found["pieces"])}
+                    + (". Its roof still keeps the rain off, but no longer the cold." if roofed else
+                       ". It no longer keeps the cold off you, nor the rain where its roof is gone."))
+            house["lost"] = {"at": time.time()}
             self.memory.amend(text, tick=snap.tick, entities=gone)
         else:
             text = (f"Part of your house at {where} came down: {' and '.join(gone) if len(gone) <= 2 else names} "
                     f"{'is' if len(gone) == 1 else 'are'} gone or knocked out of place ({len(found['pieces'])} of its "
                     "pieces stand).")
             self.memory.store_experience(text, kind="house", tick=snap.tick, entities=["house", *gone], importance=4)
-        self.notes.append(text)
         self.on_news(text, 5 if unhoused else 4)
         self.log(kind="house", phase="lost", was_house=unhoused, house=found["house"], had=had,
                  pieces=len(found["pieces"]), gone=gone, score=found["score"], text=text)
@@ -730,8 +737,10 @@ thought and in that project's intention."""
                 return
             self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
                      was=now["inside"])
-            if same_site:  # its progress is measured afresh: the old best was scored against another layout
-                self.memory.set_house({**now, "inside": room, "door": door, "best": -1, "best_at": time.time()})
+            if same_site:  # its progress is measured afresh: the old best was scored against another layout, and its
+                # pieces too, from a first look (ADR-028: what changes with the layout is the mind's doing, not a loss)
+                self.memory.set_house({**{k: v for k, v in now.items() if k != "had"}, "inside": room, "door": door,
+                                       "best": -1, "best_at": time.time()})
                 self.house_progress(snap)
                 return
             moves = now.get("moves", 0) + 1

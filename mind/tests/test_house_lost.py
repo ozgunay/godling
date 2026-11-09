@@ -92,27 +92,26 @@ def test_the_mind_hears_at_once_that_its_house_is_lost(make):
     assert lost[0]["was_house"] is True and lost[0]["had"] == 41 and lost[0]["pieces"] == 32
     assert lost[0]["gone"] == sorted(ROOF + ["Block_w003"])
     told = ("Your house at (0.0, 0.0) is no longer a house: 9 of the 41 pieces in its walls and roof are gone or knocked "
-            "out of place (Block_NE, Block_SE, Block_w003, Log_E0, Log_E1, Log_N and 3 more). It keeps neither the rain "
-            "nor the cold off you now.")
+            "out of place (Block_NE, Block_SE, Block_w003, Log_E0, Log_E1, Log_N and 3 more). It no longer keeps the "
+            "cold off you, nor the rain where its roof is gone.")
     assert lost[0]["text"] == told
     assert news == [(told, 5)]  # attention hears it as news (run_godling wires on_news to Attention.notice)
 
-    # The next plan: told plainly, in the line about its house and in its notes; no stall from before the loss.
+    # The next plan: told plainly, in the line about its house and as news; no stall from before the loss.
     text = mind.situation(island.snap(), [], [])
     line = next(l for l in text.splitlines() if l.startswith("Your house"))
     assert ("the doorway at (0.0, -2.5). It stood as a house until 0 minutes ago; now it is no house, and keeps neither "
             "the cold off you nor, where its roof is gone, the rain.") in line
     assert "come no further" not in text
-    assert f"Notes: {told}" in text
+    assert told not in mind.notes, "76-CLEAN7: told once as news, not again in the notes of the same plan"
     # Memory: an episode the next sleep consolidates, and the digest no longer left saying the house is finished.
     episode = mem.episodes[-1]
     assert episode["kind"] == "house" and episode["importance"] == 5 and episode["text"] == told
     assert f"Your story so far:\n{mem.state['digest']}\nSince you wrote that: {told}" in text
-    # The plan after it still says so (notes are delivered once; the house line and the digest's addendum stay).
+    # The plan after it still says so (news is delivered once; the house line and the digest's addendum stay).
     mind.prepare(island.snap(), [], [])
     again = mind.situation(island.snap(), [], [])
     assert "It stood as a house until" in again and f"Since you wrote that: {told}" in again
-    assert "Notes:" not in again
     # Said once: the next look finds nothing new.
     mind.record_outcome({"goal": "look"}, [], island.snap())
     assert phases(logs) == ["chose", "built", "lost"] and len(news) == 1
@@ -140,6 +139,7 @@ def test_pieces_lost_from_a_house_being_built(make):
     choose(mind, island)
     assert phases(logs) == ["chose"] and mem.state["house"]["installed"] == 33
     best = mem.state["house"]["best"]
+    mem.state["house"]["best_at"] -= 200 * 60  # stuck for 200 minutes
     island.ents.pop("Block_w003")
     island.ents["Block_w013"]["position"] = [-12, 1.25, 6]
     mind.record_outcome({"goal": "a wall"}, [], island.snap())
@@ -147,31 +147,74 @@ def test_pieces_lost_from_a_house_being_built(make):
     assert len(lost) == 1 and lost[0]["was_house"] is False and lost[0]["gone"] == ["Block_w003", "Block_w013"]
     told = ("Part of your house at (0.0, 0.0) came down: Block_w003 and Block_w013 are gone or knocked out of place "
             "(31 of its pieces stand).")
-    assert news == [(told, 4)] and mind.notes == [told]
+    assert news == [(told, 4)] and mind.notes == []
     assert mem.episodes[-1]["text"] == told and not mem.state.get("amendments"), "the digest never said it was finished"
-    # Its progress is measured from what still stands: putting a piece back is progress again.
-    assert mem.state["house"]["best"] < best
+    # 76-AB11: a piece knocked off and put straight back is no progress, and the stall it was in still counts.
     island.ents["Block_w013"]["position"] = [-2.5, 6.25, 0]
     mind.record_outcome({"goal": "a wall"}, [], island.snap())
-    assert [l for l in logs if l.get("phase") == "progress"][-1]["score"] == mem.state["house"]["best"]
+    assert mem.state["house"]["best"] == best and not [l for l in logs if l.get("phase") == "progress"][1:]
+    assert "It has come no further in 200 minutes" in mind.situation(island.snap(), [], [])
 
 
-def test_no_false_alarms(make):
-    island, mem, mind, logs, news = make(house(roof=False))
+def test_no_false_alarms(make, monkeypatch):
+    # 76-SWEEP4: a finished house, so that a missing record read as an empty one would alarm.
+    island, mem, mind, logs, news = make(house())
     choose(mind, island)
     # A house kept from before this was told has no record of its pieces: the first look only takes note of them.
-    for key in ("had", "had_for"):
-        mem.state["house"].pop(key, None)
-    island.ents.pop("Block_w003")
+    mem.state["house"].pop("had")
+    island.ents.pop("Log_N")
     mind.record_outcome({"goal": "x"}, [], island.snap())
-    # Its layout changed on the same site: pieces counted afresh, nothing lost.
-    mind.adopt({"reply": {"house": {"inside": ROOM, "door": [-2.5, 0]}}, "seconds": 1, "prepared": {"assumes": None}},
-               island.snap())
+    # Its layout changed on the same site, and the first look at it waited (as when the site must be seen first): an
+    # old piece that moves meanwhile was never this layout's.
+    with monkeypatch.context() as m:
+        m.setattr(mind, "house_progress", lambda snap: None)
+        mind._choose_house({"inside": ROOM, "door": [-2.5, 0]}, island.snap())
+    island.ents["Block_w002"]["position"] = [-12, 1.25, 6]
     mind.record_outcome({"goal": "x"}, [], island.snap())
     # Something set down in the room was never part of it.
     island.ents["Block_x"] = block("Block_x", 0, 1.25, 0)
     mind.record_outcome({"goal": "x"}, [], island.snap())
     assert "lost" not in phases(logs) and news == []
+
+
+def test_a_stray_piece_in_the_room_leaves_its_roof_keeping_the_rain_off(make):
+    # 76-AB6: no longer a house, but every roof piece is in place.
+    island, mem, mind, logs, news = make(house())
+    choose(mind, island)
+    island.ents["Log_9"] = ent("Log_9", (1.25, 1.25, 0), (2.5, 2.5, 2.5))  # felled by lightning into the room
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    (text, _), = news
+    assert text.endswith("Its roof still keeps the rain off, but no longer the cold.") and "neither" not in text
+
+
+def test_a_quake_that_only_shakes_the_house_is_no_loss(make):
+    # 76-CDE7: while the ground shakes, and until they settle, woken pieces standing where they were are no house.
+    island, mem, mind, logs, news = make(house())
+    choose(mind, island)
+    walls = [n for n in island.ents if n.startswith("Block_w")]
+    for name in walls:
+        island.ents[name] = {**island.ents[name], "anchored": False, "attributes": {"Settled": False}}
+    island.clock = {"QuakePhase": "shaking", "Quake": 0.8}
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    island.clock = {}  # still, but not yet settled
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    for name in walls:
+        island.ents[name] = {**island.ents[name], "anchored": True, "attributes": {}}
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    assert phases(logs) == ["chose", "built"] and news == [] and not mem.state.get("amendments")
+
+
+def test_a_sleep_without_a_story_keeps_the_addendum(make):
+    # 76-AB7: the addendum stays until a story is written from it.
+    island, mem, mind, logs, news = make(house())
+    choose(mind, island)
+    mem.state["digest"] = "My house is finished."
+    for name in ROOF:
+        island.ents.pop(name)
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    mind.llm = FakeLLM({"intentions": ["rebuild"]})
+    mind.sleep(island.snap())
+    assert mem.state["digest"] == "My house is finished." and len(mem.state["amendments"]) == 1
 
 
 def test_brain_memory_corrects_its_beliefs_about_the_house(make, tmp_path):
@@ -183,6 +226,23 @@ def test_brain_memory_corrects_its_beliefs_about_the_house(make, tmp_path):
         island.ents.pop(name)
     mind.record_outcome({"goal": "x"}, [], island.snap())
     assert any("is no longer a house" in f["text"] for f in mem.facts["house"])
+
+
+def test_brain_memory_keeps_the_correction_first_when_its_beliefs_are_full(make, tmp_path):
+    # 76-CDE12: six beliefs about the house, each confirmed: the correction is neither evicted nor listed after them.
+    mem = BrainMemory(tmp_path / "brain")
+    for text in ["my house is finished and keeps the cold off", "the roof logs rest on stone walls",
+                 "the doorway faces south toward the beach", "I mend fastest inside the room",
+                 "logs for walls come from the palms nearby", "a fire by the door keeps the night off"]:
+        mem.note(text, about="house")
+        mem.note(text, about="house")
+    island, mem, mind, logs, news = make(house(), memory=mem)
+    choose(mind, island)
+    for name in ROOF:
+        island.ents.pop(name)
+    mind.record_outcome({"goal": "x"}, [], island.snap())
+    recalled = mem.recall_for([], "house")["facts"]
+    assert "is no longer a house" in recalled[0]
 
 
 def test_attention_takes_notice_of_what_it_is_told(tmp_path):

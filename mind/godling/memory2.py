@@ -47,19 +47,22 @@ class BrainMemory(NativeMemory):
         return episode
 
     def amend(self, text, about="house", tick=0, entities=()):
-        """Also correct what it believes about the subject (a house it believes finished broke)."""
+        """Also correct what it believes about the subject (a house it believes finished broke): the correction counts
+        as more confirmed than any belief it corrects, so it is recalled first and never the one evicted, until sleep
+        rewrites the subject's beliefs."""
         super().amend(text, about, tick, entities)
-        self._fold(about, text, tick)
+        self._fold(about, text, tick, first=True)
 
-    def _fold(self, about, text, tick):
+    def _fold(self, about, text, tick, first=False):
         subject = self._subject(about)
         facts = self.facts.setdefault(subject, [])
+        top = max((f["seen"] for f in facts), default=0) + 1
         for fact in facts:
             if _similar(fact["text"], text):
-                fact.update(text=text.strip()[:300], seen=fact["seen"] + 1, last_tick=tick)
+                fact.update(text=text.strip()[:300], seen=top if first else fact["seen"] + 1, last_tick=tick)
                 break
         else:
-            facts.append({"text": text.strip()[:300], "seen": 1, "first_tick": tick, "last_tick": tick})
+            facts.append({"text": text.strip()[:300], "seen": top if first else 1, "first_tick": tick, "last_tick": tick})
             if len(facts) > MAX_FACTS_PER_SUBJECT:
                 facts.sort(key=lambda f: (f["seen"], f["last_tick"]))
                 facts.pop(0)
