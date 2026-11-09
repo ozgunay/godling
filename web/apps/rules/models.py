@@ -4,13 +4,17 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 NOTE_LIMIT_MAX = 140  # tools/guest_panel.py NOTE_LIMIT: the panel refuses anything longer whatever the site says
+WELCOME_CREDITS = 600  # the user's choice, 2026-11-09 (it was 20); staff change it in the admin, under Site rules
 
 
 class Rules(models.Model):
     """One row: how the site treats viewers. Rules.get() reads it (and makes it with the defaults the first time)."""
 
-    welcome_credits = models.PositiveIntegerField(default=20, help_text="Credits an account gets on confirming its "
-                                                                        "email (the user's choice: 20).")
+    welcome_credits = models.PositiveIntegerField(
+        default=WELCOME_CREDITS,
+        help_text=f"Free credits a new account gets on confirming its email, once per inbox (the user's choice: "
+                  f"{WELCOME_CREDITS}). A change counts for accounts confirmed from then on; those already welcomed "
+                  f"keep what they got. 0 gives none.")
     free_powers = models.BooleanField(default=False, help_text="Test mode: powers cost nothing.")
     power_every = models.PositiveIntegerField(default=2, help_text="Seconds between one viewer's powers.")
     note_every = models.PositiveIntegerField(default=180, help_text="Seconds between one viewer's notes.")

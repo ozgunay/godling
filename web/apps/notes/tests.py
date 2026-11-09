@@ -104,6 +104,11 @@ class AdminTests(TestCase):
             **reports}).status_code, 200)  # over 140: the form refuses it
         self.assertEqual(Rules.get().note_limit, 100)
 
+    def test_the_rules_page_shows_the_welcome_credits_and_what_a_change_does(self):
+        page = self.client.get("/admin/rules/rules/1/change/")
+        self.assertContains(page, 'name="welcome_credits" value="600"')
+        self.assertContains(page, "A change counts for accounts confirmed from then on")
+
     def test_notes_are_hidden_and_restored(self):
         note = Note.objects.create(author=self.viewer, text="hello")
         self.client.post("/admin/notes/note/", {"action": "hide", "_selected_action": [note.pk]})

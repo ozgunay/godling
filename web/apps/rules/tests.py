@@ -1,7 +1,9 @@
 """The site's rules and blocked words, read from the database: changed in the admin, they hold at once."""
+import importlib
 import re
 from datetime import timedelta
 
+from django.apps import apps as django_apps
 from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase
@@ -16,19 +18,31 @@ from apps.rules.models import BlockedWord, Rules
 from apps.users.models import User
 
 PASSWORD = "an-island-test-pass-4127"
+WELCOME_600 = importlib.import_module("apps.rules.migrations.0006_welcome_600")
 
 
 class RulesTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    def test_there_is_one_rules_row_with_the_old_defaults(self):
+    def test_there_is_one_rules_row_with_the_defaults(self):
         rules = Rules.get()
         self.assertEqual((rules.welcome_credits, rules.free_powers, rules.power_every, rules.note_every,
-                          rules.note_limit, rules.reports_to_hide), (20, False, 2, 180, 140, 3))
+                          rules.note_limit, rules.reports_to_hide), (600, False, 2, 180, 140, 3))
         Rules(welcome_credits=5).save()  # a second save is the same row
         self.assertEqual(Rules.objects.count(), 1)
         self.assertEqual(Rules.get().welcome_credits, 5)
+
+    def test_the_row_moves_to_600_welcome_credits_unless_the_admin_set_its_own(self):
+        """0006: a site still giving the old 20 gives 600; a number set in the admin stays, and going back undoes it."""
+        Rules.objects.filter(pk=1).update(welcome_credits=20)
+        WELCOME_600.forward(django_apps, None)
+        self.assertEqual(Rules.get().welcome_credits, 600)
+        WELCOME_600.backward(django_apps, None)
+        self.assertEqual(Rules.get().welcome_credits, 20)
+        Rules.objects.filter(pk=1).update(welcome_credits=50)
+        WELCOME_600.forward(django_apps, None)
+        self.assertEqual(Rules.get().welcome_credits, 50)
 
     def test_welcome_credits_follow_the_rules(self):
         Rules.objects.filter(pk=1).update(welcome_credits=7)
