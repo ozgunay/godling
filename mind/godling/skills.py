@@ -154,12 +154,13 @@ class Stuck(Interrupted):
 
 class Skills:
     def __init__(self, world, protected=lambda: set(), on_step=None, log=None, gifted=False, library=None,
-                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set()):
+                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set(), planned=lambda: set()):
         self.world = world
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
         self.kept_in = kept_in  # the name of the build a piece is built into (memory.built_into), or None
         self.reserved = reserved  # grid cells (ix, iz) to keep clear: the house's room, doorway and way out
+        self.planned = planned  # where the house's guided roof puts its logs: {((ix, iz), axis)} (memory.planned_roof)
         self._kept_clear = False  # the last hands-full reflex passed over spots in those cells
         self.placed = []  # pieces set down since the mind last asked (take_placed), by any skill, learned ones too
         self.on_placed = lambda snap: None  # refresh ownership before the next step, including inside learned skills
@@ -686,7 +687,7 @@ class Skills:
         self.world.act("Stop")
         return True
 
-    def _stand_point(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK):
+    def _stand_point(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK, under=None):
         """A clear spot on our own level, within reach of `target` (x, y, z), and clear of `avoid` (the long thing
         we reach for: we stand beside it, not on it).
 
@@ -706,6 +707,8 @@ class Skills:
                     continue
                 if avoid is not None and avoid.footprint_contains(sx, sz, margin=1.3):
                     continue
+                if under is not None and not under.footprint_contains(sx, sz):
+                    continue
                 body = (sx, level + BODY_CENTRE_Y, sz)
                 if math.dist(body, target) > reach - slack or not reaches(sx, sz):
                     continue
@@ -714,7 +717,7 @@ class Skills:
                     best = (score, (sx, sz))
             if best:
                 return best[1]
-        return self._close_stand_point(snap, target, reach, ignore, avoid, slack)
+        return self._close_stand_point(snap, target, reach, ignore, avoid, slack, under)
 
     def _reach_fn(self, snap, target, ignore, level):
         """Can the hands reach `target` from a spot (x, z) in a straight line? Not through anything two blocks high or
@@ -732,7 +735,7 @@ class Skills:
                            for i in range(1, steps))
         return reaches
 
-    def _close_stand_point(self, snap, target, reach, ignore=(), avoid=None, slack=REACH_SLACK):
+    def _close_stand_point(self, snap, target, reach, ignore=(), avoid=None, slack=REACH_SLACK, under=None):
         """Where the whole body fits within reach of `target`, when no spot on the rings round it is clear. In a
         house's room two cells wide (ADR-019), a block lying in a cell inside leaves only the free cells round it, a
         quarter unit wider than the body on each side, and every ring crosses a wall or the block. So every spot within
@@ -765,6 +768,8 @@ class Skills:
             for k in range(-n, n + 1):
                 sx, sz = tx + i * step, tz + k * step
                 if math.dist((sx, level + BODY_CENTRE_Y, sz), target) > reach - slack or blocked(sx, sz):
+                    continue
+                if under is not None and not under.footprint_contains(sx, sz):
                     continue
                 room = spare(sx, sz)
                 if room < 0 or not reaches(sx, sz):
@@ -887,12 +892,14 @@ class Skills:
         return f"{name} came to rest at ({obj.pos[0]:.2f}, {obj.pos[1]:.2f}, {obj.pos[2]:.2f}), {self._resting_on(snap, obj)}"
 
     # ---- beams: a long piece laid flat, up off the ground -----------------------------------------------
-    # A roof, a lintel or a bridge is a log across two supports. It stays up only if both its ends lie on something
-    # of the same height; in runs hut1-hut3 seven of seventeen raised logs fell or tilted, set a cell off their
+    # A lintel or a bridge is a log across two supports; a roof log may also rest on its middle, balanced on a wall or
+    # a post (ADR-019, ADR-033). In runs hut1-hut3 seven of seventeen raised logs fell or tilted, set a cell off their
     # posts, turned the wrong way, or across posts of unequal height, and the report said only "not resting on
     # anything". Now the hands find the supports, as a person feels for the post under the beam's end: aimed within a
-    # cell or a quarter turn of two supports of the same height, the log is set on them. And when one falls anyway,
-    # the report says what was under each end.
+    # cell or a quarter turn of two supports of the same height, the log is set on them. A log aimed with its middle on
+    # something is set there, unless a cell along it lies across two supports (a lintel aimed on one flank, 82-AB8);
+    # where the house's own roof puts a log on a middle, it is set there. When one falls anyway, the report says what
+    # was under its middle and each end.
     @staticmethod
     def _beam_ends(centre, size):
         """The centres of the end cells of a long piece lying flat (along x or along z)."""
@@ -900,15 +907,25 @@ class Skills:
         x, _, z = centre
         return ((x - half, z), (x + half, z)) if size[0] >= size[2] else ((x, z - half), (x, z + half))
 
+    @staticmethod
+    def _support_at(snap, x, z, bottom):
+        """What would hold up a piece at (x, z) whose underside is at `bottom`: (top, entity) of the highest thing no
+        higher than that (both None over the sea)."""
+        return snap.surface(x, z, below=bottom + 0.25)
+
     def _under_ends(self, snap, centre, size):
-        """What lies under each end of a beam at `centre`: [(x, z, top, entity)], the highest thing no higher than its
-        bottom (top and entity None over the sea)."""
+        """What lies under each end of a beam at `centre`: [(x, z, top, entity)] (_support_at)."""
         bottom = centre[1] - size[1] / 2
-        return [(x, z, *snap.surface(x, z, below=bottom + 0.25)) for x, z in self._beam_ends(centre, size)]
+        return [(x, z, *self._support_at(snap, x, z, bottom)) for x, z in self._beam_ends(centre, size)]
 
     @staticmethod
-    def _ends_text(ends, bottom):
+    def _ends_text(ends, bottom, middle=None):
+        """What lay under a beam that did not stay up: its middle, if something was there, and each end."""
         words = []
+        if middle is not None and middle[3] is not None and middle[3].role != "Ground":
+            x, z, top, e = middle
+            words.append(f"its middle at ({x:.1f}, {z:.1f}) " + (f"lay on {e.name} (top {top:.2f})" if top >= bottom - 0.3
+                                                                 else f"hung {bottom - top:.2f} above {e.name} (top {top:.2f})"))
         for x, z, top, e in ends:
             where = f"its end at ({x:.1f}, {z:.1f})"
             if e is None or e.role == "Ground":
@@ -927,11 +944,20 @@ class Skills:
         return target[1] - size[1] / 2 > floor + CUBE / 2
 
     def _on_its_middle(self, snap, centre, size):
-        """Whether a long piece laid flat at `centre` rests on its middle: something held up there under its middle, as
-        high as its underside, as a log centred on a wall or a post does (ADR-019, ADR-033). Balanced, it stays up."""
+        """Whether a piece at `centre` rests on its middle: something under its middle as high as its underside, as a
+        log centred on a wall or a post rests (ADR-019, ADR-033). Balanced, it stays up."""
         bottom = centre[1] - size[1] / 2
-        top, e = snap.surface(centre[0], centre[2], below=bottom + 0.25)
+        top, e = self._support_at(snap, centre[0], centre[2], bottom)
         return e is not None and e.role != "Ground" and top is not None and abs(top - bottom) <= 0.3
+
+    def _will_rest(self, snap, centre, size):
+        """Whether a piece set at `centre` stays there: on its middle, or a long one on both its ends (82-AB11: the body
+        stood under a piece it set over its head whether or not anything held it up)."""
+        if self._on_its_middle(snap, centre, size):
+            return True
+        bottom = centre[1] - size[1] / 2
+        return max(size[0], size[2]) > CUBE + 0.1 and all(
+            e is not None and e.role != "Ground" and abs(top - bottom) <= 0.3 for _, _, top, e in self._under_ends(snap, centre, size))
 
     def _beam_on_supports(self, snap, held, target, turn, size):
         """Where to set a beam so that both its ends rest on something of the same height: where it was aimed if they
@@ -948,11 +974,17 @@ class Skills:
                 return None
             return ends
 
-        if rests(target, size) or self._on_its_middle(snap, target, size):
+        if rests(target, size):
             return target, turn, size, ""
+        along = "x" if size[0] >= size[2] else "z"
+        middle = self._on_its_middle(snap, target, size)
+        if middle and ((round(target[0] / CUBE), round(target[2] / CUBE)), along) in self.planned():
+            return target, turn, size, ""  # balanced where the house's roof puts it (ADR-033)
         other = 0 if turn == 90 else 90
         options = [(turn, dx, dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
         options += [(other, dx, dz) for dx, dz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))]
+        if middle:  # it rests on its middle: moved only a cell along itself, onto two supports (82-AB8)
+            options = [(turn, dx, dz) for dx, dz in (((1, 0), (-1, 0)) if along == "x" else ((0, 1), (0, -1)))]
         for t, dx, dz in options:
             sz = turned_size(held.local_size, t, False)
             ends = rests((target[0] + dx * CUBE, target[1], target[2] + dz * CUBE), sz)
@@ -1125,10 +1157,11 @@ class Skills:
         return Result(True, "walk_to", f"stepped up onto {name}, now standing at height {self._level(snap):.1f} "
                                        f"at ({snap.me[0]:.1f}, {snap.me[2]:.1f})")
 
-    def _approach(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK):
-        """A spot on our floor within reach of `target`. From up on something, with nothing in reach up here and the
-        target below, hop down towards it first, as a person would. Returns (spot or None, latest snapshot)."""
-        stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack)
+    def _approach(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK, under=None):
+        """A spot on our floor within reach of `target` (and under `under`, if given). From up on something, with
+        nothing in reach up here and the target below, hop down towards it first, as a person would. Returns (spot or
+        None, latest snapshot)."""
+        stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack, under)
         level = self._level(snap)
         if stand is None and level > 0.3 and target[1] < level + 1.0:
             # The floor we would stand on down there: under the target, not the target's own top.
@@ -1136,7 +1169,7 @@ class Skills:
             if floor is not None:  # hop down, or take a ladder down where the drop is too high
                 if self._hop_down(snap, target[0], target[2], level, floor, walk_on=False).ok:
                     snap = self._observe()
-                    stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack)
+                    stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack, under)
         return stand, snap
 
     def _step_up_to_reach(self, snap, target, spot, held):
@@ -1379,8 +1412,14 @@ class Skills:
             if obj is None:
                 return Result(False, "pick_up", f"{object} vanished{note}")
         # Beside it: its narrow side sets how close we may stand; a long beam or ladder we stand beside, at its middle.
-        stand, snap = self._approach(snap, obj.pos, PICKUP_RANGE, 1.6 + min(obj.size[0], obj.size[2]) / 2,
-                                     ignore={object}, avoid=obj)
+        # A piece over the head is taken hold of from below, where the hands reach it, from under it or beside what it
+        # lies on (82-AB2).
+        stand, grip = None, obj.pos
+        for grip in self._grips(snap, obj):
+            stand, snap = self._approach(snap, grip, PICKUP_RANGE, 1.6 + min(obj.size[0], obj.size[2]) / 2,
+                                         ignore={object}, avoid=None if grip is not obj.pos else obj)
+            if stand is not None:
+                break
         if stand is None:
             on = self._ladder_under(snap, obj)  # set there before the hands kept ladders clear (ADR-025)
             up = (f"it lies on top of {on.name}: pick up the ladder and it falls" if on else "it may be up on something")
@@ -1392,7 +1431,8 @@ class Skills:
             obj = snap.entities.get(object)
             if obj is None:
                 return Result(False, "pick_up", f"{object} vanished{note}")
-            snap = self.world.act("Pickup", {"position": list(obj.pos)})
+            grip = grip if grip is not None and math.dist(grip, obj.pos) <= 1.5 else obj.pos
+            snap = self.world.act("Pickup", {"position": list(grip)})
             outcome = snap.last_result
             if outcome == "PickupSuccess":
                 # The block rises into the hands before the body moves on; only then does it read as held.
@@ -1402,12 +1442,31 @@ class Skills:
                 return Result(True, "pick_up", f"picked up {object}{note}", {"holding": object})
             if outcome == "PickupSuccess" and held:
                 return Result(True, "pick_up", f"picked up {held.name} instead of {object}{note}", {"holding": held.name})
-            closer = self._stand_point(snap, obj.pos, PICKUP_RANGE, 1.2, ignore={object})
+            closer = self._stand_point(snap, grip, PICKUP_RANGE, 1.2, ignore={object})
             if closer:
                 self._move(*closer, ignore={object})
         if snap.last_result == "PickupFailed:TooHot":
             return Result(False, "pick_up", f"{object} is still glowing hot from its fall: too hot to hold{note}")
         return Result(False, "pick_up", f"pickup of {object} failed: {snap.last_result}{note}")
+
+    def _grips(self, snap, obj):
+        """Where the hands may take hold of `obj`, in the order to try. For a piece wholly over the head: first the points
+        below its middle, and below it towards each side, as far as the world's grasp allows (it lifts the piece nearest
+        where the hands reach, within 1.5: main.lua findNearestBlock) while `obj` is still the nearest by a margin; then
+        its middle. For any other piece: its middle."""
+        if obj.pos[1] - obj.size[1] / 2 < self._level(snap) + BODY_HEIGHT + 0.3:
+            return [obj.pos]
+        others = [e.pos for e in snap.movables() if e.name != obj.name]
+        x, y, z = obj.pos
+        reach = 1.45
+        found = []
+        for dx, dy, dz in ((0, -1, 0), (0.7, -0.7, 0), (-0.7, -0.7, 0), (0, -0.7, 0.7), (0, -0.7, -0.7)):
+            for k in (1.0, 0.75, 0.5):
+                point = (x + dx * reach * k, y + dy * reach * k, z + dz * reach * k)
+                if all(math.dist(o, point) > math.dist(obj.pos, point) + 0.1 for o in others):
+                    found.append(point)
+                    break
+        return found + [obj.pos]
 
     def _set_down_nearby(self, snap, held, away_from):
         """Reflex, as a person does: set what is in your hands on clear floor beside you before taking something else.
@@ -1612,23 +1671,27 @@ class Skills:
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
         stepped, floor = "", None
-        # A piece set wholly over the head (a roof inside a house, ADR-033) may be set standing under it, as a person
-        # sets a beam overhead; or, with nowhere under it in reach, from right beside it, as far as the hands reach (a
-        # log on a post, from the room beside the post). Any other is set from beside it.
-        overhead = target[1] - size[1] / 2 >= self._level(snap) + BODY_HEIGHT + 0.3
-        if (math.dist(body, target) > PLACE_RANGE - 0.3
-                or not overhead and spot.footprint_contains(body[0], body[2], margin=1.3)):
+        level = self._level(snap)
+        # A piece that will rest wholly over the head (a roof inside a house, ADR-033) may be set standing under it, as
+        # a person sets a beam overhead; with a step at hand the body uses it first, as before; and only then, from
+        # right beside it, as far as the hands reach (a log on a post, from the room beside the post). A piece that
+        # would fall is never set from under it (82-AB11), and the edge of reach is the last resort (82-CDE2).
+        overhead = target[1] - size[1] / 2 >= level + BODY_HEIGHT + 0.3 and self._will_rest(snap, target, size)
+        if math.dist(body, target) > PLACE_RANGE - 0.3 or spot.footprint_contains(body[0], body[2], margin=1.3):
             radius = 1.0 + min(size[0], size[2]) / 2 + 0.5
-            stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name},
-                                         avoid=None if overhead else spot)
+            stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name}, avoid=spot)
             if stand is None and overhead:
-                stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name}, avoid=spot,
-                                             slack=OVERHEAD_SLACK)
+                stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name}, under=spot)
             if stand is None and target[1] > self._level(snap) + BODY_HEIGHT:
                 # Above the hands from this floor: step up onto something a block high beside it first, as a person
                 # would (in run n8 a third layer laid from the ground failed about half the time).
                 floor = (snap.me[0], snap.me[2], self._level(snap))  # to step back down to after
                 stand, snap, stepped = self._step_up_to_reach(snap, target, spot, held.name)
+            if stand is None and overhead and abs(self._level(snap) - level) < 0.3:
+                stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name}, avoid=spot,
+                                             slack=OVERHEAD_SLACK)
+                if stand is not None:
+                    stepped, floor = "", None
             if stand is None:
                 where = f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f})"
                 return Result(False, "place_at", self._out_of_reach(
@@ -1641,6 +1704,7 @@ class Skills:
                 except Stuck:
                     snap = self._observe()
         under = self._under_ends(snap, target, size) if beam else None  # to say why, if it does not stay up
+        middle = (target[0], target[2], *self._support_at(snap, target[0], target[2], target[1] - size[1] / 2)) if beam else None
         snap = self.world.act("Place", {"position": list(target), "rotation": _rotation(turn, upright)})
         sink = self._sink(snap, target, size, held.name) if snap.last_result == "PlaceFailed:Occupied" else None
         if sink is not None:
@@ -1661,8 +1725,8 @@ class Skills:
         said = self._describe(snap, held.name) + _orientation(turn, upright) + snapped
         now = snap.entities.get(held.name)
         if beam and now is not None and (now.pos[1] < target[1] - 0.6 or "not resting" in said):
-            said += (f"; it did not stay up there: {self._ends_text(under, target[1] - size[1] / 2)}. A beam stays up "
-                     "only with both ends on something of the same height")
+            said += (f"; it did not stay up there: {self._ends_text(under, target[1] - size[1] / 2, middle)}. A log "
+                     "stays up resting on its middle, or with both ends on something of the same height")
         if stepped:  # and back down again, as a person would: the mind never asked to stand up there
             down = self._hop_down(snap, floor[0], floor[1], self._level(snap), floor[2], walk_on=False)
             said += stepped + (", and stepped back down" if down.ok else f"; {down.summary}")

@@ -5,7 +5,7 @@ Time is the island's own: the skills' clock and sleep are this island's, so a wa
 """
 import math
 
-from godling.world import BODY_CENTRE_Y, HOLD_OFFSET_Y, Snapshot
+from godling.world import BODY_CENTRE_Y, HOLD_OFFSET_Y, PICKUP_RANGE, PLACE_RANGE, Snapshot
 
 DEFAULT_RESULTS = {"Pickup": "PickupSuccess", "Place": "PlaceSuccess", "Throw": "ThrowSuccess", "Brace": "Braced",
                    "StepUp": "StepUpStarted", "StepDown": "StepDownStarted"}
@@ -79,6 +79,15 @@ class Island:
             result = result.pop(0) if len(result) > 1 else result[0]
         if callable(result):
             result = result(data)
+        # The world's reach (main.lua canReach): the hands set a piece at most 7 from the body's centre, and lift one at
+        # most 6 from it, the nearest within 1.5 of where they reach (findNearestBlock).
+        if action == "Place" and result == "PlaceSuccess" and math.dist(self.me, data["position"]) > PLACE_RANGE:
+            result = "PlaceFailed:OutOfRange"
+        if action == "Pickup" and result == "PickupSuccess":
+            if math.dist(self.me, data["position"]) > PICKUP_RANGE:
+                result = "PickupFailed:OutOfRange"
+            elif not any(math.dist(e["position"], data["position"]) <= 1.5 for n, e in self.ents.items() if n != self.held):
+                result = "PickupFailed:NoBlock"
         handler = getattr(self, "_" + action, None)
         if handler:
             handler(data, result)

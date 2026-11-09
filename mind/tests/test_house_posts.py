@@ -3,36 +3,28 @@ reaches one cell from what holds it up, so a room two cells wide is roofed from 
 upright logs inside, standing from the floor to the roof, with the room on all four sides. The world's copy of the check
 (main.lua houseAt) is held to the same post-and-beam house in world/tests/test_life.luau."""
 import math
+import re
 
 import pytest
 
 from godling import skills as sk
 from godling.house import CELL, ROOF_AT, Grid, assess, houses, judge, layout, plan, ring, roof_layout, sides
 from godling.skills import Skills
-from godling.world import BODY_CENTRE_Y, PLACE_RANGE
+from godling.world import BODY_CENTRE_Y, PICKUP_RANGE, PLACE_RANGE
 from helpers import ent, ground
 from island import FakeTime, Island
+from test_house import GROUND, block, log, names
 
 C = CELL
-GROUND = [{"name": "Ground", "pos": [0, -0.5, 0], "size": [400, 1, 400]}]
 INSIDE = [(x, z) for x in range(3) for z in range(3)]  # three by three
 POST = (1, 1)  # in the middle, the room on all four sides of it
 ROOM = [c for c in INSIDE if c != POST]
 DOOR = (1, -1)  # south, in the middle of the side
+PLANNED = {(POST, "z")}  # the house's own roof puts the log over the post along z (plan()["roof"])
 
 
 def pt(c):
     return [c[0] * C, c[1] * C]
-
-
-def block(name, ix, iz, layer):
-    return {"name": name, "pos": [ix * C, (layer - 0.5) * C, iz * C], "size": [C, C, C]}
-
-
-def log(name, ix, iz, layer, along="x"):
-    """A log lying flat, three cells long, centred on cell (ix, iz)."""
-    return {"name": name, "pos": [ix * C, (layer - 0.5) * C, iz * C],
-            "size": [3 * C, C, C] if along == "x" else [C, C, 3 * C]}
 
 
 def upright(name, ix, iz):
@@ -59,10 +51,6 @@ def hut(post="log", roof_skip=()):
             log("Log_E0", 3, 0, 4), log("Log_E1", 3, 1, 4), log("Log_N2", 2, 3, 4, "z")]
     roof += [block(f"Block_cap{c[0]}_{c[1]}", *c, 4) for c in ((-1, -1), (3, -1), (-1, 3), (0, 3), (1, 3), (3, 2), (3, 3))]
     return pieces + [p for p in roof if p["name"] not in roof_skip]
-
-
-def names(pieces):
-    return {p["name"] for p in pieces}
 
 
 # ---- the check: a post inside is part of the house ----------------------------------------------------------------
@@ -102,7 +90,7 @@ def test_a_room_wider_than_two_cells_needs_a_post():
     assert no_post == (
         "nothing holds up the roof over (2.5, 0.0), (2.5, 2.5): a log three blocks long reaches one cell from the wall or "
         "post it rests on, so every cell inside must lie beside a wall or a post (not the doorway or the walls either side "
-        "of it); stand posts inside, or make the room at most two cells wide")
+        "of it); it has a roof with one more post, at (2.5, 2.5)")
     assert layout([pt(c) for c in INSIDE], pt(DOOR), [pt(POST)]) == (INSIDE, DOOR, [POST])
     assert layout([pt(c) for c in INSIDE], pt(DOOR), "[[2.5, 2.5]]") == (INSIDE, DOOR, [POST])
     for door in sides(INSIDE):  # any doorway on a side
@@ -154,12 +142,6 @@ def built(inside, door, posts):
     return pieces, roof
 
 
-def footprint(p):
-    (x, _, z), (sx, _, sz) = p["pos"], p["size"]
-    return {(ix, iz) for ix in range(round((x - sx / 2) / C + 0.5), round((x + sx / 2) / C + 0.5))
-            for iz in range(round((z - sz / 2) / C + 0.5), round((z + sz / 2) / C + 0.5))}
-
-
 @pytest.mark.parametrize("width, depth, posts, door", SHAPES)
 def test_the_guided_roof_over_walls_and_posts_rests_and_makes_a_house(width, depth, posts, door):
     inside = [(x, z) for x in range(width) for z in range(depth)]
@@ -167,35 +149,51 @@ def test_the_guided_roof_over_walls_and_posts_rests_and_makes_a_house(width, dep
     assert chosen == (inside, door, sorted(posts)), chosen
     pieces, roof = built(inside, door, posts)
     supports = set(ring(inside)) - {door} | set(posts)
-    at_roof = [p for p in pieces if p["pos"][1] > 3 * C]
-    taken = {}
-    for p in at_roof:  # no two roof pieces in one cell
-        for c in footprint(p):
-            assert c not in taken, (p["name"], taken.get(c), c)
-            taken[c] = p["name"]
-    for beam in roof["logs"]:  # each log rests on its middle, or spans between two supports
-        cx, cz = beam["centre"]
-        ends = [(cx - 1, cz), (cx + 1, cz)] if beam["axis"] == "x" else [(cx, cz - 1), (cx, cz + 1)]
-        assert beam["centre"] in supports or all(e in supports for e in ends), beam
-        # A log on a post is set from the room beside the post, on the floor (the body's own test below).
-        if beam["kind"] == "post":
-            assert beam["centre"] in posts and any(n in beam["over"] for n in sides([beam["centre"]])), beam
+    grid = Grid(pieces, GROUND)
+    for c, spans in grid.columns.items():  # no two roof pieces in one cell
+        assert len([name for bottom, _, name in spans if bottom > 3 * C - 0.1]) <= 1, (c, spans)
+    for beam in roof["logs"]:  # each log rests on its middle, on a wall or a post
+        assert beam["centre"] in supports and beam["rests_on"] == [beam["centre"]], beam
     found = houses(pieces, GROUND)
     assert len(found) == 1 and found[0]["posts"] == sorted(posts) and found[0]["doors"] == [door], (
         assess(pieces, GROUND, names(pieces)))
     assert plan(pieces, GROUND, inside, door, posts)["house"]
 
 
+def repairs(refusal):
+    """The doorways and posts a refusal says would give the room a roof."""
+    doors = re.search(r"the doorway at ((?:\(-?[\d.]+, -?[\d.]+\)(?:, | or )?)+)", refusal)
+    posts = re.search(r"one more post, at ((?:\(-?[\d.]+, -?[\d.]+\)(?:, | or )?)+)", refusal)
+    cells = lambda m: [[float(x), float(z)] for x, z in re.findall(r"\((-?[\d.]+), (-?[\d.]+)\)", m.group(1))] if m else []
+    return cells(doors), cells(posts)
+
+
 def test_each_wall_or_post_holds_one_log():
     # Three by four with one post, the doorway west at the south end: the walls either side of the doorway carry the
     # lintel, so the cell east of it, (0, 1), has only the post, whose log along x covers it; then the cell north of
-    # the post, (1, 2), which only the post's log along z could cover, has nothing left.
+    # the post, (1, 2), which only the post's log along z could cover, has nothing left. The refusal says so, and names
+    # only doorways and posts that give the room a roof (82-AB5: it said the post "holds another log already" when the
+    # greedy roof had none on it, and "stand another post beside it" where no post could stand).
     inside = [(x, z) for x in range(3) for z in range(4)]
-    refused = layout([pt(c) for c in inside], [-C, 0], [pt(POST)])
-    assert refused == ("the roof over (2.5, 5.0) has nothing left to rest on: the post at (2.5, 2.5) beside it holds "
-                       "another log already, and each wall or post holds one; stand another post beside it, or move "
-                       "the doorway"), refused
+    for door in ([-C, 0], [7.5, 0]):
+        refused = layout([pt(c) for c in inside], door, [pt(POST)])
+        assert refused.startswith("no way of laying the roof covers (2.5, 5.0): each wall or post holds one log"), refused
+        assert "holds another log already" not in refused and "stand another post beside it" not in refused
+        doors, posts = repairs(refused)
+        assert doors or posts, refused
+        for other in doors:
+            assert not isinstance(layout([pt(c) for c in inside], other, [pt(POST)]), str), (other, refused)
+        for extra in posts:
+            assert not isinstance(layout([pt(c) for c in inside], door, [pt(POST), extra]), str), (extra, refused)
     assert not isinstance(layout([pt(c) for c in inside], [C, -C], [pt(POST)]), str)  # the doorway south
+
+
+def test_a_refusal_with_no_repair_says_so():
+    # Five by six has no roof with lone posts: no other doorway and no one more post gives the room a roof.
+    inside = [(x, z) for x in range(5) for z in range(6)]
+    refused = layout([pt(c) for c in inside], [0, -C], [pt((1, 1)), pt((3, 1)), pt((2, 3))])
+    assert isinstance(refused, str) and refused.endswith(
+        "no other doorway, and no one more post, gives it a roof: make the room another size or shape"), refused
 
 
 def test_the_l_shaped_room_now_finds_a_roof_without_overlaps():
@@ -230,13 +228,13 @@ def test_a_chosen_house_with_a_post_says_what_it_needs_next():
     assert "nothing holds up the roof over (2.5, 0.0), (2.5, 2.5)" in plan([], GROUND, INSIDE, DOOR)["next"]
 
 
-def test_the_post_is_not_kept_clear(tmp_path):
-    # The body keeps the room, the doorway and the way out clear when it frees its hands; the post's cell is for the
-    # post.
+def test_the_post_cell_is_kept_clear_of_set_down_pieces(tmp_path):
+    # 82-CDE4: the hands-full reflex is the only reader of the reserved cells. A block it set down in the post's cell was
+    # kept as the post's base; the post is stood there by place_at and put_down, which do not read them.
     from godling.memory import NativeMemory
     mem = NativeMemory(tmp_path / "mem")
     mem.set_house({"inside": [list(c) for c in INSIDE], "door": list(DOOR), "posts": [list(POST)]})
-    assert mem.reserved_cells() == set(ROOM) | {DOOR, (1, -2)}
+    assert mem.reserved_cells() == set(INSIDE) | {DOOR, (1, -2)}
 
 
 # ---- the body sets the roof over a post from the floor inside --------------------------------------------------------
@@ -262,7 +260,7 @@ def test_the_log_over_a_post_is_set_from_the_floor_beside_it(monkeypatch):
     # step up onto. The log is set as aimed, on the post's middle, not moved to rest on its ends.
     island = island_hut(roof=["Log_lintel"])
     monkeypatch.setattr(sk, "time", FakeTime(island))
-    body = Skills(island)
+    body = Skills(island, planned=lambda: PLANNED)
     r = body.run("place_at", {"x": 2.5, "y": 8.75, "z": 2.5, "turn": 90})
     assert r.ok, r.summary
     assert placed(island)[-1]["position"] == [2.5, 8.75, 2.5] and placed(island)[-1]["rotation"]["yaw"] == 90
@@ -272,8 +270,9 @@ def test_the_log_over_a_post_is_set_from_the_floor_beside_it(monkeypatch):
 
 
 def test_a_beam_overhead_is_set_from_the_floor_under_it(monkeypatch):
-    # A log along z across the cell south of the post, its ends on the south wall and the post: wholly over the head, it
-    # is set standing under its middle (6.2 from the hands). The house's own roof lays none like it, but the mind may.
+    # A log along z across the cell south of the post, its ends on the south wall and the post: wholly over the head, and
+    # resting on both ends, it is set standing under its middle (6.2 from the hands), not from the edge of reach beside
+    # it (82-SWEEP2: the test did not look where the body stood). The house's own roof lays none like it; the mind may.
     island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in walls(INSIDE, (-1, 1))],
                      ent("Log_post", upright("x", *POST)["pos"], (2.5, 7.5, 2.5)),
                      ent("Log_roof", (-12.5, 1.25, 2.5), (7.5, 2.5, 2.5))], me=(0, BODY_CENTRE_Y, 2.5))
@@ -285,6 +284,178 @@ def test_a_beam_overhead_is_set_from_the_floor_under_it(monkeypatch):
     assert r.ok, r.summary
     assert placed(island)[-1]["position"] == [2.5, 8.75, 0.0]
     assert island.me[1] == pytest.approx(BODY_CENTRE_Y)
+    assert abs(island.me[0] - 2.5) <= C / 2 and abs(island.me[2]) <= 1.5 * C, island.me  # under the log
+    assert math.dist(island.me, (2.5, 8.75, 0)) == pytest.approx(6.2, abs=0.4)
+
+
+def test_an_unsupported_piece_is_not_set_over_the_head(monkeypatch):
+    # 82-AB11: a block over the middle of a room with nothing under it would fall as soon as it is set; the body does
+    # not stand under it to set it, as it does under a piece that will rest.
+    island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in walls(INSIDE, DOOR, high=2)],
+                     ent("Block_held", (0, 1.25, -12), (2.5, 2.5, 2.5))], me=(0, BODY_CENTRE_Y, 0))
+    island.solid_pieces = True
+    island.held = "Block_held"
+    where = []
+    island.results["Place"] = lambda data: where.append(list(island.me)) or "PlaceSuccess"
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    Skills(island).run("place_at", {"x": 2.5, "y": 8.75, "z": 2.5})
+    assert not any(abs(x - 2.5) < C / 2 + 1.0 and abs(z - 2.5) < C / 2 + 1.0 for x, _, z in where), where
+
+
+def test_a_cap_is_set_from_a_step_where_one_stands(monkeypatch):
+    # 82-CDE2: a cap on a wall, from inside the room, with a step outside: the body steps up, as it did before ADR-033,
+    # rather than set it from the floor at the edge of its reach (6.67 of 7).
+    two, door = [(0, 0), (0, 1), (1, 0), (1, 1)], (0, -1)
+    island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in walls(two, door)],
+                     ent("Log_lintel", (0, 8.75, -C), (7.5, 2.5, 2.5)), ent("Block_step", (0, 1.25, 4 * C)),
+                     ent("Block_cap", (12, 1.25, 12))], me=(0, BODY_CENTRE_Y, C))
+    island.held = "Block_cap"
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    r = Skills(island).run("place_at", {"x": 0, "y": 8.75, "z": 2 * C})
+    assert r.ok and "you stood on Block_step" in r.summary, r.summary
+
+
+def test_a_lintel_aimed_a_cell_off_goes_across_the_doorway(monkeypatch):
+    # 82-AB8: a lintel aimed on the west flank's middle rests there, but a cell along it lies across both flanks, over
+    # the doorway: the hands set it there, as before ADR-033. Only a log the house's own plan puts on a middle stays.
+    two, door = [(0, 0), (0, 1), (1, 0), (1, 1)], (0, -1)
+    island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in walls(two, door)],
+                     ent("Log_lintel", (12.5, 1.25, -12.5), (7.5, 2.5, 2.5))], me=(0, BODY_CENTRE_Y, -10))
+    island.held = "Log_lintel"
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    r = Skills(island).run("place_at", {"x": -C, "y": 8.75, "z": -C, "turn": 0})
+    assert r.ok and placed(island)[-1]["position"] == pytest.approx([0, 8.78, -C]), r.summary
+    assert "with its ends on Block_w-1_-1_3 and Block_w1_-1_3 instead" in r.summary
+    # A log on the post's middle that the house does not plan there is moved the same way, onto the post and a wall.
+    island = island_hut(roof=["Log_lintel"])
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    r = Skills(island).run("place_at", {"x": 2.5, "y": 8.75, "z": 2.5, "turn": 90})
+    assert r.ok and placed(island)[-1]["position"] != [2.5, 8.75, 2.5], r.summary
+
+
+def test_a_log_that_tips_off_its_middle_says_what_was_under_it(monkeypatch):
+    # 82-CLEAN19: the report names what lay under the log's middle and words the rule as the prompt does.
+    island = island_hut(roof=["Log_lintel"])
+    island.on_act["Place"] = lambda d: island.ents["Log_roof"].update(position=[2.5, 1.25, 0])
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    r = Skills(island, planned=lambda: PLANNED).run("place_at", {"x": 2.5, "y": 8.75, "z": 2.5, "turn": 90})
+    assert "it did not stay up there: its middle at (2.5, 2.5) lay on Log_post (top 7.50)" in r.summary, r.summary
+    assert r.summary.endswith("A log stays up resting on its middle, or with both ends on something of the same height")
+
+
+def test_a_piece_on_a_posts_top_is_lifted_from_the_floor_beside_it(monkeypatch):
+    # 82-AB2: a block lying on the post's top where the post's log goes. The plan says to lift it off from the floor
+    # beside the post; the hands reach up to its underside there (the world takes the nearest piece within 1.5 of where
+    # the hands reach, from at most 6 away), though they cannot reach its middle.
+    pieces = [p for p in hut() if p["name"].startswith(("Block_w", "Log_post", "Log_lintel"))]
+    pieces.append(block("Block_on_post", *POST, 4))
+    step = plan(pieces, GROUND, INSIDE, DOOR, [POST])
+    assert "Block_on_post" in step["in_the_way"]
+    assert ("first take Block_on_post off the top of (2.5, 2.5) (reach up from the floor beside the post): the log "
+            "over (2.5, 0.0) and (2.5, 5.0) rests there; then over (2.5, 0.0) and (2.5, 5.0)") in step["next"], step["next"]
+    island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in pieces]], me=(0, BODY_CENTRE_Y, 0))
+    island.solid_pieces = True
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    r = Skills(island).run("pick_up", {"object": "Block_on_post"})
+    assert r.ok and island.held == "Block_on_post", r.summary
+    assert island.me[1] == pytest.approx(BODY_CENTRE_Y)
+
+
+def test_a_log_laid_elsewhere_over_a_cell_the_posts_log_needs_is_in_the_way():
+    # 82-CDE3: a log along z on the north wall's middle over (1, 2), laid while the doorway was west, then the doorway
+    # moved south. The cell south of the post has only the post's log, which reaches over (1, 2) too: the log already
+    # there is named, and free to lift, not kept as the house's own.
+    pieces = [p for p in hut() if p["name"] not in ("Log_over_post", "Block_cap1_3")] + [log("Log_N1", 1, 3, 4, "z")]
+    step = plan(pieces, GROUND, INSIDE, DOOR, [POST])
+    assert "Log_N1" in step["in_the_way"] and "Log_N1" not in step["pieces"], step
+    assert "first take Log_N1 off" in step["next"], step["next"]
+
+
+# ---- following the plan, piece by piece ------------------------------------------------------------------------------
+
+AT = re.compile(r"\((-?\d+\.\d), (-?\d+\.\d)\)")
+
+
+def follow(inside, door, posts, order, limit=80):
+    """Build a house as the plan says, one piece at a time, taking its roof's needs in `order` ("first" or "last"):
+    True once it is a house, or the step it got stuck on (82-AB1: a log laid as asked re-routed its cell to another
+    wall, which then dropped out of the caps, and the plan ended with an empty roof step)."""
+    pieces = []
+
+    def add(p):
+        p["name"] = f"{p['name']}_{len(pieces)}"
+        pieces.append(p)
+    for _ in range(limit):
+        found = plan(pieces, GROUND, inside, door, posts)
+        if found["house"]:
+            return True
+        step = found["next"]
+        if step.startswith("walls three blocks"):
+            for c in ring(inside):
+                if c != door:
+                    for k in (1, 2, 3):
+                        add(block("Block_w", *c, k))
+            for c in posts:
+                add(upright("Log_post", *c))
+            continue
+        needs = step.split("): ", 1)[1].split("; ") if step.startswith("the roof") and "): " in step else []
+        if not needs or not needs[0]:
+            return step
+        need = needs[0] if order == "first" else needs[-1]
+        cells = [(round(float(x) / C), round(float(z) / C)) for x, z in AT.findall(need)]
+        if need.startswith("a block on top"):
+            add(block("Block_cap", *cells[0], 4))
+        else:
+            axis = re.search(r"a log along (x|z)", need).group(1)
+            on = re.search(r"centred on the (?:wall|post) at (\(-?\d+\.\d, -?\d+\.\d\))", need)
+            centre = cells[0] if need.startswith("over the doorway") else [
+                (round(float(x) / C), round(float(z) / C)) for x, z in AT.findall(on.group(1))][0]
+            add(log("Log_roof", *centre, 4, axis))
+    return "too many steps"
+
+
+@pytest.mark.parametrize("order", ["first", "last"])
+@pytest.mark.parametrize("width, depth, posts, door", SHAPES)
+def test_following_the_plan_piece_by_piece_finishes_the_house(width, depth, posts, door, order):
+    inside = [(x, z) for x in range(width) for z in range(depth)]
+    assert follow(inside, door, posts, order) is True
+
+
+@pytest.mark.parametrize("width, depth, posts, door", [s for s in SHAPES if s[2]])
+def test_the_body_sets_each_log_on_a_post_from_the_floor(monkeypatch, width, depth, posts, door):
+    # 82-SWEEP3: for every shape, each log the roof puts on a post is set by the body standing on the floor inside,
+    # within the world's reach, and stays where it was aimed.
+    inside = [(x, z) for x in range(width) for z in range(depth)]
+    room = [c for c in inside if c not in posts]
+    roof = roof_layout(Grid([], []), room, door, [c for c in ring(inside) if c != door], 0, ROOF_AT, posts)
+    beams = {(b["centre"], b["axis"]) for b in roof["logs"]}
+    pieces = walls(inside, door) + [upright(f"Log_post{c[0]}_{c[1]}", *c) for c in posts]
+    island = Island([ground(), *[ent(p["name"], p["pos"], p["size"]) for p in pieces]],
+                    me=(room[0][0] * C, BODY_CENTRE_Y, room[0][1] * C))
+    island.solid_pieces = True
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    body = Skills(island, planned=lambda: beams)
+    for i, beam in enumerate(b for b in roof["logs"] if b["kind"] == "post"):
+        (cx, cz), axis = beam["centre"], beam["axis"]
+        name = f"Log_roof{i}"
+        island.ents[name] = ent(name, (cx * C, 30, cz * C), (7.5, 2.5, 2.5))  # a log as it lies: turned 90 along z
+        island.held = name
+        r = body.run("place_at", {"x": cx * C, "y": 8.75, "z": cz * C, "turn": 0 if axis == "x" else 90})
+        assert r.ok and placed(island)[-1]["position"] == [cx * C, 8.75, cz * C], (beam, r.summary)
+        assert island.me[1] == pytest.approx(BODY_CENTRE_Y), beam
+
+
+def test_a_roof_search_cut_short_says_so(monkeypatch):
+    # 82-CLEAN13: had the search's limit ever been met, its refusal read as a proven failure, with advice to add a post.
+    from godling import house
+    monkeypatch.setattr(house, "SEARCH", 1)
+    house.roof_issue.cache_clear()
+    north = [C, 3 * C]  # with the doorway north, laying the logs cell by cell, first way first, leaves a cell bare
+    refused = layout([pt(c) for c in INSIDE], north, [pt(POST)])
+    monkeypatch.undo()
+    house.roof_issue.cache_clear()
+    assert refused == "the roof is too much to work out for this room: make it smaller or simpler", refused
+    assert layout([pt(c) for c in INSIDE], north, [pt(POST)]) == (INSIDE, (1, 3), [POST])
 
 
 # ---- the mind chooses a house with a post ---------------------------------------------------------------------------
@@ -304,8 +475,8 @@ def test_the_mind_chooses_a_house_with_a_post(monkeypatch, tmp_path):
     assert [(l["phase"], l.get("posts")) for l in logs if l["kind"] == "house"][:2] == [("rejected", None), ("chose", [list(POST)])]
     line = mind._house_line(island.snap())
     assert "the doorway at (2.5, -2.5), posts at (2.5, 2.5). " in line and "Next: none: it is a house" in line, line
-    # The post's cell is not kept clear for the room; the room's cells are.
-    assert POST not in mem.reserved_cells() and (0, 0) in mem.reserved_cells()
+    # The hands-full reflex keeps the post's cell clear too (82-CDE4); the post is stood there by place_at.
+    assert POST in mem.reserved_cells() and (0, 0) in mem.reserved_cells()
     # The same house again is no change, with its posts or with "posts" left out; with no posts it is a revision the
     # roof cannot take, and refused.
     notes = len(mind.notes)
@@ -314,3 +485,29 @@ def test_the_mind_chooses_a_house_with_a_post(monkeypatch, tmp_path):
     assert len(mind.notes) == notes and len([l for l in logs if l["kind"] == "house" and l["phase"] == "chose"]) == 1
     mind._choose_house({"inside": [pt(c) for c in INSIDE], "door": pt(DOOR), "posts": []}, island.snap())
     assert mem.state["house"]["posts"] == [list(POST)] and mind.notes[-1].startswith("Your house was not set")
+
+
+def test_a_house_reply_that_leaves_things_out(monkeypatch, tmp_path):
+    from test_mind import house_island
+    island, body, mem, mind, logs = house_island(monkeypatch, tmp_path, [ent(p["name"], p["pos"], p["size"])
+                                                                         for p in hut()])
+    mind._choose_house({"inside": [pt(c) for c in INSIDE], "door": pt(DOOR), "posts": [pt(POST)]}, island.snap())
+    # 82-SWEEP1: a reply of only posts, or only a doorway, revises the house it has; only "inside": [] gives it up.
+    notes = len(mind.notes)
+    mind._choose_house({"posts": [pt(POST)], "why": "a post in the middle holds up the roof"}, island.snap())
+    assert mem.state["house"]["inside"] == [list(c) for c in INSIDE] and len(mind.notes) == notes
+    mind._choose_house({"door": [-C, C]}, island.snap())
+    assert mem.state["house"]["door"] == [-1, 1] and mem.state["house"]["posts"] == [list(POST)], mind.notes[-1:]
+    assert "revised" in [l["phase"] for l in logs if l["kind"] == "house"][-3:]
+    # 82-AB3: posts left out carry over only where they still stand alone in the new room: growing the room keeps the
+    # post, narrowing it to two cells drops it, and a house moved elsewhere has none.
+    grown = [(x, z) for x in range(3) for z in range(4)]
+    mind._choose_house({"inside": [pt(c) for c in grown], "door": pt(DOOR)}, island.snap())
+    assert mem.state["house"]["posts"] == [list(POST)] and len(mem.state["house"]["inside"]) == 12, mind.notes[-1:]
+    narrow = [(x, z) for x in range(2) for z in range(3)]
+    mind._choose_house({"inside": [pt(c) for c in narrow], "door": [0, -C]}, island.snap())
+    assert mem.state["house"]["posts"] == [] and len(mem.state["house"]["inside"]) == 6, mind.notes[-1:]
+    mind._choose_house({"inside": [pt(c) for c in INSIDE], "door": pt(DOOR), "posts": [pt(POST)]}, island.snap())
+    away = [[40 + x * C, 40 + z * C] for x in range(2) for z in range(2)]
+    mind._choose_house({"inside": away, "door": [40, 37.5], "why": "the ground here floods"}, island.snap())
+    assert mem.state["house"]["inside"][0] == [16, 16] and mem.state["house"]["posts"] == [], mind.notes[-1:]

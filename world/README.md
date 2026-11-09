@@ -118,9 +118,9 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
 - **Weather (ADR-010).** Showers every 20–50 minutes, 4–10 long; the Clock carries `Rain` (0–1).
   - Out in the rain, a body walks at 0.65 of its pace and gets soaked (`Wet` 0–100).
   - At night, or soaked in the rain, a body in the open is `Cold`: it loses health and does not heal.
-  - `Sheltered` is "roof" when a held piece is overhead (rain kept off), and "enclosed" when there are also walls on three sides (a lean-to). It is "house" when the body stands in a house (ADR-019, `houseAt`): a room of clear cells, walls at least two blocks high round it but for one doorway it can walk through, and a roof over every cell with more than five units of headroom. `mind/godling/house.py` is the same check.
-  - The cold (at night, or soaked) drains health and stops healing. A roof over the head halves it, and so does a fire within 7 (`ByFire`). Only in a house is the body warm, and there a fed body mends twice as fast.
-  - Body attributes: `InRain`, `Wet`, `Cold`, `ByFire`, `Sheltered`, and `WalkSpeed` (the pace now).
+  - `Sheltered` is "roof" when a held piece is overhead (rain kept off), and "enclosed" when there are also walls on three sides (a lean-to). It is "house" when the body stands in a house (ADR-019, `houseAt`): a room of clear cells, walls at least two blocks high round it but for one doorway it can walk through, and a roof over every cell with more than five units of headroom. Posts inside the room (cells it closes round, standing to the roof like the walls) count as cells inside it (ADR-033). `mind/godling/house.py` is the same check.
+  - The cold (at night, or soaked) drains health and stops healing. A roof over the head halves it, and so does a fire within 7 (`ByFire`). Only in a house is the body warm, and there a fed body mends faster the more room it has to stand in: twice as fast in four cells, a quarter faster for each cell more, up to four times (ADR-033).
+  - Body attributes: `InRain`, `Wet`, `Cold`, `ByFire`, `Sheltered`, `InHouse`, `HouseRoom` and `HouseMends` (that house's cells to stand in, and how many times as fast a fed body mends there; 0 outside a house), and `WalkSpeed` (the pace now).
   - Wet spells of 2–3 in-game days of rain come every 4–7 hours (the first 1.5–2.5 hours in).
   - In heavy rain, lightning strikes a palm near Godling every 3–8 minutes.
   - Fog comes some mornings (the Clock's `Fog`).

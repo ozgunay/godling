@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 from .learned import SkillError
 from .discovery import EYE, FOG_HIDES, SIGHT
-from .house import Grid, assess, at, layout as house_layout, mending, outside_of, plan as house_plan, ring
+from .house import (Grid, assess, at, cell_of, feeling, layout as house_layout, outside_of, plan as house_plan, ring,
+                    sides)
 from .structures import pieces_of, terrain_of
 from .world import BODY_CENTRE_Y, CUBE, Snapshot, death_cause, hdist
 
@@ -168,8 +169,7 @@ def _how_it_feels(snap):
     if snap.wet >= 15:
         parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
     if snap.in_house:  # how fast it mends there grows with the room it has (ADR-033)
-        parts.append(f"You are inside a house: warm and dry, mending {mending(snap.house_mends)} as fast while fed"
-                     + (f" (its room has {snap.house_room} cells to stand in)" if snap.house_room else ""))
+        parts.append("You are inside a house: " + feeling(snap.house_mends, snap.house_room))
     elif snap.sheltered:
         parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else "")
                      + (", which halves the cold; this is not a house, which would keep it off" if snap.cold else ""))
@@ -364,7 +364,9 @@ So a log on a wall reaches one cell in, and a room two cells wide is roofed from
 inside it: a log stood on end, from the floor up to the roof, alone with the room on all four sides of it, holding a
 log on its middle over the cells either side. A post counts as a cell inside the house, not as room to stand in.
 Inside your house a fed body mends faster the more room it has to stand in: twice as fast in a room of four cells, a
-quarter faster again for each cell more, up to four times as fast in twelve cells or more.
+quarter faster again for each cell more, up to four times as fast in twelve cells or more. A bigger house takes more to
+build: a room of four cells some twenty pieces, sixteen of them logs if its walls are logs; one of twelve cells nearly
+twice as many, some thirty logs.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before. It lands
 glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like metal, unlike the island's
@@ -602,6 +604,7 @@ thought and in that project's intention."""
         found = house_plan(pieces_of(observed), terrain_of(observed), [tuple(c) for c in house["inside"]],
                            tuple(house["door"]), [tuple(c) for c in house.get("posts", [])])
         house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
+        house["roof"] = found["roof"]  # where its logs go: the hands set one there on its middle as aimed (ADR-033)
         if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
             house["installed"] = len(found["pieces"])
             self.log(kind="house", phase="installed", pieces=len(found["pieces"]), score=found["score"])
@@ -643,6 +646,21 @@ thought and in that project's intention."""
                      "doing it.")
         return line
 
+    @staticmethod
+    def _kept_posts(now, inside):
+        """The posts a reply that leaves them out keeps (as points): the house's posts that lie in its new cells and
+        still stand alone there, the room on all four sides (82-AB3: a house moved or narrowed was refused over a post
+        the reply never named)."""
+        try:
+            cells = {cell_of(c) for c in (json.loads(inside) if isinstance(inside, str) else inside)}
+        except (TypeError, ValueError, IndexError, KeyError):
+            return []
+        kept = []
+        for p in (tuple(c) for c in (now or {}).get("posts", [])):
+            if p in cells and all(n in cells for n in sides([p])) and not any(n in kept for n in sides([p])):
+                kept.append(p)
+        return [[c[0] * CUBE, c[1] * CUBE] for c in kept]
+
     def _choose_house(self, spec, snap):
         """The mind chose a house, changed it, moved it or gave it up ("house" in its reply). Moving it elsewhere or
         giving it up needs a reason (in run hut5 it began again at four sites in 45 minutes)."""
@@ -650,8 +668,9 @@ thought and in that project's intention."""
             return
         now = self.memory.state.get("house")
         why = str(spec.get("why") or "").strip()[:200]
-        inside = spec.get("inside")
-        if not inside:
+        # Giving it up is "inside": [] (HOUSE_RULE). A reply that leaves the cells inside, the doorway or the posts out
+        # changes the house it has, keeping those (82-SWEEP1: a reply of only posts gave the house up).
+        if "inside" in spec and spec["inside"] in ([], "", "[]"):
             if now is None:
                 return
             if not why:
@@ -661,9 +680,12 @@ thought and in that project's intention."""
             self.log(kind="house", phase="abandoned", why=why, inside=now["inside"], door=now["door"])
             self.memory.set_house(None)
             return
-        posts = (spec["posts"] if "posts" in spec  # left out: the posts it has (kept as cells)
-                 else [[c[0] * CUBE, c[1] * CUBE] for c in (now or {}).get("posts", [])])
-        chosen = house_layout(inside, spec.get("door"), posts)
+        if now is None and not spec.get("inside"):
+            return
+        inside = spec["inside"] if spec.get("inside") else [[c[0] * CUBE, c[1] * CUBE] for c in now["inside"]]
+        door = spec["door"] if "door" in spec or now is None else [now["door"][0] * CUBE, now["door"][1] * CUBE]
+        posts = spec["posts"] if "posts" in spec else self._kept_posts(now, inside)
+        chosen = house_layout(inside, door, posts)
         if isinstance(chosen, str):
             self.notes.append(f"Your house was not set: {chosen}.")
             self.log(kind="house", phase="rejected", reason=chosen, spec=json.dumps(spec)[:300])

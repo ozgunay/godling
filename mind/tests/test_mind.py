@@ -77,7 +77,7 @@ def test_island_map_and_feelings():
     # ADR-019: only a house keeps the cold off; a fire close by halves it, or warms by day.
     assert _how_it_feels(snap([ground()], attrs={"Sheltered": "roof", "InHouse": True, "ByFire": True})) == (
         "You are inside a house: warm and dry, mending twice as fast while fed. A fire close by warms you.")
-    assert _how_it_feels(snap([ground()], attrs={"Sheltered": "roof", "InHouse": True, "HouseRoom": 8, "HouseMends": 3})) == (
+    assert _how_it_feels(snap([ground()], attrs={"Sheltered": "roof", "InHouse": True, "HouseRoom": 8.0, "HouseMends": 3.0})) == (
         "You are inside a house: warm and dry, mending three times as fast while fed (its room has 8 cells to stand in).")
     assert "mending 2.5 times as fast" in _how_it_feels(snap([ground()], attrs={"InHouse": True, "HouseMends": 2.5}))
     assert _how_it_feels(snap([ground()], attrs={"Cold": True, "ByFire": True})) == (
@@ -103,6 +103,7 @@ def test_prompts(world, tmp_path):
     # ADR-033: wider rooms on posts, and a reason to build bigger: mending grows with the room.
     assert "Inside your house a fed body mends faster the more room it has to stand in: twice as fast in a room" in system
     assert "A wider room needs posts\ninside it" in system and "no two pieces of a roof lie in one cell" in system
+    assert "one of twelve cells nearly\ntwice as many, some thirty logs" in system  # INT-9: what a bigger house costs
     assert "hold your spear and rub it hard against a log lying on the ground" in system
     assert "a coconut's dry husk" in system
     assert "a log laid against a burning one takes the fire as it burns out" in system

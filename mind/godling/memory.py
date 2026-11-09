@@ -146,8 +146,13 @@ class NativeMemory:
             return set()
         room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
         out = outside_of(room, door)
-        posts = {tuple(c) for c in house.get("posts", [])}  # a post's cell is for the post (ADR-033)
-        return (set(room) - posts) | {door} | ({out} if out else set())
+        return set(room) | {door} | ({out} if out else set())  # a post's cells too: place_at stands the post (82-CDE4)
+
+    def planned_roof(self):
+        """Where the guided roof of the house the mind is building puts its logs (house.plan "roof", kept by
+        Mind.house_progress): {((ix, iz), axis)}. The hands set a log on its middle there as aimed (ADR-033)."""
+        house = (self.state.get("house") or {}) if self.house_project_enabled else {}
+        return {((c[0], c[1]), c[2]) for c in house.get("roof", [])}
 
     def set_house(self, house):
         """The house the mind is building (Mind.house_project), or None once it gives it up."""
