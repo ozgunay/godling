@@ -221,6 +221,8 @@ class Snapshot:
         self.wet, self.cold, self.in_rain = attrs.get("Wet") or 0, bool(attrs.get("Cold")), bool(attrs.get("InRain"))
         self.sheltered = attrs.get("Sheltered") or ""  # what is over and round it: "", "roof" or "enclosed"
         self.in_house = bool(attrs.get("InHouse"))  # it stands inside a finished house (main.lua houseAt, ADR-019)
+        # That house's room to stand in, in cells, and how many times as fast a fed body mends there (ADR-033).
+        self.house_room, self.house_mends = attrs.get("HouseRoom") or 0, attrs.get("HouseMends") or 0
         self.by_fire = bool(attrs.get("ByFire"))
         self.walk_speed = attrs.get("WalkSpeed")  # the pace now: a heavy load and the rain slow it
         fx, fz = attrs.get("ViewForwardX"), attrs.get("ViewForwardZ")  # which way the body faces

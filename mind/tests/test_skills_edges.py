@@ -157,7 +157,7 @@ def holding_log(make, things):
 
 @pytest.mark.parametrize("aim, turn, why", [
     ((0, 6.25, 0), 90, "along z, where its end at (0.0, -2.5) had nothing under it but the ground"),  # turned wrong
-    ((2.5, 6.25, 0), 0, "along x, where its end at (0.0, 0.0) had nothing under it but the ground"),  # a cell off
+    ((0, 6.25, 2.5), 0, "along x, where its end at (-2.5, 2.5) had nothing under it but the ground"),  # a cell off
 ])
 def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
     island, body = holding_log(make, posts())
@@ -167,8 +167,18 @@ def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
     assert place["position"] == pytest.approx([0, 5.0 + 1.25 + 0.03, 0])
     assert place["rotation"] == pytest.approx(sk._rotation(0, False))
     assert r.summary.startswith("Log_1 came to rest at (0.00, 6.28, 0.00), across Block_2 and Block_12")
-    assert f"(you aimed it at ({aim[0]:.1f}, 6.25, 0.0) {why}" in r.summary
+    assert f"(you aimed it at ({aim[0]:.1f}, 6.25, {aim[2]:.1f}) {why}" in r.summary
     assert r.summary.endswith("; so your hands set it along x with its ends on Block_2 and Block_12 instead)")
+
+
+def test_a_beam_resting_on_its_middle_stays_where_it_was_aimed(make):
+    # ADR-033: a log with its middle on a post stays up, balanced, as the house's roof logs do on its walls and posts.
+    # It is set where it was aimed, not moved to lie across both posts (until ADR-033 it was, and a roof log over a
+    # post was moved onto the post and the wall beyond it).
+    island, body = holding_log(make, posts())
+    r = body.run("place_at", {"x": 2.5, "y": 6.25, "z": 0, "turn": 0})
+    assert r.ok and [d for a, d in island.acts if a == "Place"][-1]["position"] == pytest.approx([2.5, 6.25, 0])
+    assert "you aimed it" not in r.summary
 
 
 def test_a_beam_aimed_right_goes_where_it_was_aimed(make):

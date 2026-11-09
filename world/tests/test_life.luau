@@ -281,6 +281,64 @@ T.test("a house: only inside one is the body warm at night, mending twice as fas
     T.near(over(10), -10 * 100 / 2400 * 0.5, 0.02, "out in the open, a fire alone halves it")
 end)
 
+-- ADR-033: a room three cells wide, its roof held up by a post inside (mind/tests/test_house_posts.py hut()). It is a
+-- house, and the more room inside a house, the faster a fed body mends there.
+T.test("a house three cells wide on a post inside; the more room, the faster a fed body mends", function()
+    local w = T.boot()
+    local e, x = w.e, w.x
+    local cx, cz = 600, 600 -- away from the island's own terrain and pieces
+    e.part("Ground_Posts", { Position = V.new(cx, -0.5, cz), Size = V.new(80, 1, 80), Anchored = true,
+        attrs = { RenderRole = "Ground" } })
+    local g = w.godling(V.new(cx, 2.55, cz)) -- in cell (0, 0), the room's south-west corner
+    e.step(1400, 10) -- into the night, then build
+    local n = 3000
+    local function piece(kind, size, dx, dz, y)
+        n = n + 1
+        return e.part(kind .. "_" .. n, { Size = size, Position = V.new(cx + dx * 2.5, y, cz + dz * 2.5), Anchored = true,
+            attrs = { RenderRole = kind == "Log" and "Log" or "PickupObject", IsPickupObject = true } })
+    end
+    local BLOCK, ALONG_X, ALONG_Z = V.new(2.5, 2.5, 2.5), V.new(7.5, 2.5, 2.5), V.new(2.5, 2.5, 7.5)
+    for dx = -1, 3 do -- walls three blocks high round cells (0..2, 0..2), the doorway south at (1, -1)
+        for dz = -1, 3 do
+            if not (dx >= 0 and dx <= 2 and dz >= 0 and dz <= 2) and not (dx == 1 and dz == -1) then
+                for layer = 1, 3 do
+                    piece("Block", BLOCK, dx, dz, (layer - 0.5) * 2.5)
+                end
+            end
+        end
+    end
+    local post = piece("Log", V.new(2.5, 7.5, 2.5), 1, 1, 3.75) -- a log stood on end in the middle
+    piece("Log", ALONG_Z, 1, 1, 8.75) -- on the post's middle, over (1, 0) and (1, 2)
+    piece("Log", ALONG_X, 1, -1, 8.75) -- the lintel
+    for dz = 0, 2 do
+        piece("Log", ALONG_X, -1, dz, 8.75) -- centred on the west wall, reaching one cell in
+    end
+    for dz = 0, 1 do
+        piece("Log", ALONG_X, 3, dz, 8.75)
+    end
+    piece("Log", ALONG_Z, 2, 3, 8.75)
+    for _, c in ipairs({ { -1, -1 }, { 3, -1 }, { -1, 3 }, { 0, 3 }, { 1, 3 }, { 3, 2 }, { 3, 3 } }) do
+        piece("Block", BLOCK, c[1], c[2], 8.75)
+    end
+    local s = x.surviving[g]
+    s.wet, s.hunger, s.health = 0, 100, 50
+    e.step(2, 1)
+    T.eq(g:GetAttribute("InHouse"), true, "inside a house three cells wide, its roof on a post")
+    T.eq(g:GetAttribute("HouseRoom"), 8, "eight cells to stand in: nine inside, one of them the post")
+    T.eq(g:GetAttribute("HouseMends"), 3, "three times as fast in eight cells")
+    T.eq(g:GetAttribute("Cold"), false)
+    local before = s.health
+    e.step(10, 1)
+    T.near(s.health - before, 10 * 100 / 1800 * 3, 0.05, "mending three times as fast")
+    -- The post two blocks high, a gap under the log on it: no house.
+    post:Destroy()
+    piece("Block", BLOCK, 1, 1, 1.25)
+    piece("Block", BLOCK, 1, 1, 3.75)
+    e.step(2, 1)
+    T.eq(g:GetAttribute("InHouse"), false, "a post short of the roof")
+    T.eq(g:GetAttribute("HouseMends"), 0)
+end)
+
 -- The shelter run hp-proj8 built (ADR-019), which passed the first check: one cell between two posts and a wall, a
 -- log over it. It keeps the rain off and the walls round it halve the cold, but it is no house.
 T.test("a one-cell shelter between posts is enclosed, not a house", function()

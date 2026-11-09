@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from .learned import SkillError
 from .discovery import EYE, FOG_HIDES, SIGHT
-from .house import Grid, assess, at, layout as house_layout, outside_of, plan as house_plan, ring
+from .house import Grid, assess, at, layout as house_layout, mending, outside_of, plan as house_plan, ring
 from .structures import pieces_of, terrain_of
 from .world import BODY_CENTRE_Y, CUBE, Snapshot, death_cause, hdist
 
@@ -36,11 +36,12 @@ ANSWER_SHAPE = {
 # own building taken back). The mind chooses its site once; every plan is told how far it has come and what is next.
 HOUSE_SHAPE = {"inside": "[[x, z], ...] the cells inside your house (block centres), at least two by two",
                "door": "[x, z] its doorway: a cell beside them on one side, not at a corner",
+               "posts": "[[x, z], ...] cells inside where a post stands to hold up the roof, if any",
                "why": "only to move or give up the house you chose: the concrete reason it cannot stand there"}
 HOUSE_RULE = """A house you build is one project, kept across all your plans until it stands. Choose where it will stand
 once, with "house": the cells inside it and its doorway; leave "house" out after that. Every plan is told how far it
 has come and what it needs next, and your body keeps the pieces in its walls and roof for it. You may change the house
-where it stands (more cells, another doorway). Move it elsewhere, or give it up ("inside": []), only with "why": a
+where it stands (more cells, another doorway, posts). Move it elsewhere, or give it up ("inside": []), only with "why": a
 concrete reason it cannot stand there."""
 HOUSE_STALL = 15 * 60  # seconds without progress before the mind hears its house has come no further
 
@@ -166,8 +167,9 @@ def _how_it_feels(snap):
         parts.append("It is raining" + (", and you are out in it: it slows your walking" if snap.in_rain else ""))
     if snap.wet >= 15:
         parts.append(f"You are {'soaked through' if snap.wet >= 70 else 'wet'} ({snap.wet:.0f}%)")
-    if snap.in_house:
-        parts.append("You are inside a house: warm and dry, mending twice as fast while fed")
+    if snap.in_house:  # how fast it mends there grows with the room it has (ADR-033)
+        parts.append(f"You are inside a house: warm and dry, mending {mending(snap.house_mends)} as fast while fed"
+                     + (f" (its room has {snap.house_room} cells to stand in)" if snap.house_room else ""))
     elif snap.sheltered:
         parts.append("You stand under a roof" + (" with walls around you" if snap.sheltered == "enclosed" else "")
                      + (", which halves the cold; this is not a house, which would keep it off" if snap.cold else ""))
@@ -330,8 +332,8 @@ watch what happens, and write down what you learn.
 What your body knows about itself: it is 2 units wide and 5 tall, reaches things a few units away and
 walks around obstacles. Its legs step up onto anything one block high and hop down a drop of one block;
 anything higher needs a ladder that stands against something. It walks on anything flat it gets onto. Its hands set
-pieces at most three blocks above the floor it stands on; for higher, it steps up onto something a block high beside
-the spot, if there is something. To stand
+pieces at most three blocks above the floor it stands on, and a piece of a fourth only right over its head or right
+beside it; for higher, it steps up onto something a block high beside the spot, if there is something. To stand
 under something it needs more room than its own height: an underside two blocks up, exactly as tall as you, is too low.
 You can build. A building block is 2.5 units on every side, half your height, and whatever you set down
 settles into a grid of cells 2.5 apart. Things you can build with: stone blocks, which a hammer breaks
@@ -357,7 +359,12 @@ close by halves it too. Only inside a house are you warm, whatever the night. A 
 two, clear to stand in on one floor; walls all round it, corners too, filled from the ground up to the roof, but for one
 doorway on a side, open up to the roof and onto open ground; and a roof over all of it, the walls and the doorway too,
 with more room under it than your height (on walls three blocks high).
-Inside your house a fed body mends twice as fast.
+A log stays up resting on its middle, or with its two ends on something, and no two pieces of a roof lie in one cell.
+So a log on a wall reaches one cell in, and a room two cells wide is roofed from its walls. A wider room needs posts
+inside it: a log stood on end, from the floor up to the roof, alone with the room on all four sides of it, holding a
+log on its middle over the cells either side. A post counts as a cell inside the house, not as room to stand in.
+Inside your house a fed body mends faster the more room it has to stand in: twice as fast in a room of four cells, a
+quarter faster again for each cell more, up to four times as fast in twelve cells or more.
 A stone that falls from the sky blasts where it lands: it smashes what it hits, breaks fastenings close by, throws
 loose pieces about, fells palms and leaves a crater. Its dark shadow shows where, about 40 seconds before. It lands
 glowing hot and cools over about a day; cooled, it is dark, heavy and hard, and looks like metal, unlike the island's
@@ -592,7 +599,8 @@ thought and in that project's intention."""
         ground = self.memory.state.get("construction", {}).get("ground", {})
         if self.discovery is not None and any(f"{ix},{iz}" not in ground for ix, iz in self._house_cells()):
             return None  # a remembered project can predate the geometry cache; inspect it before changing ownership
-        found = house_plan(pieces_of(observed), terrain_of(observed), [tuple(c) for c in house["inside"]], tuple(house["door"]))
+        found = house_plan(pieces_of(observed), terrain_of(observed), [tuple(c) for c in house["inside"]],
+                           tuple(house["door"]), [tuple(c) for c in house.get("posts", [])])
         house["pieces"], house["in_the_way"] = found["pieces"], found["in_the_way"]
         if len(found["pieces"]) != house.get("installed"):  # pieces in place at the house, kept: the work that stays
             house["installed"] = len(found["pieces"])
@@ -616,9 +624,10 @@ thought and in that project's intention."""
         cells = ", ".join(at(c) for c in house["inside"])
         moved = house.get("moves", 0)
         after = f", after moving it {moved} time{'s' if moved != 1 else ''}" if moved else ""
+        posts = house.get("posts", [])
         line = (f"Your house, the one project you keep across your plans (chosen "
                 f"{int((time.time() - house['since']) / 60)} minutes ago{after}): inside {cells}, the doorway at "
-                f"{at(house['door'])}. ")
+                f"{at(house['door'])}" + (f", posts at {', '.join(at(c) for c in posts)}" if posts else "") + ". ")
         if (self.discovery is not None and found["pieces"]
                 and not any(n in self.discovery.visible for n in found["pieces"])):
             line += "Last observed. "
@@ -652,15 +661,18 @@ thought and in that project's intention."""
             self.log(kind="house", phase="abandoned", why=why, inside=now["inside"], door=now["door"])
             self.memory.set_house(None)
             return
-        chosen = house_layout(inside, spec.get("door"))
+        posts = (spec["posts"] if "posts" in spec  # left out: the posts it has (kept as cells)
+                 else [[c[0] * CUBE, c[1] * CUBE] for c in (now or {}).get("posts", [])])
+        chosen = house_layout(inside, spec.get("door"), posts)
         if isinstance(chosen, str):
             self.notes.append(f"Your house was not set: {chosen}.")
             self.log(kind="house", phase="rejected", reason=chosen, spec=json.dumps(spec)[:300])
             return
-        room, door = [list(c) for c in chosen[0]], list(chosen[1])
+        room, door, posts = [list(c) for c in chosen[0]], list(chosen[1]), [list(c) for c in chosen[2]]
+        shape = {"posts": posts} if posts else {}  # ADR-033: what holds up the roof of a room wider than two cells
         moves = 0
         if now is not None:
-            if now["inside"] == room and now["door"] == door:
+            if now["inside"] == room and now["door"] == door and now.get("posts", []) == posts:
                 return
             same_site = any(c in now["inside"] for c in room)
             if not same_site and not why:
@@ -669,16 +681,17 @@ thought and in that project's intention."""
                 self.log(kind="house", phase="refused", inside=room, door=door)
                 return
             self.log(kind="house", phase="revised" if same_site else "moved", why=why, inside=room, door=door,
-                     was=now["inside"])
+                     was=now["inside"], **shape)
             if same_site:  # its progress is measured afresh: the old best was scored against another layout
-                self.memory.set_house({**now, "inside": room, "door": door, "best": -1, "best_at": time.time()})
+                self.memory.set_house({**now, "inside": room, "door": door, "posts": posts, "best": -1,
+                                       "best_at": time.time()})
                 self.house_progress(snap)
                 return
             moves = now.get("moves", 0) + 1
         else:
-            self.log(kind="house", phase="chose", why=why, inside=room, door=door)
-        self.memory.set_house({"inside": room, "door": door, "since": time.time(), "best": -1, "best_at": time.time(),
-                               "pieces": [], "moves": moves, "why": why})
+            self.log(kind="house", phase="chose", why=why, inside=room, door=door, **shape)
+        self.memory.set_house({"inside": room, "door": door, "posts": posts, "since": time.time(), "best": -1,
+                               "best_at": time.time(), "pieces": [], "moves": moves, "why": why})
         self.house_progress(snap)
 
     # ---- thinking ---------------------------------------------------------------------

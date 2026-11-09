@@ -13,6 +13,7 @@ import time
 from collections import deque
 
 from .skills import Interrupted
+from .house import mending
 from .world import CUBE, death_cause, hdist
 
 INTERRUPT_AT = 4  # salience 1-5
@@ -299,7 +300,8 @@ class Attention:
         elif was is not None and ship is None:
             out.append(("The ship has sailed out of sight", 3, [], {}))
         if after.in_house and not before.in_house:  # ADR-019: the world says it is a house
-            out.append(("You are inside a house now: warm and dry, and fed you mend twice as fast", 3, [], {}))
+            out.append((f"You are inside a house now: warm and dry, and fed you mend {mending(after.house_mends)} as "
+                        "fast", 3, [], {}))
         if after.cold and not before.cold:
             out.append(("You have grown cold" + (": the night is chilly out here" if not after.in_rain
                                                  else ": the rain has soaked you through"), 3, [], {}))

@@ -73,6 +73,9 @@ STEP_UP = 2.6  # main.lua STEP_UP_MAX: the body steps up onto anything one block
 LADDER_FOOT = 2.45  # out from a standing ladder's middle, the room its foot needs: climbing down, the world steps the
 #                     body off 1.5 out and wants room for it there, 1.9 wide (main.lua climb, bodyFits)
 LADDER_KEPT_CLEAR = "anything there closes the way up it. Set it a cell further off, or move the ladder first"
+REACH_SLACK = 0.4  # kept short of the hands' reach when choosing where to stand: the body may stop a little short
+OVERHEAD_SLACK = 0.25  # for a piece set over the head from the floor (a roof inside a house, ADR-033), where 0.4 short
+#                        leaves no spot beside a post: from its side the hands are 6.67 from the log's middle, of 7
 RUB_TRIES = 30  # rubs one rub step keeps at, about half a minute (fire catches from the 12th, about the 20th on average)
 RUB_HOT = 12  # main.lua RUB_HOT: from this many rubs in a row the wood is hot and smoking
 TINDER_RANGE = 3.0  # main.lua TINDER_RANGE: tinder this close to the log catches from it
@@ -683,7 +686,7 @@ class Skills:
         self.world.act("Stop")
         return True
 
-    def _stand_point(self, snap, target, reach, min_radius, ignore=(), avoid=None):
+    def _stand_point(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK):
         """A clear spot on our own level, within reach of `target` (x, y, z), and clear of `avoid` (the long thing
         we reach for: we stand beside it, not on it).
 
@@ -704,14 +707,14 @@ class Skills:
                 if avoid is not None and avoid.footprint_contains(sx, sz, margin=1.3):
                     continue
                 body = (sx, level + BODY_CENTRE_Y, sz)
-                if math.dist(body, target) > reach - 0.4 or not reaches(sx, sz):
+                if math.dist(body, target) > reach - slack or not reaches(sx, sz):
                     continue
                 score = math.hypot(sx - me[0], sz - me[2])
                 if best is None or score < best[0]:
                     best = (score, (sx, sz))
             if best:
                 return best[1]
-        return self._close_stand_point(snap, target, reach, ignore, avoid)
+        return self._close_stand_point(snap, target, reach, ignore, avoid, slack)
 
     def _reach_fn(self, snap, target, ignore, level):
         """Can the hands reach `target` from a spot (x, z) in a straight line? Not through anything two blocks high or
@@ -729,7 +732,7 @@ class Skills:
                            for i in range(1, steps))
         return reaches
 
-    def _close_stand_point(self, snap, target, reach, ignore=(), avoid=None):
+    def _close_stand_point(self, snap, target, reach, ignore=(), avoid=None, slack=REACH_SLACK):
         """Where the whole body fits within reach of `target`, when no spot on the rings round it is clear. In a
         house's room two cells wide (ADR-019), a block lying in a cell inside leaves only the free cells round it, a
         quarter unit wider than the body on each side, and every ring crosses a wall or the block. So every spot within
@@ -757,11 +760,11 @@ class Skills:
         # Only out as far as the hands reach at the target's height: from up high (a roof) that is a few units, not all
         # of the reach (run hp-full2 hit 34 blocked walks and reaches, each a search like this one).
         rise = ty - (level + BODY_CENTRE_Y)
-        n = int(math.sqrt(max((reach - 0.4) ** 2 - rise ** 2, 0)) / step)
+        n = int(math.sqrt(max((reach - slack) ** 2 - rise ** 2, 0)) / step)
         for i in range(-n, n + 1):
             for k in range(-n, n + 1):
                 sx, sz = tx + i * step, tz + k * step
-                if math.dist((sx, level + BODY_CENTRE_Y, sz), target) > reach - 0.4 or blocked(sx, sz):
+                if math.dist((sx, level + BODY_CENTRE_Y, sz), target) > reach - slack or blocked(sx, sz):
                     continue
                 room = spare(sx, sz)
                 if room < 0 or not reaches(sx, sz):
@@ -923,6 +926,13 @@ class Skills:
         floor = snap.ground_top(target[0], target[2]) or 0.0
         return target[1] - size[1] / 2 > floor + CUBE / 2
 
+    def _on_its_middle(self, snap, centre, size):
+        """Whether a long piece laid flat at `centre` rests on its middle: something held up there under its middle, as
+        high as its underside, as a log centred on a wall or a post does (ADR-019, ADR-033). Balanced, it stays up."""
+        bottom = centre[1] - size[1] / 2
+        top, e = snap.surface(centre[0], centre[2], below=bottom + 0.25)
+        return e is not None and e.role != "Ground" and top is not None and abs(top - bottom) <= 0.3
+
     def _beam_on_supports(self, snap, held, target, turn, size):
         """Where to set a beam so that both its ends rest on something of the same height: where it was aimed if they
         do there, else the nearest of a cell either way or a quarter turn that does (nothing in the way). Supports may
@@ -938,7 +948,7 @@ class Skills:
                 return None
             return ends
 
-        if rests(target, size):
+        if rests(target, size) or self._on_its_middle(snap, target, size):
             return target, turn, size, ""
         other = 0 if turn == 90 else 90
         options = [(turn, dx, dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))]
@@ -1115,10 +1125,10 @@ class Skills:
         return Result(True, "walk_to", f"stepped up onto {name}, now standing at height {self._level(snap):.1f} "
                                        f"at ({snap.me[0]:.1f}, {snap.me[2]:.1f})")
 
-    def _approach(self, snap, target, reach, min_radius, ignore=(), avoid=None):
+    def _approach(self, snap, target, reach, min_radius, ignore=(), avoid=None, slack=REACH_SLACK):
         """A spot on our floor within reach of `target`. From up on something, with nothing in reach up here and the
         target below, hop down towards it first, as a person would. Returns (spot or None, latest snapshot)."""
-        stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid)
+        stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack)
         level = self._level(snap)
         if stand is None and level > 0.3 and target[1] < level + 1.0:
             # The floor we would stand on down there: under the target, not the target's own top.
@@ -1126,7 +1136,7 @@ class Skills:
             if floor is not None:  # hop down, or take a ladder down where the drop is too high
                 if self._hop_down(snap, target[0], target[2], level, floor, walk_on=False).ok:
                     snap = self._observe()
-                    stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid)
+                    stand = self._stand_point(snap, target, reach, min_radius, ignore, avoid, slack)
         return stand, snap
 
     def _step_up_to_reach(self, snap, target, spot, held):
@@ -1602,9 +1612,18 @@ class Skills:
         spot = _Box(target, size)
         body = (snap.me[0], snap.me[1], snap.me[2])
         stepped, floor = "", None
-        if math.dist(body, target) > PLACE_RANGE - 0.3 or spot.footprint_contains(body[0], body[2], margin=1.3):
-            stand, snap = self._approach(snap, target, PLACE_RANGE, 1.0 + min(size[0], size[2]) / 2 + 0.5,
-                                         ignore={held.name}, avoid=spot)
+        # A piece set wholly over the head (a roof inside a house, ADR-033) may be set standing under it, as a person
+        # sets a beam overhead; or, with nowhere under it in reach, from right beside it, as far as the hands reach (a
+        # log on a post, from the room beside the post). Any other is set from beside it.
+        overhead = target[1] - size[1] / 2 >= self._level(snap) + BODY_HEIGHT + 0.3
+        if (math.dist(body, target) > PLACE_RANGE - 0.3
+                or not overhead and spot.footprint_contains(body[0], body[2], margin=1.3)):
+            radius = 1.0 + min(size[0], size[2]) / 2 + 0.5
+            stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name},
+                                         avoid=None if overhead else spot)
+            if stand is None and overhead:
+                stand, snap = self._approach(snap, target, PLACE_RANGE, radius, ignore={held.name}, avoid=spot,
+                                             slack=OVERHEAD_SLACK)
             if stand is None and target[1] > self._level(snap) + BODY_HEIGHT:
                 # Above the hands from this floor: step up onto something a block high beside it first, as a person
                 # would (in run n8 a third layer laid from the ground failed about half the time).

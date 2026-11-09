@@ -146,7 +146,8 @@ class NativeMemory:
             return set()
         room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
         out = outside_of(room, door)
-        return set(room) | {door} | ({out} if out else set())
+        posts = {tuple(c) for c in house.get("posts", [])}  # a post's cell is for the post (ADR-033)
+        return (set(room) - posts) | {door} | ({out} if out else set())
 
     def set_house(self, house):
         """The house the mind is building (Mind.house_project), or None once it gives it up."""
