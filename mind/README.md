@@ -8,6 +8,7 @@ The mind thinks about the past and the future; the body handles walking and gras
 | L3 mind | `godling/mind.py` | An LLM decides projects, narrates its intention, writes lessons, teaches itself skills, and sleeps hourly to consolidate memory. Its system prompt states plain facts of the body and the world, such as one log to a palm the axe fells (ADR-026) |
 | L2 attention | `godling/attention.py` | Notices new objects, damage to things it kept, visitors and sky events; interrupts for salient events (the Jev slot is `decide`); hands events that happen somewhere to the glance reflex; takes notice of what it is told rather than sees (`notice`: a reflex the body took, the house lost, ADR-028) |
 | L1 body | `godling/skills.py` | Moves: walk_to (A* around mesas and objects), pick_up, put_down, place_at, throw, jump, say, wait. They know reach and overlap, not strategy, and keep a standing ladder's top and foot clear (ADR-025). Cold and hurt with nothing over it, the body takes shelter by itself (ADR-028). Between steps, and while it waits, the body glances: it turns towards what attention just noticed, without changing the plan |
+| voice | `godling/speech.py` | All it says aloud, in plain words: places given as numbers, the world's ticks and numbered names left out or put in words (a `say` with nothing readable left is not said, and the step's result says why; the project goes on). It also speaks by itself at the moments viewers care about: its death and rebirth, losing its house, a viewer's note, the sky hitting it, a big achievement; one short model call each, with a gap, cooldowns and a cap of 20 an hour (ADR-031). What it says shows in the viewers' feed |
 | learned skills | `godling/learned.py` | Skills the mind defines from body moves: declarative, verified in the world before they count as "proven", persisted. Under every memory engine, a skill that has worked keeps its steps (no forgetting, no other steps under its name) until it has failed, in a row since it last worked, as many times as it has worked (at least 3), or has gone 2 hours without working; the library refuses other requests and tells the mind why. Runs that attention cuts short are not counted (ADR-032) |
 | memory | `godling/memory.py` | Episodes (with world ticks), intentions, kept structures, digest; follows the plan's MemoryAdapter interface (§10.6). Opening a memory from before a change to the world retires, once, the lessons it made untrue (`RETIRED`; ADR-026: logs that wash up, two logs a palm) |
 | world | `godling/world.py` | HTTP client for Clawblox and a compact reading of observations |
@@ -20,7 +21,7 @@ python3 /mnt/c/Work/godling/mind/run_godling.py --run-dir ~/godling-runs/m-002
 ```
 
 What happens:
-- It starts Mesa Island with recording on port 8080, prints the spectator link, joins as Godling, and prints THINK / INTEND / DO / LEARN lines as it goes.
+- It starts Mesa Island with recording on port 8080, prints the spectator link, joins as Godling, and prints THINK / INTEND / DO / SAID / LEARN lines as it goes.
 - **Ctrl+C** stops the mind and the world together.
 - The DeepSeek key is read from `DEEPSEEK_API_KEY` or `~/.claude-deepseek/settings.json` (written by `tools/setup_deepseek.sh`).
 
@@ -29,6 +30,7 @@ Useful flags:
 - `--minutes 60`: stop by itself after an hour.
 - `--gifted-skills`: also offer ready-made `stack_on`/`build_tower` (the comparison arm).
 - `--no-narration`: don't post intentions to world chat.
+- `--no-voice`: no lines of its own at key moments (ADR-031); its `say` steps are still said in plain words. On, it costs about $0.0003 an hour (run live replayed) and at most about $0.005.
 - `--attach`: use a world that's already running. If that world asks for a join key (`patches/v2`, ADR-014), export its `WORLD_AGENT_KEY` first. A run that starts its own world makes a fresh key and keeps it in `<run>/world.key`.
 - `--guest-panel 8081`: also serve the guest panel at http://localhost:8081/. It shows the live view, what Godling thinks and needs, and buttons for the sky powers (stone, log, regrow, lightning, meteor). Free in test mode. It also runs on its own: `python3 tools/guest_panel.py --world http://localhost:8080 --run-dir <run>`.
 - `--relay 8082`: stream the island to viewers through the relay (`relay/`, ADR-015; build it first with `cargo build --release` in `relay/`). The world gets a spectator token the relay shares, and the guest panel's island streams from the relay: one connection to the world however many watch, and pages that reconnect pick up where they left off. With `--attach`, export the world's `WORLD_SPECTATOR_TOKEN`.

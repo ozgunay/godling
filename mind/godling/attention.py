@@ -250,19 +250,20 @@ class Attention:
             what = (f"Your body lies where it fell; you will come back to life at the start in about "
                     f"{after.dead_for or 30:.0f}s" if after.dead else
                     "You have already come back to life at the start, whole but half fed")
-            out.append((f"You died of {death_cause(after.died_of)}. {what}", 5, [], {**where, "death": "died"}))
+            out.append((f"You died of {death_cause(after.died_of)}. {what}", 5, [],
+                        {**where, "death": "died", "back": not after.dead}))  # back: born again already, unseen
         elif before.dead and not after.dead:
             out.append(("You have come back to life at the start, whole but half fed. What you carried lies where you "
                         "died" + (f", at ({after.died_at[0]:.0f}, {after.died_at[1]:.0f})" if after.died_at else ""),
                         4, [], {**_at(after.me), "death": "reborn"}))
         if after.struck > before.struck:  # main.lua THE STORM: a bolt on the body itself
             out.append((f"Lightning struck you: you are burned and hurt, your health is {after.health:.0f} of 100",
-                        5, [], _at(after.me)))  # its own timeline mark (replay.marks_of), not the storm's
+                        5, [], {**_at(after.me), "hit": "struck"}))  # its own timeline mark (replay.marks_of)
         elif after.hurts > before.hurts:  # real damage, to the body itself
             by = {"Lightning": "lightning striking close by", "Meteor": "a stone from the sky landing close by",
                   "Storm": "lightning striking close by"}
             out.append((f"You were hurt by {by.get(after.hurt_by, 'something')}: your health is "
-                        f"{after.health:.0f} of 100", 4, [], _at(after.me)))
+                        f"{after.health:.0f} of 100", 4, [], {**_at(after.me), "hit": "hurt"}))
         if after.storm_phase == "warning" and before.storm_phase != "warning":  # a storm called down is coming
             spots = [f"({x:.0f}, {z:.0f})" for x, z in after.storm_spots]
             where = (", ".join(spots[:-1]) + " and " + spots[-1]) if len(spots) > 1 else "".join(spots)
@@ -278,7 +279,8 @@ class Attention:
         if after.note_id and after.note_id != before.note_id and after.note_text:  # a viewer's note (main.lua sky.notes)
             out.append((f"A paper glider drifted down at ({after.note_at[0]:.0f}, {after.note_at[2]:.0f}) with a note "
                         f"from one of the strangers who watch you. It reads: \"{after.note_text}\"", 3, [],
-                        {**_at(after.note_at), "sky": "Note", "sky_id": int(after.note_id), "sky_stage": "arrived"}))
+                        {**_at(after.note_at), "sky": "Note", "sky_id": int(after.note_id), "sky_stage": "arrived",
+                         "note": after.note_text}))
         if after.meteor_id and after.meteor_id != before.meteor_id:  # a meteor's blast (main.lua sky.meteor)
             did = after.meteor_did
             parts = [f"smashed {did['Smashed']} piece{'s' * (did['Smashed'] != 1)}" if did["Smashed"] else "",
@@ -289,7 +291,7 @@ class Attention:
             out.append((f"A stone from the sky blasted at ({after.meteor_at[0]:.0f}, {after.meteor_at[2]:.0f}): it {what}"
                         + (", and the blast threw you down" if did["Hurt"] else "") + ". It left a crater.",
                         4, [], {**_at(after.meteor_at), "sky": "Meteor", "sky_id": int(after.meteor_id),
-                                "sky_stage": "blast"}))
+                                "sky_stage": "blast", **({"hit": "thrown"} if did["Hurt"] else {})}))
         if after.quake_phase and not before.quake_phase:  # an earthquake: the rumble before the shaking
             out.append(("The ground is rumbling under you: an earthquake is coming", 5, [],
                         {"sky": "Earthquake", "sky_id": int(after.quake_id or 0), "sky_stage": "warning"}))

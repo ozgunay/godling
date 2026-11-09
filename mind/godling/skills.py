@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 from .house import OVER as ROOF_HIGHEST, _cells as cells_in, cell_of
+from .speech import Voice
 from .structures import PIECE_PREFIXES as ROOF_KINDS  # building pieces: what a roof is made of (as the house check)
 from .world import (BODY_CENTRE_Y, BUILDING_KINDS, CUBE, FASTEN_SECONDS, LADDER_HEIGHT, LIFT_SECONDS, PICKUP_RANGE,
                     PLACE_RANGE, PLACE_SECONDS, SKY_MARKERS, SNAPPED_KINDS, SPEAR_THRUST, STEP, STRIKE_RANGE, STRIKE_SECONDS,
@@ -53,7 +54,9 @@ PRIMITIVES = {
     "draw": ({"x": "number", "z": "number"},
              "Drag your foot through the sand from where you stand to (x, z), at most 20 away, leaving a line in it. "
              "Only open sand takes a line; lines can make shapes or letters."),
-    "say": ({"text": "string"}, "Say something in the world chat; anyone nearby can read it."),
+    "say": ({"text": "string"},
+            "Say something aloud. The strangers who watch read it, but not your map: your body says it in plain words, "
+            "leaving out places given as numbers and the numbers in names."),
     "wait": ({"seconds": "number 1-30"}, "Stand still and watch the world."),
 }
 # Ready-made strategies, only offered with --gifted-skills (the comparison arm).
@@ -169,7 +172,7 @@ class Stuck(Interrupted):
 
 class Skills:
     def __init__(self, world, protected=lambda: set(), on_step=None, log=None, gifted=False, library=None,
-                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set()):
+                 walk_speed=WALK_SPEED, kept_in=lambda piece: None, reserved=lambda: set(), voice=None):
         self.world = world
         self.walk_speed = walk_speed  # must match the world's humanoid WalkSpeed (used for walk timeouts)
         self.protected = protected  # names of cubes the mind wants left alone
@@ -182,6 +185,7 @@ class Skills:
         self.on_step = on_step  # attention hook: called with each snapshot, may raise Interrupted
         self.next_glance = lambda: None  # attention hook: an event worth a look, taken between steps
         self.log = log or (lambda **kw: None)
+        self.voice = voice or Voice(world, log=self.log)  # what it says aloud, in plain words (ADR-031)
         self.offered = {**PRIMITIVES, **(GIFTED if gifted else {})}
         self.library = library  # skills the mind taught itself (learned.SkillLibrary)
         self.busy = set()  # objects the current skill is handling; attention ignores their movement
@@ -2283,12 +2287,19 @@ class Skills:
         return Result(False, "eat", f"eat failed: {why}")
 
     def skill_say(self, text):
-        self.world.say(str(text))
+        """Said in plain words, whoever chose them (ADR-031): run live spoke "bar at x -115 from z -49.5 to -30" and
+        "Night 1245595". What a viewer cannot read is left out and the mind is told so; a line with nothing left is
+        not said, and the mind is told why. Not said is no failed step: the project's building after it still runs
+        (78-CDE2)."""
+        said, why = self.voice.say(text)
+        if not said:
+            return Result(True, "say", f"not said: {why}", {"said": False})
         try:
             self.world.act("Talk", {})  # the body talks along (the renderer's Talk clip)
         except WorldError:
             pass  # an older world without Talk: the words are said all the same
-        return Result(True, "say", "said it")
+        return Result(True, "say", f'said "{said}"' + (f"; {why}: the strangers who watch read words, not your map"
+                                                       if why else ""))
 
     def skill_wait(self, seconds):
         end = time.time() + max(1.0, min(30.0, float(seconds)))

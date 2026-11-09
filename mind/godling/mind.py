@@ -7,6 +7,7 @@ A decision is split in three so the mind can think while the body moves (ADR-002
   only if the plan is actually used.
 """
 import json
+import threading
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -206,6 +207,8 @@ class Mind:
         self.last_outcome = "You just woke up."
         self.failures = []  # recent failed goals, to break loops
         self.notes = []  # feedback for the next decision (rejected skills, refused forgets)
+        self.notes_lock = threading.Lock()  # its voice tells it from a thread of its own (told, ADR-031)
+        self._noted = 0  # how many notes the prompt being built holds: delivered once it is
         self.think_s = None  # running estimate of how long a plan takes to think up
         self.house_project = house_project  # one house kept across plans (HOUSE_RULE); off: each plan starts afresh
         self.memory.house_project_enabled = house_project
@@ -566,8 +569,11 @@ thought and in that project's intention."""
                          + (": those pieces will be where it puts them, not loose." if moves or unnamed else "."))
         if self.agenda and self.think_s:
             lines.append(f"You take about {self.think_s:.0f}s to think up a plan. {BUSY_HINT}")
-        if self.notes:
-            lines.append("Notes: " + " ".join(self.notes))
+        with self.notes_lock:
+            notes = list(self.notes)
+        self._noted = len(notes)
+        if notes:
+            lines.append("Notes: " + " ".join(notes))
         if events:
             lines.append("You noticed: " + "; ".join(e["text"] for e in events[-8:]))
         if chat:
@@ -768,8 +774,19 @@ thought and in that project's intention."""
         """Main thread: build the prompt (reads memory). Returns what think() needs."""
         prepared = {"system": self.system_prompt(snap), "user": self.situation(snap, events, chat, doing),
                     "tick": snap.tick, "assumes": " -> ".join(p["goal"] for p in doing) if doing else None}
-        self.notes = []  # delivered in this prompt
+        with self.notes_lock:  # delivered in this prompt; one told meanwhile, from another thread, waits for the next
+            del self.notes[:self._noted]
+        self._noted = 0
         return prepared
+
+    def told(self, text):
+        """A note for the next plan from another thread (its voice): kept even while a plan is being prepared."""
+        with self.notes_lock:
+            self.notes.append(text)
+
+    def said_aloud(self, line):
+        """Its voice said a line by itself (ADR-031): what it plans and what it said stay one story."""
+        self.told(f'You said aloud, as it happened: "{line}".')
 
     def think(self, prepared, on_reasoning=None):
         """Any thread: the LLM call only. `on_reasoning` receives the reasoning in pieces as it streams in."""
@@ -891,8 +908,9 @@ json object: {{"lessons": [{{"about": "subject", "text": "a durable lesson in yo
         self.notes.append(f"You died of {cause} and came back to life at the start"
                           + (f"; your lesson: {lessons[0]['text']}" if lessons else "") + ".")
         self.last_outcome = f"You died of {cause}, and have come back to life at the start."
+        feeling = reply.get("feeling")  # its voice says it aloud (ADR-031): a sentence, or nothing (78-SWEEP2)
         self.log(kind="death", cause=snap.died_of, deaths=snap.deaths, lessons=lessons,
-                 feeling=str(reply.get("feeling", ""))[:300])
+                 feeling=feeling.strip()[:300] if isinstance(feeling, str) else "")
         return lessons
 
     def sleep(self, snap):
