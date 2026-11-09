@@ -160,8 +160,16 @@ class NativeMemory:
         placed = [p for p in self.state.get("placed", []) if p not in pieces] + list(pieces)
         self.state["placed"] = placed[-400:]
 
+    def amend(self, text, about="house", tick=0, entities=()):
+        """Something that makes the story so far wrong (ADR-028: the house it calls finished broke): an episode the next
+        sleep consolidates, and until then a line shown right after the digest."""
+        self.store_experience(text, kind=about, tick=tick, entities=[about, *entities], importance=5)
+        self.state["amendments"] = (self.state.get("amendments", []) + [text.strip()[:400]])[-4:]
+
     def finish_sleep(self, digest, intentions):
-        self.state["digest"] = digest.strip()[:2500]
+        if digest.strip():  # a sleep that wrote no story leaves the old one, and what has made it wrong since
+            self.state["digest"] = digest.strip()[:2500]
+            self.state["amendments"] = []  # the new story is written from them
         self.set_intentions(intentions)
         self.state["last_sleep"] = time.time()
         self.state["slept"] += 1

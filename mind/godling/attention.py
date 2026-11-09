@@ -108,10 +108,7 @@ class Attention:
         if self.prev is not None:
             for text, salience, entities, extra in self._diff(self.prev, snap):
                 event = {"text": text, "salience": salience, "entities": entities, "tick": snap.tick, **extra}
-                self.pending.append(event)
-                if not extra.get("death"):
-                    self.noticed.append((now, text))
-                self.log(kind="event", **event)
+                self._record(event, now)
                 if salience >= GLANCE_AT and "at" in event and not extra.get("death"):  # the dead do not look about
                     self.glances.append((time.time(), event))
                 if self.decide(event) and salience > self.interrupt_salience:  # the most salient names it
@@ -128,6 +125,23 @@ class Attention:
     def take_events(self):
         events, self.pending = self.pending, []
         return events
+
+    def notice(self, text, salience=4, pending=True, **extra):
+        """What it is told rather than sees (ADR-028): its body took shelter by itself, its house is lost. News for the
+        next plan and for a death report, like what it sees; with `pending` false, only for a death report (the step
+        the reflex stopped already carries the words to the mind). It interrupts nothing by itself: a reflex that tells
+        it has already stopped the step in progress."""
+        event = {"text": text, "salience": salience, "entities": list(extra.pop("entities", [])),
+                 "tick": self.prev.tick if self.prev is not None else 0, **extra}
+        self._record(event, time.time(), pending=pending)
+
+    def _record(self, event, now, pending=True):
+        """An event: news for the next plan, noticed for a death report (but a death itself), and logged."""
+        if pending:
+            self.pending.append(event)
+        if not event.get("death"):
+            self.noticed.append((now, event["text"]))
+        self.log(kind="event", **event)
 
     def death_report(self, snap, doing=None):
         """What the mind is told once it is born again: what killed it, how its body was over the minutes before,
