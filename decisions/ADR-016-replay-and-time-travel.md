@@ -3,7 +3,7 @@
 Date: 2026-11-02. Status: **built and tested live** on a real run, with the recommended choice for each of D1–D9 (you said to implement it using all of this) and Cloudflare R2 as the storage (D10). What was built, how it differs from the plan, and what is left are at the end, under "What was built".
 
 ## Why
-You decided that P3 must be done before the release (`ROADMAP.md`), and planned in detail first. The master plan asks for this (§15, §16, §19 P3, §20 IT-02 and IT-11, §21):
+You decided that P3 must be done before the release, and planned in detail first. The master plan asks for this (§15, §16, §19 P3, §20 IT-02 and IT-11, §21):
 - **World time and viewer time.** Each viewer has their own point on the timeline, while the world goes on.
 - **Speeds.** The past plays at 1×, 2×, 4×, 8× or 16×. There is no seeking into a future that has not happened yet.
 - **Controls:** scrub, pause, jump, Go Live, keep the camera, focus on a place or a thing, a link to share a moment, markers for events, and a timelapse across days from a fixed camera.
