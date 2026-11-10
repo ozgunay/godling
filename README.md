@@ -190,13 +190,11 @@ The code is left as it was at the end. [`ROADMAP.md`](ROADMAP.md) shows how far 
 
 ## License
 
-<!-- To be filled in once the licence is chosen. -->
-
-Parts of the repository come from elsewhere and keep their own terms:
-- `world/` started from Clawblox's `worlds/mesa-island`, and `patches/` change Clawblox: both MIT, Copyright (c) 2026
-  nacloos.
-- The animations in `art/source/` were downloaded from Adobe Mixamo and are under Adobe's Mixamo terms, not this
-  repository's licence.
+[MIT](LICENSE), Copyright (c) 2026 Ozgun Ay, with one exception and one notice:
+- **Not covered by MIT:** the animation files in `art/source/` (`art/source/*.fbx`) were downloaded from Adobe
+  Mixamo. They are subject to Adobe's terms for Mixamo, not to this repository's licence.
+- **Clawblox:** `world/` started from Clawblox's `worlds/mesa-island`, and `patches/` change Clawblox. Clawblox is
+  also MIT, Copyright (c) 2026 nacloos.
 
 ## Acknowledgements
 
