@@ -47,7 +47,7 @@ After ADR-015 the stream path scored about 7 out of 10: strong against snooping 
 
 ### Before real money
 - **The money gate**: with live Stripe keys the site does not start until `GODLING_SECURITY_REVIEW` names an outside review.
-- **The brief** for the reviewer, and the go-live checklist: `deploy/security-review.md`. Reporting a vulnerability: `SECURITY.md`.
+- **The brief** for the reviewer, and the go-live checklist: `deploy/security-review.md`.
 - **`deploy/check.sh`**: the deployment from outside (HTTPS, certificates, routes, the stream's door, ports), for the reviewer and for every change.
 
 ## Tests

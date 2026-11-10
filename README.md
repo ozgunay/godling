@@ -32,8 +32,8 @@ flowchart LR
 
 ### The mind (`mind/`)
 Think about the past and the future; don't think about walking. The first runs had a coding agent drive the world
-directly: on Claude Opus it made about two full model calls per action, moved 4% of the time, and cost about $24 an
-hour. Godling's mind splits the work into layers instead ([`research/layered-mind-design.md`](research/layered-mind-design.md)):
+directly: on Claude Opus it made about two full model calls per world action, spent 45% of its time waiting for the
+model, and cost about $24 an hour. Godling's mind splits the work into layers instead ([`research/layered-mind-design.md`](research/layered-mind-design.md)):
 
 - **L3, the mind** (`godling/mind.py`): an LLM chooses the next project, narrates its intention, writes lessons,
   defines new skills from the body's moves, and sleeps every hour to consolidate its memory.
@@ -50,8 +50,8 @@ hour. Godling's mind splits the work into layers instead ([`research/layered-min
 - **Voice** (`godling/speech.py`): what it says aloud, in plain words, and a few lines of its own at the moments
   viewers care about: its death and rebirth, a lost house, a viewer's note (ADR-031).
 
-The body acts while the mind thinks: in a night run it was busy 93% of the time. With DeepSeek's `deepseek-flash`
-the mind cost about $0.21 an hour. [`mind/README.md`](mind/README.md) has the layers, the flags and the reflexes in
+The body acts while the mind thinks: in the run that tested ADR-009 it was busy 90% of the time, up from 47%. With
+DeepSeek's `deepseek-flash` the mind cost about $0.21 an hour. [`mind/README.md`](mind/README.md) has the layers, the flags and the reflexes in
 full.
 
 ### The world (`world/`)
@@ -101,10 +101,9 @@ the relay, Caddy for HTTPS, Prometheus with Alertmanager, and encrypted restic b
 | [`art/`](art/) | Blender build scripts for Godling and the props, and their previews (Godling's Mixamo animations are downloaded separately: [`art/README.md`](art/README.md), *Sources*) |
 | [`patches/`](patches/) | The changes to Clawblox, each with its write-up |
 | [`decisions/`](decisions/) | The decision records, ADR-002 to ADR-033 |
-| [`research/`](research/), [`reports/`](reports/), [`research_notes/`](research_notes/) | Design notes, screenshots, and research on god games and agent minds |
-| [`PRODUCT.md`](PRODUCT.md), [`DESIGN.md`](DESIGN.md) | What the product was for, and the screen's design system |
-| [`ROADMAP.md`](ROADMAP.md), [`REVIEW_master_plan_v2.2.md`](REVIEW_master_plan_v2.2.md) | The plan's phases and where they stood, and the review of the plan they came from |
-| [`TESTING.md`](TESTING.md), [`SECURITY.md`](SECURITY.md) | The tests, and the security notes |
+| [`research/`](research/) | The mind's design note, and screenshots |
+| [`DESIGN.md`](DESIGN.md) | The screen's design system |
+| [`TESTING.md`](TESTING.md) | The tests |
 | [`.github/`](.github/) | CI: the tests, config checks, a weekly dependency audit, and Dependabot |
 
 ## Running it
@@ -186,7 +185,7 @@ most record what the runs measured afterwards. Some to start with:
 ## Status
 
 Archived. Godling ran on its own server in November 2026, and the project ended soon after; nothing runs any more.
-The code is left as it was at the end. [`ROADMAP.md`](ROADMAP.md) shows how far each phase of the plan got.
+The code is left as it was at the end.
 
 ## License
 
@@ -208,6 +207,6 @@ The code is left as it was at the end. [`ROADMAP.md`](ROADMAP.md) shows how far 
   one of its memory engines.
 - [Adobe Mixamo](https://www.mixamo.com/), for the animations behind Godling's moves.
 - Django, django-allauth, Celery, Stripe, Caddy, restic and Prometheus, on which the site and the deployment stand.
-- The research the mind's design leans on (Voyager, Generative Agents, SwiftSage, Talker-Reasoner and others), and
-  the god games that shaped the show (Populous, Black & White, Reus, WorldBox and others), collected in
-  [`research/`](research/) and [`reports/`](reports/).
+- The research the mind's design leans on (Voyager, Generative Agents, SwiftSage, Talker-Reasoner and others),
+  collected in [`research/`](research/), and the god games that shaped the show (Populous, Black & White, Reus,
+  WorldBox and others).

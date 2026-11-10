@@ -6,7 +6,7 @@
 | Upstream SHA | `8be90a0` (v0.1.5-2), nacloos/clawblox |
 | Fix branch | `v0-fix/cli-sandbox` in the WSL clone `~/clawblox` (uncommitted working-tree change) |
 | Patch | [v0-fix-cli-sandbox.patch](v0-fix-cli-sandbox.patch): the whole fix branch (BUG-001 is 1 line in `src/agent.rs`; BUG-005 is below) |
-| Status | **Fixed and verified 2026-10-31.** Smoke test passed ([report](BUG-001-smoke-report.md)) |
+| Status | **Fixed and verified 2026-10-31.** Smoke test passed |
 
 ## Reproduction steps
 

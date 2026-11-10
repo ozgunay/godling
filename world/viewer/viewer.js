@@ -1,4 +1,4 @@
-// Godling's viewer screen, live: the Block HUD over the island (see .impeccable/surfaces/world-viewer-index-html.md).
+// Godling's viewer screen, live: the Block HUD over the island.
 // The guest panel (tools/guest_panel.py) serves it and answers /api/status, /api/power and /api/note; or the accounts
 // site (web/, ADR-012) does, in front of the panel: then powers and notes need a signed-in account, and the status
 // carries an `account`. The three HUD prototypes it was chosen from live in prototypes/.

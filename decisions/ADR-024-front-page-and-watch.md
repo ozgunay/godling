@@ -4,7 +4,7 @@ Date: 2026-11-08. Status: built and tested (the site's tests); served on a local
 
 ## Why
 Until now the site's root was the screen: a drop-in from the stream or a link landed straight in the live HUD, with no
-word on what Godling is, what runs it, or that viewers change its world and never its mind. PRODUCT.md asks that a
+word on what Godling is, what runs it, or that viewers change its world and never its mind. The product brief asked that a
 drop-in understand it in seconds, and a regular find depth.
 
 ## Decisions (the user's, 2026-11-08)

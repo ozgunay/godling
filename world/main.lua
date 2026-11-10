@@ -786,7 +786,7 @@ local BOULDER_DIAMETER = 2.6
 local JUMP_POWER = 15
 -- Face: the body turns on the spot towards a point (the glance reflex), without stepping anywhere.
 local TURN_RATE = 6 -- radians per second
--- Sky events (research report "God games lessons for Godling", batch 1): a stone falls from the sky, announced
+-- Sky events: a stone falls from the sky, announced
 -- by a dark shadow on the ground SKY_WARN_SECONDS before it lands, so the landing can be watched and met. It lands
 -- as a stone block, building material. Viewers will buy these; until they can send them in, SKY_TEST_EVERY drops
 -- one near the player on a timer (seconds, 0 = off; run_godling.py --sky-test-minutes sets it).
@@ -4239,8 +4239,8 @@ local function dropGift(kind, x, z, yaw)
     return skyCounter
 end
 
--- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; research/god-powers-and-
--- disasters-plan.md, phase 1). A rumble warns, then the ground shakes for a while and dies away.
+-- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; the first of the planned
+-- disasters). A rumble warns, then the ground shakes for a while and dies away.
 -- The ground itself stays still: moving hundreds of island parts would be heavy and flood the viewers' updates. Every
 -- loose piece gets the ground's motion turned round instead, each tick an impulse of -a(t) x its mass x dt at its own
 -- centre, which is the same physics seen from the ground. Rapier then decides what rocks, slides and falls: a thin
