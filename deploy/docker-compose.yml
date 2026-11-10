@@ -208,7 +208,7 @@ services:
   # wrong, through the site's SMTP, to GODLING_ALERT_EMAIL. Their pages listen on the server's loopback only: reach
   # them through an SSH tunnel (deploy/README.md).
   prometheus:
-    image: quay.io/prometheus/prometheus:v3.15.1
+    image: quay.io/prometheus/prometheus:v3.16.0
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
               "--storage.tsdb.retention.time=30d"]
