@@ -90,6 +90,21 @@ weighed:
   The world takes the site even while the body lies dead. It never sets `LastActionResult`, which the body's own steps
   read, and `Think` already works this way. It ignores nonsense, and anything over 400 cells.
 
+**The whole site, since ADR-027 (the cross-PR review's INT-2).** ADR-027 keeps a wider site clear than the cells
+above. It adds the strip of ground a cell wide round the walls and the doorway, where the body stands to build them,
+and the way in to the doorway, three cells straight on beyond the way out. The hands set nothing aside there, and
+`house.plan` names anything lying on the strip as in the way. The sky kept off only the cells above. So in the merged
+world, two of four test drops landed on the strip, and each such gift became hauling work for Godling. Now
+`site.house_cells` sends `house.site_of`'s whole site: room, walls, doorway, way out, strip and the way in, with the
+cells the body keeps clear (`NativeMemory.reserved_cells`) and the way out's apron. That is 39 cells for a 2×2 house,
+well under the world's 400. The hands, the plan and the sky now keep the same cells, from one rule. `site.house_cells`
+builds on `reserved_cells` and `site_of` and does not keep a list of its own.
+
+**A post's cell (ADR-033).** A room wider than two cells holds its roof on posts inside it, and `house.site_of` gives
+each post's cell its own kind, "post", where only the post goes (the cross-PR review's INT-1). `site.house_cells`
+passes the house's posts to `site_of`, so the sky keeps gifts off a post's cell as well as the room round it. A 3×3
+house with a post in the middle sends 52 cells.
+
 A gift's whole outline, as it will lie, keeps off those cells (`sky.aim.offSite`). Touching a cell is not landing on
 it. This holds for unaimed gifts too, which until now kept clear of pieces but not of an empty room, and, since the
 review of #79, for the stone as well as the log.
