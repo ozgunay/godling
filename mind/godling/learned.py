@@ -7,7 +7,8 @@ right before each step runs:
     {"top": "$object"}          -> [x, y, z] of the top surface of the stack the object is in
     {"add": [a, b]}             -> element-wise sum of two vectors, e.g. {"add": [{"top": "$o"}, [0, 0.4, 0]]}
     {"x": vec} / {"y": vec} / {"z": vec} -> one coordinate of a vector
-    {"nearest_free": "cube"}    -> name of the nearest cube nobody has claimed ("brick" and "stone" too)
+    {"nearest_free": "cube"}    -> name of the nearest cube nobody has claimed ("brick" and "stone" too) that the
+                                   body can walk to; as pick_up's object, the one in the hands if it is one (ADR-027)
 A step may carry "repeat": n (up to 12). A new skill is "unproven" until one full run succeeds.
 
 A skill that has worked keeps its steps (it can be neither forgotten nor taught other steps) until it has failed, in a
@@ -24,6 +25,7 @@ from .skills import PRIMITIVES, Interrupted, Result, Stuck
 from .world import PIECE_KINDS
 
 MAX_STEPS = 12
+NEAREST_TRIES = 6  # nearest_free: of the nearest pieces, how many it works out a way to before taking the nearest
 MIN_FAILS_TO_FORGET = 3  # failures in a row since its last success before even a skill that worked once may go
 # Seconds without working, counted from the skill's last success or the library's load (so downtime never counts),
 # after which a skill that has worked may go. In the live run of 2026-11-08/09, 99% of the gaps between a proven
@@ -204,7 +206,7 @@ class SkillLibrary:
         for step in spec["steps"]:
             for _ in range(max(1, min(12, int(step.get("repeat", 1))))):
                 try:
-                    resolved = self._resolve(step.get("args", {}), bound, skills)
+                    resolved = self._resolve_args(step["skill"], step.get("args", {}), bound, skills)
                 except (SkillError, TypeError, ValueError, KeyError, IndexError) as err:
                     done.append(f"{step['skill']}: could not work out arguments ({err})")
                     return False
@@ -216,11 +218,18 @@ class SkillLibrary:
                     return False
         return True
 
-    def resolve_helpers(self, args, skills):
+    def resolve_helpers(self, args, skills, skill=None):
         """Resolve perception helpers in a step outside any learned skill (no parameters there)."""
-        return self._resolve(args, {}, skills)
+        return self._resolve_args(skill, args, {}, skills)
 
-    def _resolve(self, value, bound, skills):
+    def _resolve_args(self, skill, args, bound, skills):
+        """A step's arguments, one by one. pick_up's object may be the piece already in the hands (ADR-027)."""
+        if not isinstance(args, dict):
+            return self._resolve(args, bound, skills)
+        return {k: self._resolve(v, bound, skills, holding=skill == "pick_up" and k == "object")
+                for k, v in args.items()}
+
+    def _resolve(self, value, bound, skills, holding=False):
         if isinstance(value, str) and value.startswith("$"):
             if value[1:] not in bound:
                 raise SkillError(f"unknown parameter {value}")
@@ -256,8 +265,18 @@ class SkillLibrary:
                 kind = self._resolve(arg, bound, skills)
                 if kind not in PIECE_KINDS:
                     raise SkillError(f"nearest_free looks for one of {', '.join(PIECE_KINDS)}, not {kind!r}")
-                free = [e for e in skills._free_pieces(snap) if PIECE_KINDS[kind](e)]
+                held = snap.held()
+                if holding and held is not None and PIECE_KINDS[kind](held):
+                    # To pick up, the one in the hands is the nearest (ADR-027): in the live run of 2026-11-08 the wall
+                    # skill upright_log_at, used 283 times, reached past the log in its hands for another, and with
+                    # nowhere to set the held one down every wall step failed. As a target (pos, top) it is not one.
+                    return held.name
+                free = sorted((e for e in skills._free_pieces(snap) if PIECE_KINDS[kind](e)),
+                              key=lambda c: (c.pos[0] - snap.me[0]) ** 2 + (c.pos[2] - snap.me[2]) ** 2)
                 if not free:
                     raise SkillError(f"no free {kind} left")
-                return min(free, key=lambda c: (c.pos[0] - snap.me[0]) ** 2 + (c.pos[2] - snap.me[2]) ** 2).name
+                # The nearest the body can walk to, of the nearest few (in that run it took the same log it could not
+                # reach five times); if none of those, the nearest, and pick_up says why.
+                reachable = skills._walkable(snap)
+                return next((e.name for e in free[:NEAREST_TRIES] if reachable(e)), free[0].name)
         return {k: self._resolve(v, bound, skills) for k, v in value.items()}

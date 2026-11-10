@@ -8,17 +8,17 @@ cells round the way out (its apron). The sky keeps viewers' gifts off those cell
 the world nothing new about building and places nothing: a site, as a colony game keeps a zone, not a step towards
 guided construction.
 """
-from .house import outside_of, ring, sides
+from .house import outside_of, sides, site_of
 from .world import WorldError
 
 
 def house_cells(memory):
     """Every cell (ix, iz) the house the mind is building needs, sorted; none without a house or the house project.
 
-    What the body keeps clear (NativeMemory.reserved_cells: the room, the doorway, the way out), so that one rule says
-    which cells a house needs, with two more for the sky: the walls, where a log would be in the way of building them,
-    and the apron round the way out, its flanks and the cell beyond, where one log across it and another beside it
-    would close it (review of #79, 79-AB2)."""
+    One rule for the hands, the plan and the sky (house.site_of, ADR-027; INT-2 of the review): the house's room, walls,
+    doorway and way out, the strip of ground a cell wide round the walls where the body stands to build them, and the
+    way in beyond the way out; with what the body keeps clear (NativeMemory.reserved_cells) and the way out's apron
+    (review of #79, 79-AB2), which the site already holds."""
     reserved = memory.reserved_cells()
     if not reserved:
         return []
@@ -26,7 +26,7 @@ def house_cells(memory):
     room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
     out = outside_of(room, door)
     apron = set(sides([out])) - {door} if out is not None else set()
-    return sorted(set(reserved) | set(ring(room)) | apron)
+    return sorted(set(reserved) | set(site_of(room, door)) | apron)
 
 
 class HouseSite:

@@ -9,6 +9,9 @@ from godling.world import BODY_CENTRE_Y, HOLD_OFFSET_Y, Snapshot
 
 DEFAULT_RESULTS = {"Pickup": "PickupSuccess", "Place": "PlaceSuccess", "Throw": "ThrowSuccess", "Brace": "Braced",
                    "StepUp": "StepUpStarted", "StepDown": "StepDownStarted"}
+# What the world's Place turns a piece by (skills._rotation): (a quarter turn about the vertical, stood on end).
+TURNS = {(False, False): [[1, 0, 0], [0, 1, 0], [0, 0, 1]], (True, False): [[0, 0, 1], [0, 1, 0], [1, 0, 0]],
+         (False, True): [[0, 1, 0], [1, 0, 0], [0, 0, 1]], (True, True): [[0, 0, 1], [1, 0, 0], [0, 1, 0]]}
 
 
 class FakeTime:
@@ -33,6 +36,7 @@ class Island:
         self.speed = speed
         self.frozen = False  # the body goes nowhere: snagged
         self.solid_pieces = False  # loose pieces stop the body as rock does (a pen)
+        self.turns = False  # Place turns the piece as it was asked, as the world does (off: it keeps its turn)
         self.now = 1000.0
         self.acts = []
         self.said = []
@@ -104,7 +108,12 @@ class Island:
 
     def _Place(self, data, result):
         if result == "PlaceSuccess" and self.held:
-            self.ents[self.held] = {**self.ents[self.held], "position": list(data["position"])}
+            placed = {**self.ents[self.held], "position": list(data["position"])}
+            if self.turns:
+                turn = data.get("rotation") or {}
+                placed["rotation"] = TURNS[(round(float(turn.get("yaw", 0))) % 180 == 90,
+                                            round(float(turn.get("roll", 0))) % 180 == 90)]
+            self.ents[self.held] = placed
             self.held = None
 
     def _Throw(self, data, result):

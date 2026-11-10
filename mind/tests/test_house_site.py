@@ -38,8 +38,13 @@ def test_the_cells_a_house_needs_are_its_room_walls_doorway_and_way_out(tmp_path
     walls = {(x, z) for x in range(-37, -33) for z in range(-9, -5)} - {tuple(c) for c in ROOM}
     out = (-35, -10)  # the way out: south of the doorway
     apron = {(-36, -10), (-34, -10), (-35, -11)}  # beside it and beyond it (review of #79, 79-AB2)
-    assert set(cells) == {tuple(c) for c in ROOM} | walls | {out} | apron
-    assert len(cells) == 20 and tuple(DOOR) in cells and cells == sorted(cells)
+    assert {tuple(c) for c in ROOM} | walls | {out} | apron <= set(cells)
+    # INT-2: and the strip a cell round the walls, where the body stands to build them and its hands set nothing
+    # down (ADR-027): logs dropped there were in the house's way. 39 cells for a 2x2 house, far under SITE_MOST.
+    strip = {(x, z) for x in range(-38, -32) for z in range(-10, -4)} - walls - {tuple(c) for c in ROOM}
+    approach = {(-36, -11), (-35, -11), (-34, -11)}  # straight on beyond the way out: the way in
+    assert strip <= set(cells) and set(cells) == strip | walls | {tuple(c) for c in ROOM} | apron | approach
+    assert len(cells) == 39 and tuple(DOOR) in cells and cells == sorted(cells)
     assert house_cells(memory_with_house(tmp_path, on=False)) == []  # the comparison arm without the house project
     memory = memory_with_house(tmp_path)
     memory.set_house(None)
@@ -53,12 +58,12 @@ def test_the_world_is_told_once_and_again_on_each_change(tmp_path):
     assert world.acts == [("HouseSite", {"cells": [list(c) for c in house_cells(memory)]})]
     assert site.sync() is False and len(world.acts) == 1  # nothing new: nothing sent
     memory.set_house({**memory.state["house"], "inside": [[x + 4, z] for x, z in ROOM], "door": [-31, -9]})
-    assert site.sync() is True and world.acts[-1][1]["cells"][0] == [-33, -9]  # moved: the new site
+    assert site.sync() is True and world.acts[-1][1]["cells"][0] == [-34, -10]  # moved: the new site
     memory.set_house(None)
     assert site.sync() is True and world.acts[-1] == ("HouseSite", {"cells": []})  # given up: nothing kept
     world.session = "s2"  # joined again (a world started afresh knows nothing): told again
     assert site.sync() is True and len(world.acts) == 4
-    assert [l["cells"] for l in logs if l["kind"] == "house_site"] == [20, 20, 0, 0]
+    assert [l["cells"] for l in logs if l["kind"] == "house_site"] == [39, 39, 0, 0]
 
 
 def test_the_site_is_the_cells_the_body_keeps_clear_and_the_walls(tmp_path, monkeypatch):
@@ -91,6 +96,6 @@ def test_the_loops_tell_the_world_a_house_before_the_first_project_builds_it(mon
         acts = [a for a, _ in island.acts]
         sites = [d["cells"] for a, d in island.acts if a == "HouseSite"]
         assert sites[0] == [], "at the start, whatever an earlier mind left there is cleared"
-        assert len(sites[1]) == 20 and [4, 0] in sites[1] and [5, -2] in sites[1] and [5, -3] in sites[1]
+        assert len(sites[1]) == 39 and [4, 0] in sites[1] and [5, -2] in sites[1] and [5, -3] in sites[1]
         told = [i for i, (a, d) in enumerate(island.acts) if a == "HouseSite" and d["cells"]][0]
         assert "Jump" in acts[told:] and "Jump" not in acts[acts.index("HouseSite") + 1:told], loop.__name__
