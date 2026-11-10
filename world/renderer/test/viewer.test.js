@@ -373,7 +373,7 @@ describe('the viewer screen', () => {
     expect($('.b-aim').hidden).toBe(true)
     slot('Stone').click()
     fromIsland({ type: 'godling-aim-hover', atGodling: true })
-    expect($('.b-aim .words').textContent).toBe('At Godling: it lands at its feet')
+    expect($('.b-aim .words').textContent).toBe('At Godling: at its feet, or as near as there is room')
     fromIsland({ type: 'godling-aim-cancel' })
     expect($('.b-aim').hidden).toBe(true)
     fromIsland({ type: 'godling-aim-hover', atGodling: true }) // not aiming: nothing
@@ -398,6 +398,28 @@ describe('the viewer screen', () => {
     $('.b-aim .get').click() // nothing picked: nothing called
     await tick(0)
     expect(posts.at(-1).body.power).toBe('Regrow')
+  })
+
+  it('a log is aimed within Godling\'s reach: the tip and the aim bar say so, and past it, where it lands (ADR-029)', async () => {
+    const { slot, $, posts, fromIsland, tick } = await boot()
+    slot('Log').dispatchEvent(new MouseEvent('mouseenter'))
+    expect($('.b-tip').textContent).toContain('Within 60 of Godling: an aim further out lands at the edge')
+    expect($('.b-tip p').textContent).toContain("beside Godling's house and never on it")
+    slot('Log').dispatchEvent(new MouseEvent('mouseleave'))
+    slot('Log').click()
+    expect($('.b-aim .words').textContent).toBe('Click within the ring where the log should land')
+    fromIsland({ type: 'godling-aim-hover', atGodling: false, beyond: true })
+    expect($('.b-aim .words').textContent).toBe('Past Godling\'s reach: it lands on the ring')
+    expect($('.b-aim .words .reach')).not.toBeNull()
+    fromIsland({ type: 'godling-aim-hover', atGodling: false, beyond: false })
+    expect($('.b-aim .words').textContent).toBe('Click to call it here')
+    fromIsland({ type: 'godling-aim-hover', atGodling: true, beyond: false })
+    expect($('.b-aim .words').textContent).toBe('At Godling: at its feet, or as near as there is room')
+    fromIsland({ type: 'godling-aimed', x: 76, y: 3, z: 0, beyond: true }) // what the viewer aimed at, past the ring
+    await tick(0)
+    expect(posts.at(-1).body).toMatchObject({ power: 'Log', at: [76, 0] }) // the world brings it in (79-CDE3)
+    slot('Stone').click() // the other powers are as they were
+    expect($('.b-aim .words').textContent).toBe('Click the island where the stone should land')
   })
 
   it("aims a storm's three strikes one by one, marks each, and lets the sky choose the rest", async () => {
@@ -609,6 +631,35 @@ describe('the viewer screen', () => {
     learned.click()
     expect(learned.isConnected).toBe(false)
     expect($('.b-feed .learned .open').getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('shows what Godling says aloud as its own line, in plain words (ADR-031)', async () => {
+    const mind = { needs: '', feed: [
+      { time: NOW - 30, who: 'godling', text: 'Roof first.' },
+      { time: NOW - 10, who: 'godling', about: 'said', text: 'Two logs by Log_4 at (3, 4). I came back.' },
+    ] }
+    const { stage, $ } = await boot({ statuses: [panelStatus({ mind })], stored: { 'godling.mind': 'open' } })
+    const texts = [...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)
+    expect(texts).toEqual(['“Roof first.”', 'Said: “Two logs by a log. I came back.”'])
+    expect($('.b-feed .said svg')).not.toBeNull() // with a speech balloon, not the thought's
+    expect($('.b-feed .said').classList.contains('latest')).toBe(false) // the newest thought stays the thought
+  })
+
+  it('shows what Godling does and thinks without places given as numbers (78-CLEAN10)', async () => {
+    // Run live's now line and thoughts, which viewers read beside the island: they do not see the map
+    const mind = { needs: '', now: { time: NOW - 5, text: 'Walk west along z -30 to the raft and the west beach' },
+      feed: [
+        { time: NOW - 30, who: 'godling', about: 'failed', text: 'Stand on the step log and set a log at 8.75 over the doorway' },
+        { time: NOW - 20, who: 'godling', text: 'My house stands at x -85 to -77.5, z -30 to -22.5, walls three high. Night 1245595.' },
+        { time: NOW - 10, who: 'godling', about: 'said', text: 'A room 2 x 2, and the door at x=-80.' },
+      ] }
+    const { stage, $, tick } = await boot({ statuses: [panelStatus({ mind })], stored: { 'godling.mind': 'open' } })
+    await tick(0)
+    expect($('.b-now .what').textContent).toBe('Walk west to the raft and the west beach')
+    expect([...stage.querySelectorAll('.b-feed .line .text')].map((e) => e.textContent)).toEqual([
+      'Couldn’t finish: stand on the step log and set a log over the doorway',
+      '“My house stands, walls three high. Night.”',
+      'Said: “A room 2 x 2, and the door.”'])
   })
 
   it('folds the feed as a game folds its quest tracker: the newest thought, and each new line for a while', async () => {

@@ -15,6 +15,7 @@ export const GLOW = 2.5 // seconds the glow round a body born again lasts
 export const SHOCK = 1.5 // seconds a struck body is electrocuted
 export const CLEAR = 10 // the last seconds of a char, in which the body turns back to its own colours
 export const SMOKE = 8 // seconds smoke rises off a charred body
+export const FEET = 2.4 // a body's middle above its feet (the body is 5 tall): rings at its feet, here and aim.js
 const CHAR = new THREE.Color(0x191614) // charcoal, with a little warmth
 const SPARK = new THREE.Color(0xbfe0ff) // the electrocution's blue-white
 const ARCS = 4 // arcs crawling over a body being electrocuted
@@ -75,7 +76,7 @@ export function createBodyLook(scene, { random = Math.random, onMaterial } = {})
     const base = new THREE.Mesh(ring, glowMaterial(0.8))
     const group = new THREE.Group()
     group.add(pillar, base)
-    group.position.set(position[0], position[1] - 2.4, position[2]) // the ring at the feet (the body is 5 tall)
+    group.position.set(position[0], position[1] - FEET, position[2]) // the ring at the feet
     group.name = 'GodlingRebirthGlow'
     scene.add(group)
     look.glow = { group, pillar, base, age: 0 }

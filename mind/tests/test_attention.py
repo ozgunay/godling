@@ -64,7 +64,9 @@ def test_new_objects_and_sky_events(mem):
     ]))
     texts = [e["text"] for e in a.take_events()]
     assert "A new object, Block_7, appeared at (5, 5)" in texts
-    assert "A log washed up on the beach: Log_9 lies at (8, 0)" in texts
+    # No log washes up any more (ADR-026): one an old save still marks Driftwood is a new object like any other.
+    assert "A new object, Log_9, appeared at (8, 0)" in texts
+    assert not any("washed up" in t for t in texts)
     assert "A gift dropped from the sky: Stone_2 and Stone_3 landed at (1, 1)" in texts
     assert "A stone fell from the sky: Meteor_1 landed at (9, 9)" in texts
     assert "Palm_1 grew back from its stump in an instant at (10, 0)" in texts
@@ -145,9 +147,16 @@ def test_body_weather_and_sky_news(mem):
         a.on_step(snap([ground(), ent("Ship", (300, 0, 0), (20, 10, 5))], clock=clock1,
                        attrs={"Hurts": 1, "Hurt": "Lightning", "Health": 70, "Cold": True, "InRain": True, "Freed": 1},
                        others=[("Ann", (1, 0, 1)), ("Bob", (7, 0, 8))]))
-    texts = [e["text"] for e in a.take_events()]
+    events = a.take_events()
+    texts = [e["text"] for e in events]
     assert "You were hurt by lightning striking close by: your health is 70 of 100" in texts
     assert any(t.endswith('It reads: "hello there"') for t in texts)
+    # What each is, as a field beside its words (78-CLEAN11): the voice and the timeline key on these, not the wording
+    by = {e["text"].split(":")[0]: e for e in events}
+    assert by["You were hurt by lightning striking close by"]["hit"] == "hurt"
+    assert next(e for e in events if e.get("sky") == "Note")["note"] == "hello there"
+    assert next(e for e in events if e.get("sky_stage") == "blast")["hit"] == "thrown"
+    assert not any("hit" in e for e in events if e.get("sky") in ("Earthquake", "Note"))
     assert ("A stone from the sky blasted at (5, 6): it smashed 1 piece, threw 2, broke 3 fastenings, felled 2 palms, "
             "and the blast threw you down. It left a crater.") in texts
     assert "The ground is rumbling under you: an earthquake is coming" in texts
@@ -161,9 +170,11 @@ def test_body_weather_and_sky_news(mem):
     with pytest.raises(Interrupted):
         a.on_step(snap([ground(), ent("Fire_3", (0, 0.5, 9), (1, 1, 1))], clock=clock2,
                        attrs={"Hurts": 2, "Health": 60, "Cold": False}))
-    texts = [e["text"] for e in a.take_events()]
+    events = a.take_events()
+    texts = [e["text"] for e in events]
     assert "You were hurt by something: your health is 60 of 100" in texts
     assert "A stone from the sky blasted at (0, 0): it blasted only sand. It left a crater." in texts
+    assert "hit" not in next(e for e in events if e.get("sky_stage") == "blast")  # it did not throw it down
     assert "The ground has stopped shaking" in texts
     assert "The rain has stopped" in texts and "The fog has lifted" in texts
     assert "The ship has sailed out of sight" in texts
@@ -229,6 +240,7 @@ def test_death_interrupts_and_the_report_holds_what_led_to_it(mem, monkeypatch):
                                                        "DiedOf": "HungerAndCold", "DeadFor": 30, "DiedAt": "12.5,-7"}))
     died = next(e for e in a.take_events() if e.get("death"))
     assert died["salience"] == 5 and died["death"] == "died" and died["at"] == [12.5, -7.0]
+    assert died["back"] is False  # it lies where it fell
     assert not a.glances, "the dead do not look about"
     clock[0] += 30
     with pytest.raises(Interrupted):
@@ -279,8 +291,10 @@ def test_a_storm_called_down_its_warning_its_breaking_a_strike_and_its_passing(m
     with pytest.raises(Interrupted, match="Lightning struck you"):
         a.on_step(snap([ground()], clock={"StormPhase": "storm", "StormId": 7}, attrs={
             "Health": 5, "Struck": 1, "Scorched": 60, "Hurts": 1, "Hurt": "Storm"}))
-    texts = [e["text"] for e in a.take_events()]
+    events = a.take_events()
+    texts = [e["text"] for e in events]
     assert "Lightning struck you: you are burned and hurt, your health is 5 of 100" in texts
+    assert next(e for e in events if e["text"].startswith("Lightning struck you"))["hit"] == "struck"
     assert "The storm breaks: rain pours down, and lightning is about to strike" in texts
     assert not any(t.startswith("You were hurt") for t in texts), "struck, not hurt close by"
     with pytest.raises(Interrupted, match="You were hurt by lightning striking close by"):
@@ -311,6 +325,7 @@ def test_a_whole_death_and_rebirth_between_looks_keeps_the_previous_life(mem):
     assert a.death_pending, "being alive again must not hide a death that still needs reflection"
     (event,) = a.take_events()
     assert event["death"] == "died" and event["at"] == [3, 4]
+    assert event["back"] is True  # 78-CDE4: its voice asks for no last words from a body already born again
     assert "Your health in the minutes before: 12 at the last look." in a.death_report(reborn)
     assert "100 at the last look" not in a.death_report(reborn)
     a.on_step(reborn)

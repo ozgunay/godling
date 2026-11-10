@@ -3,7 +3,7 @@ import { icon } from '../../viewer/icons.js'
 
 const NAMES = ['stone', 'log', 'coconut', 'sapling', 'fish', 'lightning', 'meteor', 'rain', 'quake', 'wave', 'heart',
   'heartHalf', 'heartEmpty', 'food', 'foodHalf', 'foodEmpty', 'sun', 'moon', 'eye', 'move', 'coin', 'godling', 'sky',
-  'notice', 'lock', 'drop', 'cold', 'glider', 'think', 'close', 'pause', 'play', 'idea', 'more', 'less']
+  'notice', 'lock', 'drop', 'cold', 'glider', 'think', 'speech', 'close', 'pause', 'play', 'idea', 'more', 'less']
 
 describe('pixel icons', () => {
   it('draws every icon as crisp SVG, outlined, at any scale', () => {

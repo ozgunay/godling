@@ -234,7 +234,11 @@ def test_the_post_cell_is_kept_clear_of_set_down_pieces(tmp_path):
     from godling.memory import NativeMemory
     mem = NativeMemory(tmp_path / "mem")
     mem.set_house({"inside": [list(c) for c in INSIDE], "door": list(DOOR), "posts": [list(POST)]})
-    assert mem.reserved_cells() == set(INSIDE) | {DOOR, (1, -2)}
+    site = mem.reserved_cells()  # the house's site (ADR-027), its post's cell the post's (INT-1)
+    assert site[POST] == "post" and {c for c, kind in site.items() if kind == "room"} == set(ROOM)
+    assert site[DOOR] == "doorway" and site[(1, -2)] == "way out"
+    mem.state["house"]["built"] = 1.0  # standing, the post's cell stays clear of what the hands set aside, as the room
+    assert mem.reserved_cells()[POST] == "post"
 
 
 # ---- the body sets the roof over a post from the floor inside --------------------------------------------------------
@@ -511,3 +515,101 @@ def test_a_house_reply_that_leaves_things_out(monkeypatch, tmp_path):
     away = [[40 + x * C, 40 + z * C] for x in range(2) for z in range(2)]
     mind._choose_house({"inside": away, "door": [40, 37.5], "why": "the ground here floods"}, island.snap())
     assert mem.state["house"]["inside"][0] == [16, 16] and mem.state["house"]["posts"] == [], mind.notes[-1:]
+
+
+# ---- the house's site knows its posts (INT-1: #81's site counted a post's cell as room) --------------------------------
+
+def site_island(monkeypatch, tmp_path, entities, me=(0, 0)):
+    """The three by three with its post chosen as the house, walls standing, and the body and the mind wired as
+    run_godling.py wires them (the site, the planned roof)."""
+    from godling.learned import SkillLibrary
+    from godling.memory import NativeMemory
+    from godling.mind import Mind
+    pieces = [ent(p["name"], p["pos"], p["size"]) for p in walls(INSIDE, DOOR)]
+    island = Island([ground(), *pieces, *entities], me=(me[0], BODY_CENTRE_Y, me[1]))
+    island.turns = True
+    monkeypatch.setattr(sk, "time", FakeTime(island))
+    mem, library = NativeMemory(tmp_path / "mem"), SkillLibrary(tmp_path / "skills.json")
+    body = Skills(island, library=library, protected=mem.protected_cubes, kept_in=mem.built_into,
+                  reserved=mem.reserved_cells, planned=mem.planned_roof)
+    mind = Mind(None, mem, "", body, library, house_project=True)
+    mind._choose_house({"inside": [pt(c) for c in INSIDE], "door": pt(DOOR), "posts": [pt(POST)]}, island.snap())
+    assert mem.state["house"]["posts"] == [list(POST)]
+    return island, body, mem, mind
+
+
+def test_the_site_rule_tells_of_the_post():
+    # INT-8: the site rule said the room is kept clear, and the house paragraph that a wider room needs posts in it.
+    from godling.mind import SITE_RULE
+    assert "in a post's cell, its\npost" in SITE_RULE and "or across a post's cell, is not part of the house" in SITE_RULE
+
+
+def test_the_site_marks_the_post_cell_as_the_posts(monkeypatch, tmp_path):
+    from godling.house import site_of
+    from godling.site import house_cells
+    site = site_of(INSIDE, DOOR, [POST])
+    assert site[POST] == "post" and all(site[c] == "room" for c in ROOM)
+    assert {c for c, kind in site.items() if kind == "wall"} == set(ring(INSIDE)) - {DOOR}
+    island, body, mem, mind = site_island(monkeypatch, tmp_path, [])
+    assert mem.reserved_cells()[POST] == "post" and POST in house_cells(mem)
+
+
+def test_the_post_is_stood_through_the_body_and_only_the_post_goes_there(monkeypatch, tmp_path):
+    # INT-1: #81's site took the post's cell for room, so the hands refused the post the plan asked for ("is in your
+    # house's room"). A log stood on end goes there now, or blocks; anything else is refused, and what lies across it is
+    # in the way.
+    island, body, mem, mind = site_island(monkeypatch, tmp_path, [
+        ent("Log_post", (-10, 1.25, -10), (7.5, 2.5, 2.5)), ent("Log_flat", (-15, 1.25, -10), (7.5, 2.5, 2.5)),
+        ent("Axe_1", (-20, 0.2, -10), (0.4, 0.4, 1.0))], me=(0, 0))
+    island.held = "Axe_1"
+    r = body.run("put_down", {"x": 2.5, "z": 2.5})
+    assert not r.ok and "is in your house's post's cell, where only the post goes" in r.summary, r.summary
+    island.held = "Log_flat"
+    r = body.run("put_down", {"x": 2.5, "z": 2.5})
+    assert not r.ok and "across your house's post at (2.5, 2.5): Log_flat there would stick out of the post's cell" in (
+        r.summary), r.summary
+    island.held = "Log_post"
+    r = body.run("place_at", {"x": 2.5, "y": 3.75, "z": 2.5, "upright": True})
+    assert r.ok and island.held is None and island.ents["Log_post"]["position"] == [2.5, 3.75, 2.5], r.summary
+    found = mind.house_progress(island.snap())
+    assert "the post stands three blocks high" in found["done"] and "Log_post" in found["pieces"], found
+
+
+def test_a_log_lying_across_the_post_cell_is_in_the_way(monkeypatch, tmp_path):
+    pieces = walls(INSIDE, DOOR) + [log("Log_across", *POST, 1, "x")]
+    step = plan(pieces, GROUND, INSIDE, DOOR, [POST])
+    assert "Log_across" in step["in_the_way"] and "Log_across" not in step["pieces"], step
+    assert ("the post at (2.5, 2.5) stands 0.0 (Log_across lies across it, out of the post's cell)") in step["next"], (
+        step["next"])
+
+
+def test_the_hands_full_reflex_sets_nothing_in_the_post_cell(monkeypatch, tmp_path):
+    # Standing beside the post's cell with a block in hand, the body frees its hands off the whole site, the post's
+    # cell too (82-CDE4).
+    island, body, mem, mind = site_island(monkeypatch, tmp_path, [
+        ent("Block_held", (-30, 1.25, -30), (2.5, 2.5, 2.5)), ent("Block_want", (2.5, 1.25, -12.5), (2.5, 2.5, 2.5))],
+        me=(0, 2.5))
+    island.held = "Block_held"
+    r = body.run("pick_up", {"object": "Block_want"})
+    assert r.ok and island.held == "Block_want", r.summary
+    x, _, z = island.ents["Block_held"]["position"]
+    assert (round(x / C), round(z / C)) not in set(INSIDE) | set(ring(INSIDE)), (x, z)
+
+
+def test_a_three_by_three_with_a_post_is_built_through_the_body(monkeypatch, tmp_path):
+    # Walls standing and the lintel on: the body stands the post, then sets the post's log on its middle from the floor
+    # beside it, and the plan sees both done. The rest of the roof goes on as in a room two wide.
+    island, body, mem, mind = site_island(monkeypatch, tmp_path, [
+        ent("Log_lintel", (2.5, 8.75, -2.5), (7.5, 2.5, 2.5)), ent("Log_post", (-10, 1.25, -10), (7.5, 2.5, 2.5)),
+        ent("Log_roof", (-15, 1.25, -10), (7.5, 2.5, 2.5))], me=(0, 0))
+    island.solid_pieces = True
+    island.held = "Log_post"
+    assert body.run("place_at", {"x": 2.5, "y": 3.75, "z": 2.5, "upright": True}).ok
+    mind.house_progress(island.snap())
+    assert ((1, 1), "z") in mem.planned_roof()
+    island.held = "Log_roof"
+    r = body.run("place_at", {"x": 2.5, "y": 8.75, "z": 2.5, "turn": 90})
+    assert r.ok and island.ents["Log_roof"]["position"] == [2.5, 8.75, 2.5], r.summary
+    found = mind.house_progress(island.snap())
+    assert "the post stands three blocks high" in found["done"] and "Log_roof" in found["pieces"], found
+    assert "centred on the post" not in found["next"], found["next"]

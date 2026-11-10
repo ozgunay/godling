@@ -231,6 +231,7 @@ kbd { font: 400 0.6rem/1 'Silkscreen', monospace; }
 .b-aim .words { display: flex; align-items: center; gap: 0.55rem; margin: 0 0.4rem 0 0; font: 400 1.2rem/1.2 'Tiny5', sans-serif; }
 .b-aim .harm { color: #ffb3b5; }
 .b-aim .feet { color: var(--teal); }
+.b-aim .reach { color: var(--gold); }
 .b-aim .cancel { padding: 0.5rem 0.7rem; background: rgba(14, 17, 18, 0.7); border: var(--bevel) solid var(--ink); font: 400 1rem/1 'Tiny5', sans-serif; }
 .b-aim .cancel:hover { background: rgba(14, 17, 18, 0.95); }
 

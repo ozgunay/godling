@@ -174,6 +174,33 @@ Thirty-two findings; each id's outcome is in the review-fix PR.
 - **Not changed:** a room cell between a post and a wall leaves the body a band 0.1 wide to walk (82-CDE7), as a
   doorway does, which live bodies pass; the world test helpers (82-CLEAN6), since other open PRs edit those tests.
 
+## With a house's site kept clear (ADR-027, merged first)
+ADR-027's site (`house.site_of`) took every cell inside for the room, so the hands refused the post the plan asks for
+("(2.5, 2.5) is in your house's room"), and a log lying across the post's cell counted as the post standing (the
+cross-PR review's INT-1). Now a post's cell is the site's own kind, "post":
+- Only the post goes there: a log stood on end, or blocks, as a wall takes its own courses (`house.placement`).
+  Anything else is refused: "is in your house's post's cell, where only the post goes". A log lying across it is
+  refused too ("across your house's post at (2.5, 2.5): Log_1 there would stick out of the post's cell, into ...").
+  One already lying there is in the way, and the next step names it: "the post at (2.5, 2.5) stands 0.0 (Log_1 lies
+  across it, out of the post's cell)".
+- The walls and the strip round them come from the ring of the room and its posts, as before.
+- The hands-full reflex keeps the post's cell clear, while the house is built and once it stands.
+- The sky keeps viewers' gifts off it (`site.house_cells`).
+
+The site rule in the prompt says so (INT-8): "...and in a wall only a building piece along the wall's line or stood on
+end; in a post's cell, its post. A piece lying across a wall, out of its line, or across a post's cell, is not part of
+the house but in its way."
+
+`test_house_posts.py` covers this on the merged tree:
+- the site's map;
+- a post stood through the body, and an axe and a flat log refused;
+- a log across the post's cell is in the way;
+- the reflex keeps off the post's cell;
+- a 3×3 with a post built through the body: the post stood, then the log on its middle from the floor.
+
+Run on the merged tree before this change, four of the five failed as quoted above. The fifth, the reflex, passed: the
+post's cell had been room, which the reflex keeps clear as well.
+
 ## What changed
 - `mind/godling/house.py`:
   - `enclosed` (a room's posts); `judge` judges posts with the walls and counts them in the two by two;

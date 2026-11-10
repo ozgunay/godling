@@ -9,6 +9,9 @@ from godling.world import BODY_CENTRE_Y, HOLD_OFFSET_Y, PICKUP_RANGE, PLACE_RANG
 
 DEFAULT_RESULTS = {"Pickup": "PickupSuccess", "Place": "PlaceSuccess", "Throw": "ThrowSuccess", "Brace": "Braced",
                    "StepUp": "StepUpStarted", "StepDown": "StepDownStarted"}
+# What the world's Place turns a piece by (skills._rotation): (a quarter turn about the vertical, stood on end).
+TURNS = {(False, False): [[1, 0, 0], [0, 1, 0], [0, 0, 1]], (True, False): [[0, 0, 1], [0, 1, 0], [1, 0, 0]],
+         (False, True): [[0, 1, 0], [1, 0, 0], [0, 0, 1]], (True, True): [[0, 0, 1], [1, 0, 0], [0, 1, 0]]}
 
 
 class FakeTime:
@@ -33,12 +36,14 @@ class Island:
         self.speed = speed
         self.frozen = False  # the body goes nowhere: snagged
         self.solid_pieces = False  # loose pieces stop the body as rock does (a pen)
+        self.turns = False  # Place turns the piece as it was asked, as the world does (off: it keeps its turn)
         self.now = 1000.0
         self.acts = []
         self.said = []
         self.results = {}  # action -> a result, a list of results (one per call, the last repeats) or fn(data)
         self.on_act = {}  # action -> fn(data): what else the world does
         self.after_sleep = None  # fn(island), called after every sleep
+        self.reach = True  # the hands keep to the world's reach (82-CDE9); off only where a test says why
         self.fail_observe = 0  # observations that fail before they work again
         self.errors = {}  # action -> exception to raise
 
@@ -81,9 +86,9 @@ class Island:
             result = result(data)
         # The world's reach (main.lua canReach): the hands set a piece at most 7 from the body's centre, and lift one at
         # most 6 from it, the nearest within 1.5 of where they reach (findNearestBlock).
-        if action == "Place" and result == "PlaceSuccess" and math.dist(self.me, data["position"]) > PLACE_RANGE:
+        if self.reach and action == "Place" and result == "PlaceSuccess" and math.dist(self.me, data["position"]) > PLACE_RANGE:
             result = "PlaceFailed:OutOfRange"
-        if action == "Pickup" and result == "PickupSuccess":
+        if self.reach and action == "Pickup" and result == "PickupSuccess":
             if math.dist(self.me, data["position"]) > PICKUP_RANGE:
                 result = "PickupFailed:OutOfRange"
             elif not any(math.dist(e["position"], data["position"]) <= 1.5 for n, e in self.ents.items() if n != self.held):
@@ -113,7 +118,12 @@ class Island:
 
     def _Place(self, data, result):
         if result == "PlaceSuccess" and self.held:
-            self.ents[self.held] = {**self.ents[self.held], "position": list(data["position"])}
+            placed = {**self.ents[self.held], "position": list(data["position"])}
+            if self.turns:
+                turn = data.get("rotation") or {}
+                placed["rotation"] = TURNS[(round(float(turn.get("yaw", 0))) % 180 == 90,
+                                            round(float(turn.get("roll", 0))) % 180 == 90)]
+            self.ents[self.held] = placed
             self.held = None
 
     def _Throw(self, data, result):

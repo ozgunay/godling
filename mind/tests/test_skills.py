@@ -142,7 +142,7 @@ class FakeLibrary:
         self.skills = {"mine": {}}
         self.behaviour = behaviour
 
-    def resolve_helpers(self, args, skills):
+    def resolve_helpers(self, args, skills, skill=None):
         if args.get("bad"):
             raise ValueError("no such helper")
         return {k: (v["value"] if isinstance(v, dict) else v) for k, v in args.items()}
@@ -229,7 +229,7 @@ def test_steady_gives_up_after_the_longest_quake(make):
 def test_jump_say_wait(make):
     island, body = make()
     assert body.run("jump", {}).summary.startswith("jumped; highest point 2.5")
-    assert body.run("say", {"text": 42}).summary == "said it" and island.said == ["42"]
+    assert body.run("say", {"text": 42}).summary == 'said "42."' and island.said == ["42."]
     assert island.acts[-1] == ("Talk", {})
     island.errors["Talk"] = WorldError("old world")
     assert body.run("say", {"text": "hi"}).ok
