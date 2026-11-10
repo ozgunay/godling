@@ -3,6 +3,6 @@ django-allauth[mfa]>=65.21.1,<66  # mfa: two-factor sign-in, which staff need fo
 stripe>=16.1.0,<17  # pins Stripe's API version 2026-10-28.endive, the one the credits code is tested against
 whitenoise>=6.12.0
 gunicorn>=26.2.0
-psycopg[binary]>=3.3.6
+psycopg[binary]>=3.3.8
 celery[redis]>=5.7.0,<6  # the worker that relays powers to the island (apps.screen.tasks)
 redis>=8.1.0,<9  # the shared cache and Celery's broker (deploy/: the redis service)
