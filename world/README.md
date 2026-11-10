@@ -60,7 +60,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
     - `Strikes` plays Strike;
     - `Climbing` loops Climb.
 - **Face.** `Face {position}` turns the body on the spot towards a point (`TURN_RATE` 6 rad/s), without stepping anywhere. The mind's glance reflex uses it. A `MoveTo` cancels a turn.
-- **Sky events and the guest panel** (research report "God games lessons for Godling", batch 1).
+- **Sky events and the guest panel.**
   - Five powers, `SKY_POWERS`:
     - `Stone` and `Log` drop a piece from 12 up.
     - `Regrow` grows the stump nearest Godling back at once.
@@ -81,7 +81,7 @@ A copy of Clawblox's `worlds/mesa-island` (MIT, github.com/nacloos/clawblox at `
 - **Storm** (`sky.storm`, ADR-023; it took Lightning's place on the panel). A guest-panel power, `Storm`, with up to three `spots` the viewer aimed (the sky picks the rest).
   - **Phases:** 30 s of warning (rain held at 1 through `tickWeather.hold`, a gale, the spots as `StormSpot` parts), then 150 s of storm with the three strikes 20 to 50 s apart, each spot `Charged` 1.5 s before. The Clock carries `StormPhase` ("warning", "storm" or ""), `StormId` and `StormSpots`.
   - **A strike:** on Godling (within 2.5) it leaves half a heart, knocks it down, and sets `Struck` (a count) and `Scorched` (60 s, counted down); within 7, 35 and a knock-down, never below half a heart; a palm within 3 is felled into two logs; open ground keeps a `Scorch` for 4 minutes. Nothing built breaks, and a roof over Godling takes it. One storm every 30 minutes, under the disasters' mercy rule; a strike that lands within 15 minutes of a death spares the body born again (`sky.quake.diedLately`), though it still strikes the spot.
-- **Earthquake** (`sky.quake`; plan: `research/god-powers-and-disasters-plan.md` §5). A guest-panel power, `Earthquake`.
+- **Earthquake** (`sky.quake`). A guest-panel power, `Earthquake`.
   - **Phases:** an 8 s rumble, 20 s of shaking, a 5 s fade. The Clock carries `Quake` (0–1), `QuakePhase` ("rumble", "shaking", "fade" or ""), `QuakeId`, and afterwards `QuakeFell`.
   - **Physics:** the ground stays still. Every loose piece within 60 of Godling (at most 200) is woken out of its settled state and gets the ground's motion turned round: each tick an impulse of -a(t) × its mass × dt at its centre.
     - The peak is about 0.65 g, in slow swings (0.45, 0.8 and 1.5 Hz).

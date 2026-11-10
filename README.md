@@ -101,8 +101,8 @@ the relay, Caddy for HTTPS, Prometheus with Alertmanager, and encrypted restic b
 | [`art/`](art/) | Blender build scripts for Godling and the props, and their previews (Godling's Mixamo animations are downloaded separately: [`art/README.md`](art/README.md), *Sources*) |
 | [`patches/`](patches/) | The changes to Clawblox, each with its write-up |
 | [`decisions/`](decisions/) | The decision records, ADR-002 to ADR-033 |
-| [`research/`](research/), [`reports/`](reports/), [`research_notes/`](research_notes/) | Design notes, screenshots, and research on god games and agent minds |
-| [`PRODUCT.md`](PRODUCT.md), [`DESIGN.md`](DESIGN.md) | What the product was for, and the screen's design system |
+| [`research/`](research/) | The mind's design note, and screenshots |
+| [`DESIGN.md`](DESIGN.md) | The screen's design system |
 | [`TESTING.md`](TESTING.md) | The tests |
 | [`.github/`](.github/) | CI: the tests, config checks, a weekly dependency audit, and Dependabot |
 
@@ -207,6 +207,6 @@ The code is left as it was at the end.
   one of its memory engines.
 - [Adobe Mixamo](https://www.mixamo.com/), for the animations behind Godling's moves.
 - Django, django-allauth, Celery, Stripe, Caddy, restic and Prometheus, on which the site and the deployment stand.
-- The research the mind's design leans on (Voyager, Generative Agents, SwiftSage, Talker-Reasoner and others), and
-  the god games that shaped the show (Populous, Black & White, Reus, WorldBox and others), collected in
-  [`research/`](research/) and [`reports/`](reports/).
+- The research the mind's design leans on (Voyager, Generative Agents, SwiftSage, Talker-Reasoner and others),
+  collected in [`research/`](research/), and the god games that shaped the show (Populous, Black & White, Reus,
+  WorldBox and others).

@@ -456,7 +456,7 @@ QUAKE_RE = re.compile(r"SKY Earthquake #(\d+) over: woke (\d+), moved (\d+), fel
 
 
 def analyze_quakes(mind_log, world_log):
-    """Earthquakes (research/god-powers-and-disasters-plan.md §5): what each shook loose and brought down (from the
+    """Earthquakes: what each shook loose and brought down (from the
     world log), how soon the body braced after the rumble, and knock-downs."""
     if not world_log.exists():
         return None

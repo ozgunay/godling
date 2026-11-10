@@ -6,7 +6,7 @@ Only visitors and real damage interrupt (ADR-003 O6): every interruption throws 
 thought up. New objects and small shifts are noted for the next plan instead.
 
 Noticing is also visible: events that happen somewhere get a glance, a turn of the body towards them between
-steps, which never changes the plan (research report "God games lessons for Godling", batch 1).
+steps, which never changes the plan.
 """
 import math
 import time
