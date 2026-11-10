@@ -4239,8 +4239,8 @@ local function dropGift(kind, x, z, yaw)
     return skyCounter
 end
 
--- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; research/god-powers-and-
--- disasters-plan.md, phase 1). A rumble warns, then the ground shakes for a while and dies away.
+-- EARTHQUAKE (the user's wish: disasters that test what Godling builds, on real physics; the first of the planned
+-- disasters). A rumble warns, then the ground shakes for a while and dies away.
 -- The ground itself stays still: moving hundreds of island parts would be heavy and flood the viewers' updates. Every
 -- loose piece gets the ground's motion turned round instead, each tick an impulse of -a(t) x its mass x dt at its own
 -- centre, which is the same physics seen from the ground. Rapier then decides what rocks, slides and falls: a thin

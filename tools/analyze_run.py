@@ -401,7 +401,7 @@ SKY_WORDS = re.compile(r"\b(sky|shadow|meteor|lightning|fell from|falling|droppe
 
 
 def analyze_reactions(mind_log, world_log):
-    """Reactions to sky events (research report, batch 1; the guest panel's powers and --sky-test-minutes), in three
+    """Reactions to sky events (the guest panel's powers and --sky-test-minutes), in three
     stages: applied (the world did it: only this would decide a charge), noticed (a glance or a mention within a
     minute: the product's promise) and engaged (used what it left, or planned with it, within ten minutes: up to
     Godling). Named counts a thought or intention that mentions it."""
