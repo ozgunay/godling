@@ -40,7 +40,7 @@ An original design, not a copy of any mascot:
 Being a god, it levitates what it carries above its head, which is how the world already holds objects.
 
 **Rig.**
-- The Mixamo skeleton from `source/` (65 bones), shrunk to chibi proportions:
+- The Mixamo skeleton from `source/walking.fbx` (65 bones), shrunk to chibi proportions:
   - legs ×0.42, spine ×0.55, arms ×0.5;
   - bone directions and rolls are kept, so Mixamo clips still play.
 - Every body part is rigid and moves with one bone, like a toy. This is simple and robust, and needs no weight painting.
@@ -52,7 +52,7 @@ Being a god, it levitates what it carries above its head, which is how the world
 - At the size Godling is seen, the previews look the same as before.
 
 **Clips** (60 fps) come from Mixamo, listed in `CLIPS` in `build_godling.py`.
-- Every source is in `art/source`: skeleton only, 60 fps, all from the same Mixamo character, so all share one skeleton and drop straight onto Godling.
+- The sources go in `art/source`, downloaded from Mixamo (they are not in this repository: see *Sources* below): skeleton only, 60 fps, all from the same Mixamo character, so all share one skeleton and drop straight onto Godling.
 - Each entry gives a source file, the frames to keep, the length in game, and options:
   - `loop`: the clip repeats.
   - `bend`: keeps only part of the back's bend, because a deep bend makes the big-headed chibi face-plant. The thighs are re-solved so the feet stay planted.
@@ -206,5 +206,46 @@ draw call per kind of prop, however many of that prop stand in the world.
 The log and the axe are not in the world yet; they wait for a way to fell trees.
 
 ## Sources
-`source/walking.fbx` and `source/picking_up.fbx` are Mixamo animations the user downloaded (skeleton only, no character mesh).
-The others were downloaded from Mixamo the same way, on the same character (CH02), as the `CLIPS` table names them: FBX Binary, Without Skin, 60 fps, no keyframe reduction, "In Place" for the walk, the ladder climb and the earthquake clips. The Mixamo animation behind each file is listed under Gestures above. To change a gesture, download another animation with these settings under the same file name and rebuild.
+Godling's animations were made from Adobe Mixamo animations. The built model, `world/assets/godling.glb` (and
+`godling.blend`), is in this repository, so the game needs nothing more. The Mixamo files themselves are not: they are
+under Adobe's terms for Mixamo, which do not allow sharing them on their own. Earlier commits of this repository
+still contain them, in `art/source/`. Those files stay under Adobe's Mixamo terms too, not this repository's MIT licence.
+
+To rebuild the model, download the animations below from [mixamo.com](https://www.mixamo.com/) (a free Adobe account)
+into `art/source/`, under the file names the build expects (`CLIPS` in `build_godling.py`). `.gitignore` keeps them
+out of git.
+- **The same character for every file:** CH02. They then share one skeleton.
+- **Download settings:** Format *FBX Binary (.fbx)*, Skin *Without Skin*, Frames per second *60*, Keyframe Reduction
+  *none*.
+- **In Place:** for Happy Walk, Climbing Ladder and the earthquake's clips (Stumble Backwards, Looking Around),
+  wherever Mixamo offers it.
+
+| File in `art/source/` | Mixamo animation | Makes the clip |
+|---|---|---|
+| `walking.fbx` | Walking (a plain walk) | **Required**: the skeleton every clip shares; also Walk when `happy_walk.fbx` is missing |
+| `happy_idle.fbx` | Happy Idle | Idle |
+| `happy_walk.fbx` | Happy Walk (In Place) | Walk |
+| `picking_up.fbx` | Picking Up | PickUp; also Idle when `happy_idle.fbx` is missing |
+| `putting_down.fbx` | Putting Down | PutDown |
+| `throw.fbx` | Throw (from a standard pose) | Throw |
+| `chop.fbx` | Standing Melee Attack Horizontal | Chop |
+| `mine.fbx` | Standing Melee Attack Downward | Mine; Carve too, unless there is a `carve.fbx` |
+| `spear.fbx` | Bayonet Stab | Spear |
+| `shake.fbx` | Pushing | Shake |
+| `kindle.fbx` | Kneeling Inspecting | Kindle |
+| `cook.fbx` | Kneel (warming hands over a campfire) | Cook |
+| `fasten.fbx` | Pull Plant | Fasten |
+| `draw.fbx` | Dig And Plant Seeds | Draw |
+| `eat.fbx` | Drinking | Eat |
+| `talk.fbx` | Talking (asking a question with two hands) | Talk |
+| `wake_up.fbx` | Getting Up (from the back) | WakeUp and GetUp |
+| `stagger.fbx` | Stumble Backwards | Stagger |
+| `look_around.fbx` | Looking Around | LookAround |
+| `jump.fbx` | Jump | Jump |
+| `fall.fbx` | Falling | Fall |
+| `climb.fbx` | Climbing Ladder (In Place) | Climb; without it, a hand-posed climb |
+| `brace.fbx` | Crouching Idle (Low Crouching Idle) | Brace |
+
+Without `walking.fbx` the build stops. Any other missing file only leaves its clip out (the build prints `SKIP`),
+and the renderer then falls back to PickUp or Strike. To change a gesture, download another animation with these
+settings under the same file name and rebuild.

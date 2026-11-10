@@ -5,6 +5,9 @@ __pycache__/
 # Blender backups
 *.blend1
 
+# The Mixamo animations build_godling.py reads: downloaded by whoever rebuilds, never shared (art/README.md, Sources)
+art/source/
+
 # Clawblox build state, renderer dependencies, the relay's build
 .clawblox/
 .build.lock

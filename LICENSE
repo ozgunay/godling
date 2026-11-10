@@ -24,9 +24,11 @@ SOFTWARE.
 
 Not covered by this license
 
-The animation files in art/source/ (art/source/*.fbx) were downloaded from
-Adobe Mixamo. They are not covered by the MIT License above. They are subject
-to Adobe's terms for Mixamo.
+Godling's animations in world/assets/godling.glb (and art/godling.blend) were
+made by art/build_godling.py from animation files downloaded from Adobe
+Mixamo. Those files (art/source/*.fbx) are no longer in this repository.
+Earlier commits still contain them. They are not covered by the MIT License
+above; they are subject to Adobe's terms for Mixamo.
 
 Third-party code
 
