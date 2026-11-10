@@ -98,7 +98,7 @@ the relay, Caddy for HTTPS, Prometheus with Alertmanager, and encrypted restic b
 | [`relay/`](relay/) | The stream relay, in Rust |
 | [`deploy/`](deploy/) | Dockerfiles, Compose, Caddy, monitoring, backups, the outside check (`check.sh`) and the runbook |
 | [`tools/`](tools/) | The guest panel, the island generator, long-run launchers and run analysis |
-| [`art/`](art/) | Blender build scripts for Godling and the props, their sources and previews |
+| [`art/`](art/) | Blender build scripts for Godling and the props, and their previews (Godling's Mixamo animations are downloaded separately: [`art/README.md`](art/README.md), *Sources*) |
 | [`patches/`](patches/) | The changes to Clawblox, each with its write-up |
 | [`decisions/`](decisions/) | The decision records, ADR-002 to ADR-033 |
 | [`research/`](research/), [`reports/`](reports/), [`research_notes/`](research_notes/) | Design notes, screenshots, and research on god games and agent minds |
@@ -191,8 +191,11 @@ The code is left as it was at the end. [`ROADMAP.md`](ROADMAP.md) shows how far 
 ## License
 
 [MIT](LICENSE), Copyright (c) 2026 Ozgun Ay, with one exception and one notice:
-- **Not covered by MIT:** the animation files in `art/source/` (`art/source/*.fbx`) were downloaded from Adobe
-  Mixamo. They are subject to Adobe's terms for Mixamo, not to this repository's licence.
+- **Mixamo animations, not covered by MIT:** Godling's animations in `world/assets/godling.glb` (and
+  `art/godling.blend`) were made by `art/build_godling.py` from animations downloaded from Adobe Mixamo. The Mixamo
+  files themselves (`art/source/*.fbx`) are no longer in the repository; rebuilding the model means downloading them
+  again ([`art/README.md`](art/README.md), *Sources*). Earlier commits still contain them, and those files stay under
+  Adobe's terms for Mixamo, not this repository's licence.
 - **Clawblox:** `world/` started from Clawblox's `worlds/mesa-island`, and `patches/` change Clawblox. Clawblox is
   also MIT, Copyright (c) 2026 nacloos.
 
