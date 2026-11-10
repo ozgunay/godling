@@ -185,7 +185,7 @@ def test_body_weather_and_sky_news(mem):
     a.on_step(snap([ground()], clock={"Rain": 0}, attrs={"Sheltered": "roof", "InHouse": True}))
     a.on_step(snap([ground()], clock={"Rain": 0}, attrs={"Sheltered": "roof", "InHouse": True}))
     texts = [e["text"] for e in a.take_events()]
-    assert texts.count("You are inside a house now: warm and dry, and fed you mend twice as fast") == 1
+    assert texts.count("You are inside a house now: warm and dry, mending twice as fast while fed") == 1
 
 
 def test_notices_the_sea(mem):

@@ -183,7 +183,7 @@ def main():
                         on_said=lambda line: mind.said_aloud(line))
         skills = Skills(world, protected=memory.protected_cubes, log=log, gifted=args.gifted_skills, library=library,
                         walk_speed=args.walk_speed, kept_in=memory.built_into,
-                        reserved=memory.reserved_cells, voice=speaker)
+                        reserved=memory.reserved_cells, planned=memory.planned_roof, voice=speaker)
         discovery = Discovery(run / "memory" / "discovery.json")  # the island as far as Godling has seen it
         attention = Attention(memory, busy=lambda: skills.busy, log=log, discovery=discovery)
         skills.on_step = attention.on_step

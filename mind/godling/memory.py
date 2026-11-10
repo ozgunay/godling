@@ -185,10 +185,18 @@ class NativeMemory:
         house = (self.state.get("house") or {}) if self.house_project_enabled else {}
         if not house.get("inside") or not house.get("door"):
             return Site()
-        site = site_of([tuple(c) for c in house["inside"]], tuple(house["door"]))
+        site = site_of([tuple(c) for c in house["inside"]], tuple(house["door"]),
+                       [tuple(c) for c in house.get("posts", [])])  # a post's cell is the post's (ADR-033, INT-1)
         if house.get("built"):
-            return Site({c: kind for c, kind in site.items() if kind in ("room", "doorway", "way out")}, building=False)
+            return Site({c: kind for c, kind in site.items() if kind in ("room", "doorway", "way out", "post")},
+                        building=False)
         return site
+
+    def planned_roof(self):
+        """Where the guided roof of the house the mind is building puts its logs (house.plan "roof", kept by
+        Mind.house_progress): {((ix, iz), axis)}. The hands set a log on its middle there as aimed (ADR-033)."""
+        house = (self.state.get("house") or {}) if self.house_project_enabled else {}
+        return {((c[0], c[1]), c[2]) for c in house.get("roof", [])}
 
     def set_house(self, house):
         """The house the mind is building (Mind.house_project), or None once it gives it up."""

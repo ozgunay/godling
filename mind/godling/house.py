@@ -5,9 +5,11 @@ tests hold the two to the same layouts.
 A house is a structure:
 - a room of clear cells, at least two by two, on one floor, where Godling can stand (a block in the room fails it);
 - walls all round it, corners too, each filled from the floor up to the roof without a gap, but for one doorway;
+- posts inside it, if it has any (ADR-033): cells the room closes round, filled from the floor up to the roof like the
+  walls. They count as cells inside it (for "two by two"), not as room to stand in;
 - the doorway on a side (not a corner), open from the floor up to the roof, onto open ground outside;
-- a roof over all of it, the walls and the doorway too, its underside more than five above the room's floor (the
-  body is exactly five tall, so on the world's grid that is three blocks up).
+- a roof over all of it, the walls, the posts and the doorway too, its underside more than five above the room's floor
+  (the body is exactly five tall, so on the world's grid that is three blocks up).
 Shelter is something else: what the body feels where it stands (main.lua shelterOf). A roof keeps the rain off long
 before it is a house.
 
@@ -17,6 +19,7 @@ cut into the world's grid of 2.5 cells.
 import json
 import math
 from collections import deque
+from functools import lru_cache
 
 from .world import CUBE
 
@@ -48,6 +51,32 @@ def at(c):
     return f"({c[0] * CELL:.1f}, {c[1] * CELL:.1f})"
 
 
+def _flood(seeds, passable):
+    """The cells reached side by side from `seeds` (themselves included) through the cells `passable` lets in."""
+    reached, queue = set(seeds), deque(seeds)
+    while queue:
+        for n in _sides(queue.popleft()):
+            if n not in reached and passable(n):
+                reached.add(n)
+                queue.append(n)
+    return reached
+
+
+def _or(cells, most=3):
+    """Cells in words, as alternatives: "(0.0, 0.0), (2.5, 0.0) or (5.0, 0.0)"."""
+    words = [at(c) for c in sorted(cells)[:most]]
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " or " + words[-1]
+
+
+def _split(cells, posts):
+    """The cells that are walls and the cells that are posts, in that order."""
+    return [c for c in cells if c not in posts], [c for c in cells if c in posts]
+
+
+def _the_posts(cells):
+    return f"the post{'s' if len(cells) > 1 else ''} at {_list(cells)}"
+
+
 def _list(cells, most=6):
     cells = sorted(cells)
     return ", ".join(at(c) for c in cells[:most]) + (f" and {len(cells) - most} more" if len(cells) > most else "")
@@ -71,6 +100,20 @@ def squared(room):
     return any(all((c[0] + i, c[1] + j) in room for i in range(SQUARE) for j in range(SQUARE)) for c in room)
 
 
+def enclosed(room):
+    """The cells a room closes round (ADR-033): not in it, and with no way out to open ground, side by side, but
+    through the room. In a house these are its posts. A column against a wall is not one: it is part of the wall."""
+    room = set(room)
+    if not room:
+        return []
+    x0, x1 = min(c[0] for c in room) - 1, max(c[0] for c in room) + 1
+    z0, z1 = min(c[1] for c in room) - 1, max(c[1] for c in room) + 1
+    box = [(ix, iz) for ix in range(x0, x1 + 1) for iz in range(z0, z1 + 1)]
+    edge = [c for c in box if c[0] in (x0, x1) or c[1] in (z0, z1)]  # the edge of the box is outside the room
+    out = _flood(edge, lambda n: x0 <= n[0] <= x1 and z0 <= n[1] <= z1 and n not in room)
+    return sorted(c for c in box if c not in room and c not in out)
+
+
 def outside_of(room, door):
     """The cell outside a doorway: beyond it, away from the room."""
     adjacent = [c for c in _sides(door) if c in set(room)]
@@ -78,7 +121,7 @@ def outside_of(room, door):
     return None if inner is None else (2 * door[0] - inner[0], 2 * door[1] - inner[1])
 
 
-SITE_ORDER = ("room", "doorway", "way out", "wall", "strip", "approach")  # what a cell of a site is, the gravest first
+SITE_ORDER = ("room", "doorway", "way out", "post", "wall", "strip", "approach")  # what a site's cell is, gravest first
 
 
 class Site(dict):
@@ -91,18 +134,23 @@ class Site(dict):
         self.building = building
 
 
-def site_of(room, door):
-    """The site of a house being built, cell by cell (ADR-027), as a Site of {cell: what it is}:
+def site_of(room, door, posts=()):
+    """The site of a house being built, cell by cell (ADR-027), as a Site of {cell: what it is}. `room` is the cells
+    inside, and `posts` those of them that hold a post (ADR-033):
     - "room", "doorway" and "way out": what must stay clear for it to be a house;
+    - "post": a post's cell, where only its post goes, as a wall's own pieces go in a wall (INT-1: the post's cell had
+      been room, and the hands refused the post);
     - "wall": the cells round the room, but for the doorway, where the walls' own pieces go;
     - "strip": the ground a cell wide round the walls and the doorway, where the body stands to build them;
     - "approach": the three cells straight on beyond the way out, the way in to the doorway. Only what the hands set
       aside keeps off these: what is set down there on purpose is the mind's business."""
-    room, door = set(room), tuple(door)
+    posts = {tuple(c) for c in posts}
+    room, door = {tuple(c) for c in room} | posts, tuple(door)
     walls = set(ring(room)) - {door}
     site = {c: "strip" for c in ring(room | walls | {door})}
     site.update({c: "wall" for c in walls})
-    site.update({c: "room" for c in room})
+    site.update({c: "room" for c in room - posts})
+    site.update({c: "post" for c in posts})
     site[door] = "doorway"
     out = outside_of(room, door)
     if out is not None:
@@ -130,8 +178,9 @@ def placement(site, cells, bottom, floor):
     (ADR-027). One check, so the house's plan and the hands never disagree: the plan tells a course of a wall from a
     piece in the house's way with it, and the hands refuse a set-down with it.
     - None: off the site (the approach is not counted), roof work (its underside at the roof line, `floor` +
-      WALL_LINE, or higher), or wholly in the walls' cells, as a course of them;
-    - ("across", the wall cells): it lies in a wall's cell and out of the walls' line;
+      WALL_LINE, or higher), or wholly in the walls' cells, as a course of them, or in a post's cell, as one of the
+      post's (ADR-033);
+    - ("across", the wall or post cells): it lies in a wall's cell and out of the walls' line, or out of a post's;
     - otherwise (what the site is there, the gravest first, and the cells)."""
     if bottom >= floor + WALL_LINE:
         return None
@@ -139,7 +188,7 @@ def placement(site, cells, bottom, floor):
     on = {c: site[c] for c in cells if site.get(c, "approach") != "approach"}
     if not on:
         return None
-    walls = sorted(c for c, kind in on.items() if kind == "wall")
+    walls = sorted(c for c, kind in on.items() if kind in ("wall", "post"))
     if walls:
         return None if len(walls) == len(cells) else ("across", walls)
     return min(on.values(), key=SITE_ORDER.index), sorted(on)
@@ -191,6 +240,10 @@ class Grid:
                 level = max(level, t)
         return level - floor
 
+    def at_roof(self, c, floor, top):
+        """The pieces lying on top of the cell, where the roof goes: their undersides at the roof's underside."""
+        return sorted({name for b, _, name in self.columns.get(c, ()) if floor + top - GAP <= b < floor + top + LAYER - GAP})
+
     def roof(self, c, floor):
         """The underside of what is over the cell with room under it to stand, or None."""
         over = [b for b, t, _ in self.supports.get(c, ()) if floor + CLEAR - 0.1 <= b <= floor + OVER]
@@ -203,9 +256,12 @@ def judge(grid, room, floor):
       cells, ring, top (the roof's underside above the floor), square (two by two or more), filled (cells inside that
       are not clear), bare (cells inside with no roof over them), doors (the doorways that would do), gaps (the other
       openings to the ground: cells beside the room clear to stand in), short (the rest of the ring, standing lower than
-      the roof), uncovered (cells of the ring with nothing over them at the roof), house (all of it holds)."""
+      the roof), uncovered (cells of the ring with nothing over them at the roof), house (all of it holds).
+    The ring holds the room's posts too (ADR-033: the cells it closes round, `posts`), judged as its walls are; they
+    count as cells inside for the room's two by two."""
     room = sorted(set(room))
-    around = ring(room)
+    posts = enclosed(room)
+    around = sorted(set(ring(room)) | set(posts))
     undersides = [grid.roof(c, floor) for c in room]
     roofed = [u for u in undersides if u is not None]
     top = max(roofed) - floor if roofed else ROOF_AT
@@ -219,7 +275,7 @@ def judge(grid, room, floor):
     def doorway(c):  # open from the floor to the roof, on one floor with the room, onto open ground
         out = outside_of(room, c)
         return grid.clear(c, floor, up_to=top - GAP) and out is not None and grid.clear(out, floor)
-    near = sides(room)
+    near = [c for c in sides(room) if c not in posts]
     doors = [c for c in near if doorway(c)]
     gaps = [c for c in near if c not in doors and grid.clear(c, floor)]
     short = [c for c in around if c not in doors and c not in gaps and grid.standing(c, floor) < top - GAP]
@@ -230,10 +286,11 @@ def judge(grid, room, floor):
             return u is not None and u <= floor + top + GAP
         return grid.standing(c, floor) >= top + LAYER - 2 * GAP
     uncovered = [c for c in around if not covered(c)]
-    house = (squared(room) and len(room) <= MOST and not filled and not bare and len(doors) == 1 and not gaps
+    square = squared(room + posts)
+    house = (square and len(room) <= MOST and not filled and not bare and len(doors) == 1 and not gaps
              and not short and not uncovered and top > HEADROOM)
-    return {"cells": room, "ring": around, "top": top, "square": squared(room), "filled": filled, "hanging": hanging,
-            "bare": bare, "floorless": floorless, "unlevel": unlevel,
+    return {"cells": room, "posts": posts, "ring": around, "top": top, "square": square, "filled": filled,
+            "hanging": hanging, "bare": bare, "floorless": floorless, "unlevel": unlevel,
             "doors": doors, "gaps": gaps, "short": short, "uncovered": uncovered, "floor": floor, "house": house}
 
 
@@ -251,13 +308,8 @@ def _rooms(grid, cells, floor_of, roofed_only, space=False):
     while left:
         seed = left.pop()
         floor = floor_of(seed)
-        room, queue = {seed}, deque([seed])
-        while queue:
-            for n in _sides(queue.popleft()):
-                if n in left and grid.floor(n) is not None and abs(grid.floor(n) - floor) <= FLAT:
-                    left.discard(n)
-                    room.add(n)
-                    queue.append(n)
+        room = _flood([seed], lambda n: n in left and grid.floor(n) is not None and abs(grid.floor(n) - floor) <= FLAT)
+        left -= room
         yield _peel(grid, room, floor), floor
 
 
@@ -295,9 +347,10 @@ def shortfalls(v):
     """What a room is short of as a house, in the order a builder sees to them, in words (empty when it is one)."""
     out = []
     n = len(v["cells"])
+    posts = v.get("posts", [])
     if not v["square"]:
         out.append(f"the room inside is {n} cell{'s' if n != 1 else ''}, at {_list(v['cells'], 4)}: a house's room holds "
-                   "at least two by two cells")
+                   "at least two by two cells" + (", its posts counted" if posts else ""))
     if v["floorless"]:
         out.append(f"there is no ground under {_list(v['floorless'], 4)}: choose a site with a real floor")
     if v["unlevel"]:
@@ -316,15 +369,21 @@ def shortfalls(v):
         openings = v["gaps"] + v["doors"][1:]
         out.append(f"the walls are open at {_list(openings, 4)} as well as the doorway at {at(v['doors'][0])}: a house "
                    "has one doorway")
-    if v["short"]:
-        out.append(f"the walls do not reach the roof ({v['top']:.1f} up) at {_list(v['short'])}, corners too")
+    short_walls, short_posts = _split(v["short"], posts)
+    if short_walls:
+        out.append(f"the walls do not reach the roof ({v['top']:.1f} up) at {_list(short_walls)}, corners too")
+    if short_posts:
+        out.append(f"{_the_posts(short_posts)} {'do' if len(short_posts) > 1 else 'does'} not reach the roof "
+                   f"({v['top']:.1f} up)")
     if v["bare"]:
         out.append(f"there is no roof over {_list(v['bare'], 4)} inside")
     elif v["top"] <= HEADROOM and not v["hanging"]:
         out.append(f"the roof is only {v['top']:.1f} up, no higher than you")
-    covered_short = [c for c in v["uncovered"] if c not in v["short"]]
-    if covered_short:
-        out.append(f"the roof does not cover the walls and doorway at {_list(covered_short)}")
+    bare_walls, bare_posts = _split([c for c in v["uncovered"] if c not in v["short"]], posts)
+    if bare_walls:
+        out.append(f"the roof does not cover the walls and doorway at {_list(bare_walls)}")
+    if bare_posts:
+        out.append(f"the roof does not cover {_the_posts(bare_posts)}")
     return out
 
 
@@ -344,9 +403,24 @@ def assess(pieces, terrain, build):
         return "it encloses no space yet"
     best = min(rooms, key=lambda r: (not r["house"], len(shortfalls(r)), -len(r["cells"])))
     if best["house"]:
-        n = len(best["cells"])
-        return f"a house: {n} cells inside, the doorway at {at(best['doors'][0])}"
+        n, k = len(best["cells"]) + len(best["posts"]), len(best["posts"])
+        posts = f", {k} of them {'a post' if k == 1 else 'posts'}" if k else ""
+        return f"a house: {n} cells inside{posts}, the doorway at {at(best['doors'][0])}"
     return "; ".join(shortfalls(best))
+
+
+def mending(times):
+    """How many times as fast a fed body mends in a house (main.lua HouseMends, ADR-033), in words: "twice", "2.5
+    times". A world that does not say mends twice as fast, as before ADR-033."""
+    times = times or 2
+    return {2: "twice", 3: "three times", 4: "four times"}.get(times) or f"{times:g} times"
+
+
+def feeling(mends, room):
+    """Being inside a house, as the body feels it (ADR-019, ADR-033): said when it walks in and while it stays."""
+    room = int(room or 0)  # the world's numbers arrive as floats (82-AB6)
+    return (f"warm and dry, mending {mending(mends)} as fast while fed"
+            + (f" (its room has {room} cells to stand in)" if room else ""))
 
 
 def cell_of(xz):
@@ -358,158 +432,273 @@ def cell_of(xz):
     return (round(float(xz[0]) / CELL), round(float(xz[1]) / CELL))
 
 
-def layout(inside, door):
-    """A house the mind chose, read from its reply: (the cells inside, the doorway's cell), or a reason it cannot be
-    one. The cells inside must touch one another side by side and hold a square two by two; the doorway is a cell
-    beside them, on a side, not a corner. A list written out as a string is read as one (run hp-proj4 sent
-    "[[-107.5, -37.5], ...]", copying the shape's description)."""
+def _points(v):
+    """A list of points, as the mind wrote it: a list, or a list written out as a string."""
+    v = json.loads(v) if isinstance(v, str) else v
+    if not isinstance(v, list):
+        raise TypeError(v)
+    return sorted({cell_of(c) for c in v})
+
+
+def layout(inside, door, posts=None):
+    """A house the mind chose, read from its reply: (the cells inside, the doorway's cell, the posts' cells), or a
+    reason it cannot be one. The cells inside must touch one another side by side and hold a square two by two; the
+    doorway is a cell beside them, on a side, not a corner. A post (ADR-033) is one of the cells inside, standing alone
+    with the room on all four sides of it; a room wider than two cells needs them to hold its roof up. A list written
+    out as a string is read as one (run hp-proj4 sent "[[-107.5, -37.5], ...]", copying the shape's description)."""
     try:
-        inside, door = (json.loads(v) if isinstance(v, str) else v for v in (inside, door))
-        if not isinstance(inside, list):
-            raise TypeError(inside)
-        room = sorted({cell_of(c) for c in inside})
+        cells = _points(inside)
         door = cell_of(door)
     except (TypeError, ValueError, IndexError, KeyError):
         return "the cells inside and the doorway must each be a point [x, z]"
-    if not room:
+    try:
+        posts = _points(posts) if posts not in (None, "") else []
+    except (TypeError, ValueError, IndexError, KeyError):
+        return "the posts must each be a point [x, z] inside the house"
+    if not cells:
         return "a house needs cells inside"
-    if len(room) > MOST:
-        return f"{len(room)} cells inside is more than a house: at most {MOST}"
-    joined, queue = {room[0]}, [room[0]]
-    while queue:
-        for n in _sides(queue.pop()):
-            if n in room and n not in joined:
-                joined.add(n)
-                queue.append(n)
-    if len(joined) < len(room):
-        return "the cells inside must touch one another side by side: " + ", ".join(at(c) for c in room if c not in joined)
-    if not squared(room):
-        return f"the room must hold at least two by two cells, a square 5 across: {_list(room, 4)} does not"
-    if door not in sides(room):
+    if len(cells) > MOST:
+        return f"{len(cells)} cells inside is more than a house: at most {MOST}"
+    stray = _apart(cells)
+    if stray:
+        return "the cells inside must touch one another side by side: " + ", ".join(at(c) for c in stray)
+    for p in posts:
+        if p not in cells:
+            return f"the post at {at(p)} must be one of the cells inside"
+        if any(n not in cells or n in posts for n in _sides(p)):
+            return (f"the post at {at(p)} must have the room on all four sides of it: a post stands alone inside, clear "
+                    "of the walls and of other posts")
+    room = [c for c in cells if c not in posts]
+    cut = _apart(room)
+    if cut:
+        return f"the posts must leave the room in one piece: {_list(cut, 4)} would be cut off from the rest"
+    if not squared(cells):
+        return f"the room must hold at least two by two cells, a square 5 across: {_list(cells, 4)} does not"
+    if door not in sides(cells):
         return f"the doorway at {at(door)} must be a cell beside the room on one of its sides, not in it, at a corner or away"
-    issue = guidance_issue(room, door)
-    return issue if issue else (room, door)
+    issue = guidance_issue(room, door, posts)
+    return issue if issue else (cells, door, posts)
 
 
-def roof_layout(grid, room, door, walls, floor, top):
+def _apart(cells):
+    """The cells not joined side by side to the first of them."""
+    cells = sorted(cells)
+    if not cells:
+        return []
+    among = set(cells)
+    joined = _flood([cells[0]], lambda n: n in among)
+    return [c for c in cells if c not in joined]
+
+
+def _along(c, axis):
+    """The cells either side of `c` along an axis: a log three long centred on `c` lies on these and `c`."""
+    return ((c[0] - 1, c[1]), (c[0] + 1, c[1])) if axis == "x" else ((c[0], c[1] - 1), (c[0], c[1] + 1))
+
+
+SEARCH = 20000  # ways of laying the roof tried before the search gives up (at most 55 were needed up to 8 by 8)
+
+
+def roof_layout(grid, room, door, walls, floor, top, posts=()):
     """Where each piece of the roof goes, as a builder lays it (ADR-019, after run hp-full2: a lintel laid across the
     doorway rested on nothing, and the doorway's flank walls had been capped first, so the right way round there was no
-    room for it). In this order:
+    room for it; posts after ADR-033). A log is three cells long and stays up resting on its middle, or with both ends
+    on something; a block stays up on top of something. In this order:
     - the doorway's lintel: a log along the wall, centred on the doorway, resting on the two wall cells beside it;
-    - over each cell of the room, a log centred on a wall beside that cell (not the doorway, not the lintel's walls,
-      each wall once), along the line from that wall to the cell, resting on its middle and reaching in over it: a log
-      three cells long cannot reach across a room two cells wide;
-    - on the walls left over, a block on top.
-    Returns {"lintel": (axis, (support, support)), "logs": [(room cell, bearing wall, axis)], "caps": [wall cells]}."""
+    - over the room, logs, each lying on cells nothing else lies on, every cell of the room under exactly one:
+      - centred on a wall beside a cell, not the doorway or the lintel's walls, along the line from that wall to the
+        cell, resting on its middle and reaching in over it (a log three cells long cannot reach across a room two
+        cells wide);
+      - centred on a post, resting on its middle and reaching over the cells either side of it;
+      the first way that covers the whole room, trying them in that order, cell by cell. A log already lying where one
+      of these goes, or across a cell with its ends on two walls or posts, stays where it is (82-AB1: a log laid as the
+      plan said made its wall's top "taken", so the next plan routed its cell to another wall, and that wall's cap was
+      never asked for);
+    - on the walls and posts left over, a block on top.
+    Returns {"lintel": (axis, (support, support)), "logs": [{"centre", "axis", "kind" ("wall", "post" or "span"),
+    "over" (the room's cells under it), "rests_on" (what holds it up)}], "caps": [wall and post cells], "unsupported":
+    [room cells no log was laid over], "loose": [room cells with no wall or post to rest a log on], "stuck": the first
+    cell left without one though it has some, "gave_up": whether the search stopped at SEARCH before finding a way}."""
+    room, posts = sorted(set(room)), sorted(set(posts))
     inner = next((c for c in _sides(door) if c in set(room)), None)
     if inner is None:
-        return {"lintel": None, "logs": [], "caps": list(walls), "unsupported": list(room)}
+        return {"lintel": None, "logs": [], "caps": list(walls) + posts, "unsupported": list(room), "loose": [],
+                "stuck": None, "gave_up": False}
     out_x = door[0] != inner[0]  # the doorway leads out along x: its wall runs along z
     lintel_axis = "z" if out_x else "x"
-    flanks = tuple(sorted([(door[0], door[1] - 1), (door[0], door[1] + 1)] if out_x
-                          else [(door[0] - 1, door[1]), (door[0] + 1, door[1])]))
-    def free_at_roof(c):  # nothing yet on top of this cell, where the roof goes
-        return not any(floor + top - GAP <= b < floor + top + LAYER - GAP for b, _, _ in grid.columns.get(c, ()))
+    flanks = tuple(sorted(_along(door, lintel_axis)))
+    in_room, on_post = set(room), set(posts)
+    supports = (set(walls) - set(flanks)) | on_post
 
-    def options_for(c):
-        options = []
-        for dx, dz in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            w, outer = (c[0] + dx, c[1] + dz), (c[0] + 2 * dx, c[1] + 2 * dz)
-            if w in walls and w not in flanks:
-                options.append((not free_at_roof(w), not free_at_roof(outer), w, "x" if dx else "z"))
-        return [(w, axis) for _, _, w, axis in sorted(options)]
+    def beam(centre, axis, kind, over):
+        ends = _along(centre, axis)
+        return {"centre": centre, "axis": axis, "kind": kind, "over": over,
+                "rests_on": list(ends) if kind == "span" else [centre], "cells": {centre, *ends}}
 
-    choices = {c: options_for(c) for c in room}
-    bearings, assigned = {}, {}
+    def laid(b):  # a log lying there already: one piece on top of all three of its cells
+        names = [set(grid.at_roof(x, floor, top)) for x in b["cells"]]
+        return bool(set.intersection(*names))
 
-    def assign(c, visited):
-        for w, axis in choices[c]:
-            if w in visited:
+    beams = [beam(s, axis, "post" if s in on_post else "wall", over) for s in sorted(supports) for axis in ("x", "z")
+             for over in [[c for c in _along(s, axis) if c in in_room]] if over]
+    # A beam across a cell with its ends on two supports takes two tops for one cell: the search needs none, but one
+    # lying there already is kept.
+    spans = [beam(c, axis, "span", [c]) for c in room for axis in ("x", "z") if all(e in supports for e in _along(c, axis))]
+    rank = {"wall": 0, "post": 1, "span": 2}
+
+    def key(b):  # one lying there first; then walls first, as before ADR-033, those whose tops (and beyond) are free
+        rest = [x for x in sorted(b["cells"]) if x not in b["over"] and x != b["centre"]]
+        return (not laid(b), rank[b["kind"]], bool(grid.at_roof(b["centre"], floor, top)),
+                any(grid.at_roof(x, floor, top) for x in rest), b["centre"], b["axis"])
+    options = {c: sorted((b for b in beams if c in b["over"]), key=key) for c in room}
+    used, covered, chosen = set(), set(), []
+    tried, gave_up = 0, False
+
+    def fits(b):
+        return not b["cells"] & used and not any(x in covered for x in b["over"])
+
+    def take(b):
+        used.update(b["cells"])
+        covered.update(b["over"])
+        chosen.append(b)
+
+    def lay(cells):
+        nonlocal tried, gave_up
+        if tried >= SEARCH:
+            gave_up = True
+            return False
+        tried += 1
+        left = [c for c in cells if c not in covered]
+        if not left:
+            return True
+        for b in options[left[0]]:
+            if not fits(b):
                 continue
-            visited.add(w)
-            if w not in bearings or assign(bearings[w], visited):
-                bearings[w] = c
-                assigned[c] = (w, axis)
+            take(b)
+            if all(any(fits(o) for o in options[n]) for n in left if n not in covered) and lay(left):
                 return True
+            chosen.pop()
+            covered.difference_update(b["over"])
+            used.difference_update(b["cells"])
         return False
 
-    for c in sorted(room):
-        # Keep earlier choices when a free bearing exists, then rearrange only if necessary.
-        free = next(((w, axis) for w, axis in choices[c] if w not in bearings), None)
-        if free:
-            w, axis = free
-            bearings[w], assigned[c] = c, (w, axis)
-        else:
-            assign(c, set())
-    logs = [(c, *assigned[c]) for c in sorted(room) if c in assigned]
-    used = set(flanks) | set(bearings)
-    caps = [w for w in walls if w not in used]
-    covered = {c for c, _, _ in logs}
-    return {"lintel": (lintel_axis, flanks), "logs": logs, "caps": caps,
-            "unsupported": [c for c in room if c not in covered]}
+    def start(keep):
+        nonlocal tried
+        used.clear()
+        covered.clear()
+        chosen.clear()
+        used.update(flanks + (door,))
+        tried = 0
+        for b in sorted((b for b in beams + spans if laid(b)), key=key) if keep else ():
+            if fits(b):
+                take(b)
+
+    loose = [c for c in room if not options[c]]
+    solved = not loose and any(start(keep) or lay(room) for keep in (True, False))
+    stuck = None
+    if not solved:  # laid cell by cell, first way first, to say where it runs short
+        start(False)
+        for c in room:
+            b = next((b for b in options[c] if fits(b)), None) if c not in covered else None
+            if b:
+                take(b)
+        stuck = next((c for c in room if c not in covered and options[c]), None)
+        solved = not loose and stuck is None  # laid cell by cell it covers the room after all: that is a roof
+    logs = [{k: v for k, v in b.items() if k != "cells"} for b in sorted(chosen, key=lambda b: min(b["over"]))]
+    return {"lintel": (lintel_axis, flanks), "logs": logs, "caps": [w for w in list(walls) + posts if w not in used],
+            "unsupported": [c for c in room if c not in covered], "loose": loose, "stuck": stuck,
+            "gave_up": gave_up and not solved}
 
 
-def guidance_issue(room, door):
-    """The guided roof method needs a supported beam for every interior cell and a lintel resting on wall cells."""
-    if outside_of(room, door) is None:
-        return f"the doorway at {at(door)} must have exactly one room cell beside it and lead straight outside"
-    walls = [c for c in ring(room) if c != door]
-    roof = roof_layout(Grid([], []), room, door, walls, 0, ROOF_AT)
+@lru_cache(maxsize=1024)
+def roof_issue(room, door, posts):
+    """Why the guided roof cannot be laid over a layout (cells as tuples): (kind, words), or ("", "") when it can. The
+    kinds are "door", "loose" (a cell with nothing beside it to hold its roof), "stuck" (no way covers every cell) and
+    "cutoff" (the search gave up). Cached: plan() asks every time the house is looked at, of a layout that is fixed
+    (82-CLEAN15)."""
+    inside = sorted(set(room) | set(posts))
+    if outside_of(inside, door) is None:
+        return "door", f"the doorway at {at(door)} must have exactly one room cell beside it and lead straight outside"
+    walls = [c for c in ring(inside) if c != door]
+    roof = roof_layout(Grid([], []), list(room), door, walls, 0, ROOF_AT, list(posts))
     if any(c not in walls for c in roof["lintel"][1]):
-        return f"the doorway at {at(door)} needs a wall cell on each side for its lintel"
-    if roof["unsupported"]:
-        return (f"the guided roof has no wall support reaching {_list(roof['unsupported'], 4)}: revise the room to "
-                "at most two cells wide, with a separate bearing wall beside each interior cell")
-    beams = [(door, roof["lintel"][0])] + [(wall, axis) for _, wall, axis in roof["logs"]]
-    footprints = [{(centre[0] + (offset if axis == "x" else 0),
-                    centre[1] + (offset if axis == "z" else 0)) for offset in (-1, 0, 1)}
-                  for centre, axis in beams]
-    footprints += [{wall} for wall in roof["caps"]]
-    occupied = set()
-    for footprint in footprints:
-        overlap = occupied & footprint
-        if overlap:
-            return f"the guided roof pieces overlap at {_list(overlap)}: revise the room or doorway"
-        occupied.update(footprint)
-    return ""
+        return "door", f"the doorway at {at(door)} needs a wall cell on each side for its lintel"
+    if not roof["unsupported"]:
+        return "", ""
+    if roof["gave_up"]:
+        return "cutoff", "the roof is too much to work out for this room: make it smaller or simpler"
+    if roof["loose"]:
+        return "loose", (f"nothing holds up the roof over {_list(roof['loose'], 4)}: a log three blocks long reaches one "
+                         "cell from the wall or post it rests on, so every cell inside must lie beside a wall or a post "
+                         "(not the doorway or the walls either side of it)")
+    return "stuck", (f"no way of laying the roof covers {at(roof['stuck'])}: each wall or post holds one log, and every "
+                     "way of laying them leaves none for it")
+
+
+def _repairs(room, door, posts):
+    """What would give a refused layout a roof (82-AB5: the refusal advised a post where none could stand): the other
+    doorways that do, and the single posts more that do."""
+    inside, room_t, posts_t = set(room) | set(posts), tuple(sorted(room)), tuple(sorted(posts))
+    doors = [d for d in sides(inside) if d != door and not roof_issue(room_t, d, posts_t)[0]]
+    more = []
+    for p in room_t:
+        if any(n not in inside or n in posts_t for n in _sides(p)):
+            continue  # a post stands alone, the room on all four sides of it
+        rest = tuple(c for c in room_t if c != p)
+        if not _apart(rest) and not roof_issue(rest, door, tuple(sorted(posts_t + (p,))))[0]:
+            more.append(p)
+    ways = ([f"the doorway at {_or(doors)}"] if doors else []) + ([f"one more post, at {_or(more)}"] if more else [])
+    return ("; it has a roof with " + ", or with ".join(ways) if ways
+            else "; no other doorway, and no one more post, gives it a roof: make the room another size or shape")
+
+
+def guidance_issue(room, door, posts=()):
+    """The guided roof method needs the doorway's lintel resting on wall cells, and a log over every cell of the room,
+    each resting on a wall or a post, none lying where another does. A refusal of the room's roof says what would give
+    it one. This refuses what the method cannot lay, not only what cannot stand (ADR-033, guided construction)."""
+    kind, words = roof_issue(tuple(sorted(room)), tuple(door), tuple(sorted(tuple(p) for p in posts)))
+    return words + _repairs(room, tuple(door), [tuple(p) for p in posts]) if kind in ("loose", "stuck") else words
 
 
 def _turn(axis):
     return f"along {axis} (turn {0 if axis == 'x' else 90})"
 
 
-def plan(pieces, terrain, inside, door):
+def plan(pieces, terrain, inside, door, posts=()):
     """How far a house the mind chose (cells from layout()) has come against the benchmark: what is done, what is still
-    to do in the order a builder does it (the walls, the room and doorway, the roof), the next step in words, and the
-    pieces that are its own: in its walls and roof, but not what fills the room, the doorway or the way out.
-    Returns {"house", "next", "done", "score", "pieces", "in_the_way"}; the score counts what stands, so it grows as
-    the house does."""
+    to do in the order a builder does it (the walls and posts, the room and doorway, the roof), the next step in words,
+    and the pieces that are its own: in its walls, posts and roof, but not what fills the room, the doorway or the way
+    out. Returns {"house", "next", "done", "score", "pieces", "in_the_way", "roof"}; the score counts what stands, so it
+    grows as the house does; "roof" is where the guided roof puts its logs, [[ix, iz, axis], ...], for the hands."""
     grid = Grid(pieces, terrain)
-    room = sorted(inside)
+    posts = sorted({tuple(p) for p in posts})
+    inside = sorted({tuple(c) for c in inside})
+    room = [c for c in inside if c not in posts]
     issue = "" if room else "choose cells for the room and a doorway"
-    floors = {c: grid.floor(c) for c in room}
-    floorless = [c for c in room if floors[c] is None]
+    floors = {c: grid.floor(c) for c in inside}
+    floorless = [c for c in inside if floors[c] is None]
     if floorless:
         issue = f"choose a site with a real floor: there is no ground under {_list(floorless, 4)}"
     elif room and max(floors.values()) - min(floors.values()) > FLAT:
-        issue = f"choose level ground: the room's floor changes height across {_list(room, 4)}"
+        issue = f"choose level ground: the room's floor changes height across {_list(inside, 4)}"
     if issue:
-        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": []}
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": [],
+                "roof": []}
     floor = grid.floor(room[0])
     v = judge(grid, room, floor)
     finished = v["house"] and v["doors"] == [door]
-    issue = guidance_issue(room, door) if not finished else ""
+    issue = guidance_issue(room, door, posts) if not finished else ""
     if issue:
-        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": []}
+        return {"house": False, "next": issue, "done": [], "score": 0, "pieces": [], "in_the_way": [], "steps": [],
+                "roof": []}
     top = v["top"]
-    walls = [c for c in v["ring"] if c != door]
+    walls = [c for c in v["ring"] if c != door and c not in posts]
     # ADR-027: a piece in a wall's cell is one of its courses only if it lies in the walls' line, wholly in their cells.
     # One that sticks out of it (a log lying across a wall, half on the ground outside) is in the way, not the house's
     # own: kept, the body would never lift it, and every piece set in that cell is refused as occupied. Nor does it
-    # count as the wall standing there. The ground a cell round the walls is where the body stands to build them, so
-    # what lies on it is in the way too, but a block alone on the ground there, a step to build from, which stays kept.
-    # A house that stands has nothing in its way.
-    site = site_of(room, door)
+    # count as the wall standing there. So with a post's cell (ADR-033): what lies across it is in the way. The ground
+    # a cell round the walls is where the body stands to build them, so what lies on it is in the way too, but a block
+    # alone on the ground there, a step to build from, which stays kept. A house that stands has nothing in its way.
+    site = site_of(inside, door, posts)
     by_name = {p["name"]: p for p in pieces}
     lies = {} if finished else {name: placement(site, cells, b, floor) for name, (b, cells) in grid.pieces.items()}
     strays = {name for name, lying in lies.items() if lying and lying[0] == "across"}
@@ -522,49 +711,60 @@ def plan(pieces, terrain, inside, door):
     steps = sorted(name for name in beside if lone_step(name))
     beside -= set(steps)
     low = [c for c in walls if grid.standing(c, floor, strays) < top - GAP]
-    out = outside_of(room, door)
+    low_posts = [c for c in posts if grid.standing(c, floor, strays) < top - GAP]
+    out = outside_of(inside, door)
     door_open = grid.clear(door, floor, up_to=top - GAP)
     out_open = out is not None and grid.clear(out, floor)
-    capped = [c for c in walls if grid.standing(c, floor, strays) >= top + LAYER - 2 * GAP]
+    capped = [c for c in walls + posts if grid.standing(c, floor, strays) >= top + LAYER - 2 * GAP]
     lintel = grid.roof(door, floor)
     lintel = lintel is not None and lintel <= floor + top + GAP
     bare = v["bare"]
-    layout = roof_layout(grid, room, door, walls, floor, top)
+    layout = roof_layout(grid, room, door, walls, floor, top, posts)
     axis, flanks = layout["lintel"]
 
     def at_roof(c):  # what sits on top of this cell, where the roof goes
-        return sorted({name for b, _, name in grid.columns.get(c, ()) if floor + top - GAP <= b < floor + top + LAYER - GAP})
+        return grid.at_roof(c, floor, top)
     # A stone capping one of the lintel's walls before the lintel is on leaves it no room: it is in the way.
     blockers = sorted({n for f in flanks for n in at_roof(f)} - set(at_roof(door))) if not lintel else []
-    # So does one on the wall a room log rests on, or beyond it where the log's outer end goes, while that cell is bare:
-    # left as the house's own, the body would never lift it and the log would never go on.
+    # So does anything where a room log goes while a cell it covers is bare: on the wall or post it rests on, where its
+    # other end goes, or over the other cell a log on a post reaches (82-CDE3). Left as the house's own, the body would
+    # never lift it, and the log would never go on.
     beds = {}
-    for c, w, _ in layout["logs"]:
-        if c in bare:
-            cells = [x for x in (w, (2 * w[0] - c[0], 2 * w[1] - c[1])) if at_roof(x)]
+    for beam in layout["logs"]:
+        if any(c in bare for c in beam["over"]):
+            cells = [x for x in (beam["centre"], *_along(beam["centre"], beam["axis"])) if at_roof(x)]
             if cells:
-                beds[c] = (cells, sorted({n for x in cells for n in at_roof(x)}))
+                beds[(beam["centre"], beam["axis"])] = (cells, sorted({n for x in cells for n in at_roof(x)}))
     in_the_way = ({name for c in room for _, name in grid.filling(c, floor)}
                   | {name for _, name in grid.filling(door, floor, up_to=top - GAP)}
                   | ({name for _, name in grid.filling(out, floor)} if out is not None else set())
                   | set(blockers) | {n for _, found in beds.values() for n in found} | strays | beside)
-    own = sorted(({name for c in walls for b, _, name in grid.columns.get(c, ()) if b < floor + top + LAYER}
+    own = sorted(({name for c in walls + posts for b, _, name in grid.columns.get(c, ()) if b < floor + top + LAYER}
                   | {name for c in room + [door] for b, _, name in grid.columns.get(c, ())
                      if floor + top - GAP <= b < floor + top + LAYER}) - in_the_way)
     centre = floor + top + LAYER / 2  # a roof piece one block thick lying on the walls
+    one = len(posts) == 1
     done = ((["the walls stand three blocks high all round"] if not low else [])
+            + ([f"the post{'' if one else 's'} {'stands' if one else 'stand'} three blocks high"]
+               if posts and not low_posts else [])
             + (["the room is clear"] if not v["filled"] else [])
             + ([f"the doorway at {at(door)} is open up to the roof"] if door_open else [])
             + (["the roof is over the room"] if not bare else [])
-            + (["the roof covers the walls and the doorway"] if len(capped) == len(walls) and lintel else []))
-    def wall_now(c):  # how high it stands, and what lies across it out of the walls' line
+            + ([f"the roof covers the walls{(', the post' if one else ', the posts') if posts else ''} and the doorway"]
+               if len(capped) == len(walls) + len(posts) and lintel else []))
+
+    def wall_now(c):  # how high it stands, and what lies across it out of the walls' line, or out of the post's cell
         lying = sorted(n for n in strays if c in grid.pieces[n][1])
+        out_of = "the post's cell" if c in posts else "the walls' line"
         return f"{at(c)} stands {grid.standing(c, floor, strays):.1f}" + (
-            f" ({' and '.join(lying)} {'lies' if len(lying) == 1 else 'lie'} across it, out of the walls' line)"
-            if lying else "")
-    if low:
-        step = ("walls three blocks high all round the room, corners too, but for the doorway at " + at(door) + ": "
-                + ", ".join(wall_now(c) for c in low[:8]) + (f" and {len(low) - 8} more" if len(low) > 8 else ""))
+            f" ({' and '.join(lying)} {'lies' if len(lying) == 1 else 'lie'} across it, out of {out_of})" if lying else "")
+    if low or low_posts:
+        step = ("walls three blocks high all round the room, corners too, but for the doorway at " + at(door)
+                + (f", and the post{'' if one else 's'} inside at {_list(posts, 8)} three blocks high (a log stood on "
+                   "end)" if posts else "") + ": "
+                + "; ".join(filter(None, (
+                    ", ".join(wall_now(c) for c in low[:8]) + (f" and {len(low) - 8} more" if len(low) > 8 else ""),
+                    ", ".join(f"the post at {wall_now(c)}" for c in low_posts)))))
     elif v["filled"]:
         step = "clear the room: " + ", ".join(
             f"{at(c)} ({name} {'hangs too low over it' if b >= floor + LAYER - GAP else 'fills it'})"
@@ -576,7 +776,7 @@ def plan(pieces, terrain, inside, door):
         names = sorted({n for _, n in grid.filling(out, floor)})[:2] if out is not None else []
         step = (f"clear the way out of the doorway, at {at(out)}" + (f": {' and '.join(names)} in it" if names else
                                                                      ": the ground there is not level with the room"))
-    elif bare or len(capped) < len(walls) or not lintel:
+    elif bare or len(capped) < len(walls) + len(posts) or not lintel:
         needs = []
         if not lintel:
             if blockers:
@@ -585,20 +785,38 @@ def plan(pieces, terrain, inside, door):
                              "beside them): the doorway's lintel rests there")
             needs.append(f"{'then ' if blockers else ''}over the doorway at {at(door)}, a log {_turn(axis)} centred on it, "
                          f"resting on the walls at {at(flanks[0])} and {at(flanks[1])}")
-        for c, w, log_axis in layout["logs"]:
-            if c in bare:
-                if c in beds:
-                    cells, found = beds[c]
-                    needs.append(f"first take {' and '.join(found)} off the top{'s' if len(cells) > 1 else ''} of "
-                                 f"{' and '.join(at(x) for x in cells)} (reach up from a step one block high beside "
-                                 f"{'them' if len(cells) > 1 else 'it'}): the log over {at(c)} rests there")
-                needs.append(f"{'then ' if c in beds else ''}over {at(c)}, a log {_turn(log_axis)} centred on the wall "
-                             f"at {at(w)}, resting on its middle and reaching in over {at(c)}")
-        uncapped = [c for c in layout["caps"] if c not in capped]
-        if uncapped:
-            needs.append(f"a block on top of the walls at {_list(uncapped)}")
-        step = (f"the roof, every piece at height {centre:.2f} (set from a step one block high outside the walls, never in "
-                "the doorway or the way out): " + "; ".join(needs))
+        for beam in layout["logs"]:
+            if not any(c in bare for c in beam["over"]):
+                continue
+            over = " and ".join(at(c) for c in beam["over"])
+            bed = beds.get((beam["centre"], beam["axis"]))
+            if bed:
+                cells, found = bed
+                on_top, under = [x for x in cells if x not in beam["over"]], [x for x in cells if x in beam["over"]]
+                where = ([f"off the top{'s' if len(on_top) > 1 else ''} of {' and '.join(at(x) for x in on_top)}"]
+                         if on_top else []) + ([f"off {' and '.join(at(x) for x in under)}"] if under else [])
+                # Lifted from the floor beside a post (82-AB2), or under it inside; from a step outside the walls.
+                reach = ("the floor inside" if under else "the floor beside the post" if beam["kind"] == "post"
+                         else "a step one block high beside " + ("them" if len(on_top) > 1 else "it"))
+                needs.append(f"first take {' and '.join(found)} {' and '.join(where)} (reach up from {reach}): the log "
+                             f"over {over} {'goes' if under else 'rests'} there")
+            then = "then " if bed else ""
+            if beam["kind"] == "wall":
+                needs.append(f"{then}over {over}, a log {_turn(beam['axis'])} centred on the wall at {at(beam['centre'])}, "
+                             f"resting on its middle and reaching in over {over}")
+            else:
+                needs.append(f"{then}over {over}, a log {_turn(beam['axis'])} centred on the post at "
+                             f"{at(beam['centre'])}, resting on its middle (set it standing on the floor beside the post)")
+        cap_walls, cap_posts = _split([c for c in layout["caps"] if c not in capped], posts)
+        if cap_walls:
+            needs.append(f"a block on top of the walls at {_list(cap_walls)}")
+        if cap_posts:
+            needs.append(f"a block on top of {_the_posts(cap_posts)} (set it standing on the floor beside "
+                         f"{'them' if len(cap_posts) > 1 else 'it'})")
+        where = ("set from a step one block high outside the walls, never in the doorway or the way out" if not posts
+                 else "over the walls, set from a step one block high outside them, never in the doorway or the way out; "
+                      f"over the post{'' if one else 's'}, from the floor inside")
+        step = f"the roof, every piece at height {centre:.2f} ({where}): " + "; ".join(needs)
     else:
         step = f"none: it is a house. Walk in by the doorway at {at(door)} and stand inside"
     # What the body set down there before ADR-027, or what fell there: named, as the room's are.
@@ -607,7 +825,8 @@ def plan(pieces, terrain, inside, door):
         step += ("; lying on the ground a cell round the walls, where you stand to build them: "
                  + ", ".join(f"{n} ({by_name[n]['pos'][0]:.1f}, {by_name[n]['pos'][2]:.1f})" for n in lying_beside[:6])
                  + (f" and {len(lying_beside) - 6} more" if len(lying_beside) > 6 else ""))
-    score = ((len(walls) - len(low)) + (len(room) - len(v["filled"])) + door_open + out_open + (len(room) - len(bare))
-             + len(capped) + bool(lintel))
+    score = ((len(walls) - len(low)) + (len(posts) - len(low_posts)) + (len(room) - len(v["filled"])) + door_open
+             + out_open + (len(room) - len(bare)) + len(capped) + bool(lintel))
+    roof = [[*door, axis]] + [[*b["centre"], b["axis"]] for b in layout["logs"]]
     return {"house": finished, "next": step, "done": done, "score": score, "pieces": own,
-            "in_the_way": sorted(in_the_way), "steps": steps}
+            "in_the_way": sorted(in_the_way), "steps": steps, "roof": roof}

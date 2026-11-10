@@ -104,8 +104,8 @@ def test_a_wall_encloses_nothing():
 
 
 def test_a_chosen_house_says_what_it_needs_next():
-    room, door = layout([[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], [0, -2.5])
-    assert (room, door) == (ROOM, DOOR)
+    room, door, posts = layout([[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]], [0, -2.5])
+    assert (room, door, posts) == (ROOM, DOOR, [])
     empty = plan([], GROUND, room, door)
     assert not empty["house"] and empty["pieces"] == []
     assert empty["next"].startswith("walls three blocks high all round the room, corners too, but for the doorway at "
@@ -151,8 +151,8 @@ def test_a_house_layout_must_hold_together():
     assert layout([], [0, 0]) == "a house needs cells inside"
     assert layout([["a", 0]], [0, 0]) == layout(square, None) == (
         "the cells inside and the doorway must each be a point [x, z]")
-    assert layout([{"x": 0, "z": 0}, [2.4, 0.3], [0, 2.5], "[2.5, 2.5]"], {"x": 0, "z": -2.5}) == (ROOM, DOOR)
-    assert layout("[[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]]", "[0, -2.5]") == (ROOM, DOOR)
+    assert layout([{"x": 0, "z": 0}, [2.4, 0.3], [0, 2.5], "[2.5, 2.5]"], {"x": 0, "z": -2.5}) == (ROOM, DOOR, [])
+    assert layout("[[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]]", "[0, -2.5]") == (ROOM, DOOR, [])
     assert layout("the cells inside", [0, 0]) == layout(square, {"x": 0}) == (
         "the cells inside and the doorway must each be a point [x, z]")
 
@@ -212,20 +212,24 @@ def test_fractional_roof_heights_use_continuous_wall_fill():
 def test_guided_layouts_require_supported_roof_and_a_straight_doorway():
     large = [(x, z) for x in range(3) for z in range(3)]
     rejected = layout([[x * C, z * C] for x, z in large], [0, -C])
-    assert isinstance(rejected, str) and "no wall support" in rejected
+    assert isinstance(rejected, str) and rejected.startswith("nothing holds up the roof over (2.5, 0.0), (2.5, 2.5)")
+    assert rejected.endswith("it has a roof with one more post, at (2.5, 2.5)")  # ADR-033: a wider room's posts
     persisted = plan([], GROUND, large, DOOR)
-    assert not persisted["house"] and "revise the room" in persisted["next"]
+    assert not persisted["house"] and persisted["next"] == rejected
     for length in range(2, 9):
         rectangle = [[x * C, z * C] for x in range(2) for z in range(length)]
         assert not isinstance(layout(rectangle, [0, -C]), str)
     concave = [[0, 0], [0, C], [C, 0], [C, C], [2 * C, 0], [2 * C, C], [2 * C, 2 * C], [C, 2 * C]]
     invalid = layout(concave, [0, 2 * C])
     assert isinstance(invalid, str) and "exactly one room cell" in invalid
+    # ADR-033: this L was refused for overlapping roof pieces while the roof was matched cell by cell; laid as a whole it
+    # has a roof (test_house_posts.py). Where the walls run short, each holding one log, the layout says which cell.
     overlapping = [[0, 0], [0, C], [C, 0], [C, C], [C, 2 * C], [C, 3 * C]]
-    rejected = layout(overlapping, [-C, 0])
-    assert isinstance(rejected, str) and "roof pieces overlap" in rejected
-    persisted = plan([], GROUND, [(round(x / C), round(z / C)) for x, z in overlapping], (-1, 0))
-    assert "revise the room or doorway" in persisted["next"]
+    assert not isinstance(layout(overlapping, [-C, 0]), str)
+    short = layout([[x * C, z * C] for x in range(3) for z in range(4)], [-C, 0], [[C, C]])
+    assert isinstance(short, str) and short.startswith("no way of laying the roof covers")
+    persisted = plan([], GROUND, [(x, z) for x in range(3) for z in range(4)], (-1, 0), [(1, 1)])
+    assert persisted["next"] == short and "it has a roof with" in short
 
 
 def test_a_complete_larger_house_uses_the_same_verdict_even_without_guided_roof_supports():

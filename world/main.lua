@@ -2070,7 +2070,8 @@ local HARM = {
     healWhenFed = 50, healSeconds = 1800,
     coldDrainSeconds = 2400, -- cold (WEATHER) takes a whole body's health in 40 minutes, and stops healing
     coldHalves = 0.5, -- a fire close by halves the cold, and so does a roof over the head; only a house keeps it off
-    houseHeals = 2, -- inside a house a fed body mends twice as fast (ADR-019)
+    houseHeals = 2, -- inside a house a fed body mends twice as fast (ADR-019), in its smallest room, of four cells;
+    houseHealsPerCell = 0.25, houseHealsMost = 4, -- a quarter faster for each cell more, up to four times (ADR-033)
     lightning = 35, lightningRange = 7, -- from the struck palm's trunk
     meteor = 45, meteorRange = 6, -- from where the stone lands
 }
@@ -2225,7 +2226,7 @@ local function tickSurvival(dt)
             if s.cold then
                 s.health = s.health - dt * 100 / HARM.coldDrainSeconds * (s.coldPace or 1)
             elseif s.hunger >= HARM.healWhenFed and s.health < 100 then -- well fed and warm, a body mends
-                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and HARM.houseHeals or 1))
+                s.health = math.min(100, s.health + dt * 100 / HARM.healSeconds * (s.house and s.houseMends or 1))
             end
             s.beat = s.beat + dt
             if s.health <= 0 then -- what wore it down: the mind is told
@@ -2650,11 +2651,12 @@ end
 -- - Some mornings fog comes in from the sea and hides what is further than a stone's throw.
 -- - Out in the rain the body is slowed and gets soaked. Nights are cold, and so is being soaked in the rain; cold wears
 --   health down and stops healing. A roof overhead keeps the rain off and halves the cold; a fire close by halves it
---   too. Only inside a house (ADR-019) is the body warm, and there a fed body mends twice as fast. Rain puts every
---   fire out, and leaves the wood too damp to light for a while after.
+--   too. Only inside a house (ADR-019) is the body warm, and there a fed body mends twice as fast, faster the more
+--   room it has (ADR-033). Rain puts every fire out, and leaves the wood too damp to light for a while after.
 -- The Clock carries Rain and Fog (0-1) for the renderer; each body carries Wet (0-100), Cold, ByFire, InRain,
 -- Sheltered (what is over and round it: "", "roof", or "enclosed": a roof with walls on three sides), InHouse (it
--- stands inside a finished house, ADR-019) and its current WalkSpeed.
+-- stands inside a finished house, ADR-019), HouseRoom and HouseMends (the cells of that house's room to stand in, and
+-- how many times as fast a fed body mends there, ADR-033; 0 outside a house) and its current WalkSpeed.
 local stormStrike -- below, with the sky events: a bolt near Godling; it fells a palm only when let (ADR-026)
 -- Rain, cold and shelter. Like the other newer sections, a function of its own, so its locals stay out of the main
 -- chunk's (Luau allows 200 locals in one function, and the world script has come close).
@@ -2769,7 +2771,8 @@ local tickWeather = (function()
     -- body's height up (three blocks: the grid is 2.5); walls all round the room, corners too, filled from the floor
     -- up to the roof with the roof on them; and one doorway on a side, open up to the roof with the roof over it, onto
     -- open ground. Shelter is what the body feels where it stands; a house is what was built, and only inside one is
-    -- the body warm.
+    -- the body warm. Posts inside (ADR-033: the cells the room closes round, house.py enclosed) count as cells inside
+    -- for the two by two and stand as the walls do. Returns the cells of the room to stand in, or false.
     local HOUSE_MOST = 64 -- cells: more is open ground under something wide, not a house
     local SIDES = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
     local AROUND = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
@@ -2924,10 +2927,48 @@ local tickWeather = (function()
         for k in pairs(doorway) do
             room[k] = nil
         end
+        -- The posts: cells in the room's box with no way out of it side by side but through the room (house.py enclosed).
+        local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge
+        for _, c in pairs(room) do
+            x0, x1, z0, z1 = math.min(x0, c[1] - 1), math.max(x1, c[1] + 1), math.min(z0, c[2] - 1), math.max(z1, c[2] + 1)
+        end
+        local outside, edge, posts = {}, {}, {}
+        for ix = x0, x1 do
+            for iz = z0, z1 do
+                if ix == x0 or ix == x1 or iz == z0 or iz == z1 then
+                    outside[ix .. "," .. iz] = true
+                    table.insert(edge, { ix, iz })
+                end
+            end
+        end
+        while #edge > 0 do
+            local c = table.remove(edge)
+            for _, d in ipairs(SIDES) do
+                local n = near(c, d)
+                if n[1] >= x0 and n[1] <= x1 and n[2] >= z0 and n[2] <= z1 and not outside[key(n)] and not inside(n) then
+                    outside[key(n)] = true
+                    table.insert(edge, n)
+                end
+            end
+        end
+        for ix = x0, x1 do
+            for iz = z0, z1 do
+                if not outside[ix .. "," .. iz] and not room[ix .. "," .. iz] then
+                    posts[ix .. "," .. iz] = { ix, iz }
+                end
+            end
+        end
+        local function counted(c) -- a cell inside, to stand in or a post
+            return inside(c) or posts[key(c)] ~= nil
+        end
         local square = false
-        for k, c in pairs(room) do
+        for k in pairs(room) do
             top = math.max(top, under[k])
-            square = square or (inside(near(c, { 1, 0 })) and inside(near(c, { 0, 1 })) and inside(near(c, { 1, 1 })))
+        end
+        for _, cells in ipairs({ room, posts }) do
+            for _, c in pairs(cells) do
+                square = square or (counted(near(c, { 1, 0 })) and counted(near(c, { 0, 1 })) and counted(near(c, { 1, 1 })))
+            end
         end
         local count = 0
         for _ in pairs(room) do
@@ -2945,10 +2986,13 @@ local tickWeather = (function()
                 end
             end
         end
+        for k, c in pairs(posts) do -- a post stands from the floor to the roof, with the roof on it, as a wall does
+            ring[k] = c
+        end
         local doors = 0
         for _, c in pairs(ring) do
             local by = inner(c)
-            if #by == 1 and clear(c, top - gap) then
+            if #by == 1 and clear(c, top - gap) and not posts[key(c)] then
                 local out = { 2 * c[1] - by[1][1], 2 * c[2] - by[1][2] }
                 local roof = underside(c)
                 if not (roof and roof <= top + gap and clear(out)) then
@@ -2961,7 +3005,7 @@ local tickWeather = (function()
                 end
             end
         end
-        return doors == 1
+        return doors == 1 and count
     end
 
     local function tickWeather(dt)
@@ -3008,12 +3052,17 @@ local tickWeather = (function()
                     s.houseCheckAt = 0
                 elseif os.clock() >= (s.houseCheckAt or 0) then
                     s.houseCheckAt = os.clock() + 1
-                    s.houseSeen = houseAt(player, hrp)
+                    s.houseRoom = houseAt(player, hrp) or 0 -- the cells of its room to stand in (ADR-033)
                 end
-                inHouse = shelter ~= "" and s.houseSeen == true
+                inHouse = shelter ~= "" and (s.houseRoom or 0) > 0
+                -- The more room it has, the faster a fed body mends there (ADR-033): twice as fast in the smallest room
+                -- (four cells), a quarter faster for each cell more, up to four times.
+                local mends = inHouse and math.min(HARM.houseHealsMost,
+                    HARM.houseHeals + HARM.houseHealsPerCell * math.max(0, s.houseRoom - 4)) or 0
                 if inHouse and not s.house then
                     local at = hrp.Position
-                    print(string.format("HOUSE %s stands inside a house at (%.1f, %.1f)", player.Name, at.X, at.Z))
+                    print(string.format("HOUSE %s stands inside a house at (%.1f, %.1f), %d cells to stand in",
+                        player.Name, at.X, at.Z, s.houseRoom))
                 end
                 local inRain = weather.rain > 0.3 and shelter == ""
                 local byFire = false
@@ -3027,7 +3076,7 @@ local tickWeather = (function()
                     or -step * 100 / DRY_SECONDS * (byFire and FIRE_DRIES or 1)), 0, 100)
                 -- Night, or soaked in the rain, is cold; only a house keeps it off. A fire close by halves it, and so
                 -- does a roof over the head (ADR-019).
-                s.house = inHouse
+                s.house, s.houseMends = inHouse, mends
                 s.cold = not s.house and (night or (inRain and s.wet >= 50))
                 s.coldPace = (byFire and HARM.coldHalves or 1) * (shelter ~= "" and HARM.coldHalves or 1)
                 if player:GetAttribute("InRain") ~= inRain then
@@ -3040,6 +3089,8 @@ local tickWeather = (function()
                 player:SetAttribute("ByFire", byFire)
                 player:SetAttribute("Sheltered", shelter)
                 player:SetAttribute("InHouse", inHouse)
+                player:SetAttribute("HouseRoom", inHouse and s.houseRoom or 0)
+                player:SetAttribute("HouseMends", mends)
             end
         end
     end

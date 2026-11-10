@@ -158,6 +158,7 @@ def holding_log(make, things):
 @pytest.mark.parametrize("aim, turn, why", [
     ((0, 6.25, 0), 90, "along z, where its end at (0.0, -2.5) had nothing under it but the ground"),  # turned wrong
     ((2.5, 6.25, 0), 0, "along x, where its end at (0.0, 0.0) had nothing under it but the ground"),  # a cell off
+    ((0, 6.25, 2.5), 0, "along x, where its end at (-2.5, 2.5) had nothing under it but the ground"),  # off across it
 ])
 def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
     island, body = holding_log(make, posts())
@@ -167,8 +168,18 @@ def test_a_beam_is_set_on_the_supports_it_was_aimed_at(make, aim, turn, why):
     assert place["position"] == pytest.approx([0, 5.0 + 1.25 + 0.03, 0])
     assert place["rotation"] == pytest.approx(sk._rotation(0, False))
     assert r.summary.startswith("Log_1 came to rest at (0.00, 6.28, 0.00), across Block_2 and Block_12")
-    assert f"(you aimed it at ({aim[0]:.1f}, 6.25, 0.0) {why}" in r.summary
+    assert f"(you aimed it at ({aim[0]:.1f}, 6.25, {aim[2]:.1f}) {why}" in r.summary
     assert r.summary.endswith("; so your hands set it along x with its ends on Block_2 and Block_12 instead)")
+
+
+def test_a_beam_resting_on_its_middle_stays_where_it_was_aimed(make):
+    # ADR-033: a log with its middle on a post stays up, balanced, as the house's roof logs do on its walls and posts.
+    # With no two supports a cell along it, it is set where it was aimed. (With them, as above, it goes across them,
+    # unless the house's own roof puts it on that middle: test_house_posts.py.)
+    island, body = holding_log(make, posts(left=0))
+    r = body.run("place_at", {"x": 2.5, "y": 6.25, "z": 0, "turn": 0})
+    assert r.ok and [d for a, d in island.acts if a == "Place"][-1]["position"] == pytest.approx([2.5, 6.25, 0])
+    assert "you aimed it" not in r.summary
 
 
 def test_a_scorch_or_a_storm_spot_on_a_post_does_not_stop_a_beam_settling_across_it(make):
@@ -208,7 +219,7 @@ def test_a_beam_that_falls_says_what_was_under_its_ends(make):
     r = body.run("place_at", {"x": 0, "y": 6.25, "z": 0})
     assert r.ok and "you aimed it" not in r.summary
     assert r.summary.endswith("; it did not stay up there: its end at (-2.5, 0.0) lay on Block_2 (top 5.00); its end at "
-                              "(2.5, 0.0) hung 2.50 above Block_11 (top 2.50). A beam stays up only with both ends on "
+                              "(2.5, 0.0) hung 2.50 above Block_11 (top 2.50). A log stays up resting on its middle, or with both ends on "
                               "something of the same height")
 
 
@@ -241,14 +252,13 @@ def test_place_from_a_little_short(make):
     island, body = make([block("Block_1", -3, 1.25, 3)])
     island.held = "Block_1"
 
-    def short(data):  # the walk ends 3 short of where it was meant to, and the legs will go no further
+    def short(data):  # the walk ends 3 short of where it was meant to: 7.6 from the spot, out of the hands' reach (7)
         island.on_act.pop("Stop")
         island.me[0] -= 3.0
-        island.frozen = True
     island.on_act["Stop"] = short
     r = body.run("place_at", {"x": 10, "y": 7.0, "z": 0})
     assert r.ok and r.summary.startswith("Block_1 came to rest at (10.00, 7.00, 0.00)")
-    assert island.actions().count("MoveTo") >= 2
+    assert island.actions().count("MoveTo") >= 2  # it closed in once more (until 82-CDE9 the island let it set it from 7.6)
 
 
 def test_rub_walks_up_to_the_log(make):

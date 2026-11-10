@@ -2,11 +2,13 @@
 
 On 2026-11-08 Godling set a stone on top of the ladder it was raising its walls with, and could not build on there.
 """
+import math
+
 import pytest
 
 from godling import skills as sk
 from godling.skills import Skills
-from godling.world import BODY_CENTRE_Y
+from godling.world import BODY_CENTRE_Y, PICKUP_RANGE
 from helpers import block, ent, ground
 from island import FakeTime, Island
 
@@ -107,10 +109,17 @@ def test_freeing_the_hands_passes_over_the_foot_of_a_ladder(make):
     assert (x, z) != (-7.5, 0) and r.summary.startswith("picked up Block_2 (first set Stone_1 down")
 
 
-def test_a_stone_already_on_a_ladder_says_how_to_get_it_down(make):
-    # The screenshot as it stands: the stone on top of the ladder, too high to reach from the ground.
+def test_a_stone_already_on_a_ladder_is_lifted_off_from_below(make):
+    # The screenshot as it stands: the stone on top of the ladder. Its middle is out of reach from the ground (6.2 of
+    # the hands' 6), but they reach up to its underside, and the world lifts the piece nearest where they reach, within
+    # 1.5 (ADR-033, 82-AB2). Until then the body said to pick up the ladder, so that the stone falls.
     island, body = make(wall_with_ladder() + [block("Stone_1", 2.5, 8.77, 0)], me=(-5, BODY_CENTRE_Y, 0))
     r = body.run("pick_up", {"object": "Stone_1"})
-    assert not r.ok and r.summary == ("no clear spot to reach Stone_1 from here (it lies on top of Ladder_1: "
-                                      "pick up the ladder and it falls)")
+    assert r.ok and island.held == "Stone_1", r.summary
+    grip = [d for a, d in island.acts if a == "Pickup"][-1]["position"]
+    assert grip[1] < 8.77 - 1.0 and math.dist(island.me, grip) <= PICKUP_RANGE
+
+
+def test_the_ladder_under_a_stone_can_be_picked_up(make):
+    island, body = make(wall_with_ladder() + [block("Stone_1", 2.5, 8.77, 0)], me=(-5, BODY_CENTRE_Y, 0))
     assert body.run("pick_up", {"object": "Ladder_1"}).ok  # the world lets what rested on it fall (test_build.luau)

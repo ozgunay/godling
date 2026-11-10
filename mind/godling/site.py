@@ -26,7 +26,8 @@ def house_cells(memory):
     room, door = [tuple(c) for c in house["inside"]], tuple(house["door"])
     out = outside_of(room, door)
     apron = set(sides([out])) - {door} if out is not None else set()
-    return sorted(set(reserved) | set(site_of(room, door)) | apron)
+    posts = [tuple(c) for c in house.get("posts", [])]  # ADR-033: a post's cell is the house's too (INT-1)
+    return sorted(set(reserved) | set(site_of(room, door, posts)) | apron)
 
 
 class HouseSite:
